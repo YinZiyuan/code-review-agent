@@ -20,9 +20,15 @@ public class CodeReviewRunner {
         System.out.println("=".repeat(60));
 
         // 1. Chat model (Kimi)
+        String apiKey = System.getenv("MOONSHOT_API_KEY");
+        if (apiKey == null || apiKey.isBlank()) {
+            System.err.println("ERROR: environment variable MOONSHOT_API_KEY is not set.");
+            System.err.println("Run: export MOONSHOT_API_KEY=sk-xxxx");
+            System.exit(1);
+        }
         ChatModel chatModel = OpenAiChatModel.builder()
                 .baseUrl("https://api.moonshot.cn/v1")
-                .apiKey("sk-yxKM5T1v3UJUSRjNq9GJjMktMGKZbWvBmCa4JFSyFWtUAm3a")
+                .apiKey(apiKey)
                 .modelName("moonshot-v1-8k")
                 .logRequests(false)
                 .logResponses(false)
