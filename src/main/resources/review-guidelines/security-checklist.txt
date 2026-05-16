@@ -1,0 +1,48 @@
+Security Code Review Checklist
+
+## Credential Management
+- Never hardcode credentials, API keys, passwords, or tokens in source code.
+- Use environment variables, system properties, or a secrets manager (HashiCorp Vault, AWS Secrets Manager).
+- Never commit .env files, application-local.properties, or files containing real secrets to version control.
+- Add such files to .gitignore immediately.
+- Rotate secrets if they are accidentally exposed.
+
+## Input Validation
+- Validate and sanitize all user-supplied inputs before processing.
+- Use parameterized queries (PreparedStatement) to prevent SQL injection — never concatenate user input into SQL.
+- Encode output to prevent Cross-Site Scripting (XSS) when rendering user-provided data in HTML.
+- Validate file uploads: check MIME type, file extension, file size, and scan content when possible.
+- Reject or sanitize unexpected characters in structured inputs (email, phone, IDs).
+
+## Authentication and Authorization
+- Always verify authentication before processing any request that requires it.
+- Check authorization for every resource access — do not assume a valid session implies permission to all data.
+- Use established frameworks for auth (Spring Security, OAuth2/OIDC) rather than rolling your own.
+- Implement proper session management: short-lived tokens, secure cookie flags (HttpOnly, Secure, SameSite).
+- Invalidate sessions and tokens on logout and after a period of inactivity.
+
+## Sensitive Data Handling
+- Encrypt sensitive data at rest (AES-256) and in transit (TLS 1.2+).
+- Never log PII, passwords, credit card numbers, tokens, or health data.
+- Use strong hashing for passwords: bcrypt, scrypt, or Argon2 — never MD5 or SHA-1 alone.
+- Minimize data retention: delete sensitive data when it is no longer needed.
+- Mask sensitive fields in logs and audit trails.
+
+## Dependency and Supply Chain Security
+- Keep all dependencies up to date and apply security patches promptly.
+- Run OWASP Dependency-Check or Snyk as part of CI to detect known CVEs.
+- Avoid transitive dependencies with known critical vulnerabilities.
+- Pin dependency versions and verify checksums/signatures in production builds.
+
+## Error Handling and Information Disclosure
+- Do not expose stack traces, internal paths, or database error details to end users.
+- Return generic error messages to clients; log detailed errors internally.
+- Use a global exception handler to ensure consistent error responses.
+
+## HTTP and API Security
+- Protect state-changing endpoints against CSRF attacks.
+- Set security headers: Content-Security-Policy, X-Frame-Options: DENY, Strict-Transport-Security, X-Content-Type-Options.
+- Always use HTTPS; redirect HTTP requests to HTTPS.
+- Implement rate limiting and request throttling to prevent brute force and abuse.
+- Validate Content-Type and enforce size limits on request bodies.
+- Use CORS policies that restrict allowed origins to known, trusted domains.

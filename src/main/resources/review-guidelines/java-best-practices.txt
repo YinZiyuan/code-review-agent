@@ -1,0 +1,49 @@
+Java Code Review Best Practices
+
+## Exception Handling
+- Always catch specific exceptions, not generic Exception or Throwable.
+- Never swallow exceptions silently with empty catch blocks.
+- Use checked exceptions for recoverable conditions, unchecked for programming errors.
+- Log exceptions with context: logger.error("Failed to process request for userId={}", userId, e).
+- Do not use e.printStackTrace() in production code — it bypasses the logging framework.
+
+## Null Safety
+- Use Optional<T> for return values that may be absent instead of returning null.
+- Use Objects.requireNonNull(param, "param must not be null") to validate method parameters early.
+- Prefer @NonNull/@Nullable annotations to document intent.
+- Avoid returning null from methods; return empty collections or Optional instead.
+
+## Logging
+- Use SLF4J with Logback or Log4j2 as backend — never System.out.println.
+- Log at the appropriate level: ERROR for failures, WARN for unexpected states, INFO for business events, DEBUG for diagnostics.
+- Always include context in log messages: user ID, request ID, relevant entity IDs.
+- Never log sensitive data: passwords, tokens, credit card numbers, PII.
+- Use parameterized logging: logger.info("Order {} placed for user {}", orderId, userId) — not string concatenation.
+
+## Code Quality
+- Methods should be short and focused (ideally under 20 lines).
+- Extract magic numbers and magic strings into named constants or enums.
+- Avoid deep nesting (more than 3 levels is a warning sign — extract methods or invert conditions).
+- Remove dead code, commented-out code, and unused imports before merging.
+- Write self-documenting code with meaningful variable and method names.
+- Resolve or track all TODO/FIXME comments before merging to main branch.
+
+## Collections and Streams
+- Prefer immutable collections (List.of(), Map.of(), Collections.unmodifiableList()) when data won't change.
+- Use streams for data transformation but avoid side effects inside stream lambdas.
+- Do not modify a collection while iterating over it.
+- Use Map.getOrDefault() or Map.computeIfAbsent() instead of null checks around map.get().
+
+## Concurrency
+- Prefer high-level concurrency utilities: ExecutorService, CompletableFuture, ScheduledExecutorService.
+- Never create raw Thread instances in business logic — use thread pools.
+- Always synchronize or use atomic types when accessing shared mutable state.
+- Avoid Thread.sleep() in business logic; prefer async or event-driven patterns.
+- Use thread-safe collections (ConcurrentHashMap, CopyOnWriteArrayList) when sharing between threads.
+- Release locks in finally blocks or use try-with-resources.
+
+## SOLID Principles
+- Single Responsibility: each class should have one clear purpose and one reason to change.
+- Open/Closed: design for extension without modifying existing code (use interfaces and polymorphism).
+- Dependency Inversion: depend on abstractions (interfaces), not concrete implementations.
+- Inject dependencies via constructor injection for testability.
