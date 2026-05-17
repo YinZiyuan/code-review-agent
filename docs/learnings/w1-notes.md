@@ -132,3 +132,75 @@ feat: Spring Boot app skeleton + CodeReviewProperties
 - 教训：**重要节点 commit 前先 `git status` 确认 staged 范围**，特别是用 `Write` 工具创建过新文件之后
 
 ---
+
+## T3 · picocli 三子命令 + Spring Boot 整合
+
+### 技术细节
+
+1. **picocli-spring-boot-starter 干了三件事**
+   - **`PicocliSpringFactory`** 自动注册为 `IFactory`，让 picocli 通过 Spring 容器解析 `@Command` 类（不再用 `new`）
+   - 所有 `@Component + @Command` 类被收进 IoC，可以 `@Autowired` 任何 Spring bean
+   - 没有自动 `main()` —— 我们仍要写 `CliRunner` 桥接 Spring 启动事件到 `CommandLine.execute(args)`
+
+2. **`@EventListener(ApplicationReadyEvent.class)` —— Spring Boot 标准入口模式**
+   - `ApplicationReadyEvent` 是 Spring Boot 应用**完全启动后**触发的事件，比 `@PostConstruct` 晚（IoC 完成后才能用 bean）、比 `CommandLineRunner` 灵活（CommandLineRunner 顺序不可控）
+   - 另一种写法是实现 `CommandLineRunner` 或 `ApplicationRunner` —— 都可以，事件方式更显式
+   - **API 注意**：Spring Boot 3.x 里 `event.getArgs()` 直接拿 `String[]`，**不是** `event.getApplicationArgs().getSourceArgs()`（plan 写错了，实际编译失败才发现）
+
+3. **`ExitCodeGenerator` —— Spring Boot 退出码协议**
+   - 实现这个接口，Spring Boot 在收到 `ContextClosedEvent` 时调用 `getExitCode()`，把返回值作为 JVM 退出码
+   - 配合 `SpringApplication.exit(...)` 才能真正退出 JVM —— 否则 Spring Boot 不会主动结束进程（线程池仍在）
+   - 这是为什么 `CodeReviewApplication.main` 写 `System.exit(SpringApplication.exit(SpringApplication.run(...)))`
+
+4. **`ObjectProvider<T>` —— 延迟/可选依赖的 Spring 标准模式**
+   - 直接 `private final CodeReviewAgent agent` 构造注入 → bean 不存在时启动失败
+   - 改成 `ObjectProvider<CodeReviewAgent>` → 启动时只注入 provider（永远存在），运行时 `getIfAvailable()` 拿真 bean，没有返回 null
+   - 这是 Spring Framework 4.3+ 的功能。等价于"延迟解析的依赖"，比 `@Autowired(required=false) + field` 优雅，比 `ApplicationContext.getBean()` 类型安全
+   - **W1 用场景**：T3 写 `ReviewCommand` 时 `CodeReviewAgent` bean 还没造（T11 才造），用 ObjectProvider 让 T3 能独立 commit + 测试
+
+5. **picocli `mixinStandardHelpOptions = true` 只在所在 Command 生效**
+   - RootCommand 加了 → `--help` / `--version` 生效
+   - 子 Command 没加 → `review --help` 报 "Unknown option"，但仍会 fallback 打印 usage 行（picocli 默认 error 行为）
+   - 要给每个子 Command 也加，或者用全局策略。W1 不重要，暂不修
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| picocli vs Spring Shell | Spring Shell 偏交互式（REPL），picocli 偏一次性 CLI；我们要的是 `app review ...` 一次性运行，picocli 更合适 |
+| `ObjectProvider` vs 临时 `@Bean` 占位 | 临时占位会污染代码（T11 还要再删一遍）；ObjectProvider 是惯用模式，留着也没问题 |
+| 把 `main()` 放在 `CodeReviewApplication` 还是 `CliRunner` | `main()` 必须在 `@SpringBootApplication` 类，否则 spring-boot-maven-plugin 找不到入口；CLI 启动逻辑通过事件回调实现 |
+| 子命令是否独立 jar | 单 jar 多命令更方便分发；如果要做 GraalVM native image，单 jar 也更友好 |
+
+### 面试 Q&A
+
+**Q1**：picocli + Spring Boot 整合，关键链路是什么？为什么需要 `IFactory`？
+- **A**：picocli 默认通过反射 `clazz.getDeclaredConstructor().newInstance()` 创建 Command 对象 —— 这对依赖了 Spring bean 的 Command 来说不行（依赖永远是 null）。`IFactory` 是 picocli 给的扩展点：把"如何创建 Command 实例"委派给外部。`picocli-spring-boot-starter` 注册了 `PicocliSpringFactory`，它内部用 `ApplicationContext.getBean(clazz)` 拿 Spring 管理的实例 —— 这样 Command 上的构造器注入 / `@Autowired` 才生效。**没有这个桥接，Command 拿不到任何 Spring bean**。
+
+**Q2**：你在 `ReviewCommand` 用了 `ObjectProvider<CodeReviewAgent>` 而不是直接注入。这有什么好处？什么时候应该这样写？
+- **A**：三个理由。①**循环依赖破除**：A 注 B、B 注 A 时用 ObjectProvider 打断同步构造；②**可选依赖**：依赖可能不在容器里，`getIfAvailable()` 返回 null 即可；③**lazy resolution**：构造时不解析，运行时再要。我这里属于场景②——增量开发时下游 bean 还没造好，但 Command 必须能装配进 Spring 容器（picocli 需要它）。**生产场景**：跨模块插件式架构里，某个能力模块可能未启用，用 ObjectProvider 优雅降级。**反面**：如果依赖是核心必需的，直接构造注入更清晰，**fail-fast 优于 fail-soft**。
+
+**Q3**：为什么不用 `CommandLineRunner` 直接跑 picocli，而是用 `@EventListener(ApplicationReadyEvent.class)`？
+- **A**：行为基本等价 —— 都在 Spring 上下文完全初始化后调用。事件方式有两个细微优势：①**显式事件类型**，未来要响应不同生命周期阶段（比如 `ContextRefreshedEvent` vs `ApplicationReadyEvent`）粒度更细；②**多个监听器顺序可控**（通过 `@Order` 注解）。`CommandLineRunner` / `ApplicationRunner` 是 Spring Boot 内置的便利接口，但事件机制是 Spring Framework 原生的更基础设施。**选哪个不影响功能，但事件方式更"Spring 风格"**。
+
+### Commit
+
+```
+feat(cli): picocli root + review/eval/sample subcommands
+```
+
+### 踩坑实录
+
+**坑 2：plan 里 `ApplicationReadyEvent.getApplicationArgs().getSourceArgs()` 在 Spring Boot 3.5 不存在**
+- 现象：编译报 "找不到符号 `getApplicationArgs()`"
+- 原因：Spring Boot 3.x 把 args 直接挂在事件上 → `event.getArgs(): String[]`
+- 修复：改成 `event.getArgs()`
+- 教训：plan 里写的 API 是凭印象，**实际跑起来才能验证**。这就是为什么 T3 step 4 是"smoke test"，不是可选
+
+**坑 3：`ReviewCommand` 构造注入 `CodeReviewAgent` 导致 ApplicationContext 启动失败**
+- 现象：`--help` 还没执行，Spring 已经 `UnsatisfiedDependencyException` 退出
+- 原因：T3 还没到 T11，`CodeReviewAgent` 没有任何 `@Bean` 生产者
+- 修复：改用 `ObjectProvider<CodeReviewAgent>` 延迟解析
+- 教训：**增量开发时，bean 依赖按"先有 placeholder，再补真实"组织**。ObjectProvider 是这种 staged 开发的关键工具
+
+---
