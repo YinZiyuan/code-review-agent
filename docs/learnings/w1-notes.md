@@ -61,3 +61,74 @@ build: migrate to Spring Boot 3.5 + LangChain4j 1.15 starters
 ```
 
 ---
+
+## T2 · Spring Boot 应用骨架 + ConfigurationProperties
+
+### 技术细节
+
+1. **`@SpringBootApplication` 是三个注解的合成糖**
+   - `@SpringBootConfiguration`（一种 `@Configuration`，告诉 Spring 这是配置类）
+   - `@EnableAutoConfiguration`（触发 starter 的 auto-config 机制，扫描 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`）
+   - `@ComponentScan`（扫描同包及子包的 `@Component`/`@Service`/`@Configuration`）
+   - 主类放在根包（`dev.langchain4j.example.codereview`），所以子包 `config/`、`cli/`、`tools/`、`agents/` 都被自动扫到
+
+2. **`@ConfigurationPropertiesScan` vs `@EnableConfigurationProperties`**
+   - 我们用的是 `@ConfigurationPropertiesScan`：自动扫描带 `@ConfigurationProperties` 的类（包括 `record`），不需要逐个注册
+   - 替代方案是 `@EnableConfigurationProperties(CodeReviewProperties.class)`：显式列出每个 properties 类
+   - scan 方式适合多个 properties 类的项目，eager 注册；explicit 方式更明确但啰嗦
+   - **注意点**：`@ConfigurationProperties` 类如果用 `record`，必须 **没有** `@Component`，否则双重注册会冲突
+
+3. **`record` 作为 ConfigurationProperties 的优势**
+   - 不可变（构造后字段不能改）、自动有 equals/hashCode/toString、零样板
+   - Spring Boot 3 支持 record 绑定（2.6+ 引入）
+   - 嵌套 record（`Rag`/`Orchestration`/`Eval`）会被 Spring 自动递归绑定 `code-review.rag.top-k → CodeReviewProperties.rag().topK()`
+   - **Kebab-case 自动转 camelCase**：YAML 写 `top-k`，Java 字段 `topK` —— 这是 Spring Boot 的 relaxed binding
+
+4. **`Path` 和 `Duration` 类型的自动转换**
+   - `${user.home}/.code-review-agent/cache` 自动转成 `java.nio.file.Path`，省掉手动 `Path.of(...)`
+   - `60s` 自动转成 `java.time.Duration`，省掉 `Duration.ofSeconds(60)`
+   - Spring Boot 内置了 `org.springframework.boot.convert.DurationStyle`，支持 `60s` / `1m` / `1h` / `PT1M30S`(ISO-8601)
+
+5. **`web-application-type: none` 的意义**
+   - 默认情况下 Spring Boot 检测到 classpath 上有 `spring-webmvc` 就会启动 Tomcat。我们是 CLI 应用，**显式禁用 web** 避免端口占用 + 启动延迟
+   - 实测启动时间 0.591s（如果加载 web stack 通常要 2-3s）
+
+6. **`api-key: ${MOONSHOT_API_KEY:}` 的两层 fallback**
+   - `${VAR:default}` 是 Spring 占位符语法，没设环境变量就用 default（这里 default 是空串）
+   - 这让 dev 环境用 dummy 也能起来 —— 但真调 LLM 时会报 401。我们之后会在 IT 测试里再覆盖
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| `record` vs 传统 POJO + Lombok `@Data` | record 是 JDK 内置，无第三方依赖；POJO 字段不可变性需要 `final` 显式声明。**选 record** |
+| 整个 properties 写一个大 record vs 嵌套子 record | 大 record 字段会爆炸（10+ 个），嵌套结构和 YAML 层级对齐更可读。**选嵌套** |
+| `@Value("${code-review.rag.top-k}")` vs `@ConfigurationProperties` | `@Value` 散落各处，难维护，无类型校验，IDE 重命名不安全。**选 properties** |
+| 启动延迟可以接受到几秒吗 | CLI 应用每次启动都要付这个成本，越短越好。0.6s 可以接受；如果加 web stack 涨到 3s 就明显了 |
+
+### 面试 Q&A
+
+**Q1**：Spring Boot 的 auto-configuration 是怎么工作的？为什么我加个 `langchain4j-spring-boot-starter` 就有 `ChatModel` bean？
+- **A**：每个 starter 在 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 列出自己的 `@AutoConfiguration` 类。`@SpringBootApplication` 内含 `@EnableAutoConfiguration`，它在启动时读这个文件，加载所有 import 进 IoC 容器。每个 auto-config 类用 `@ConditionalOnClass` / `@ConditionalOnProperty` / `@ConditionalOnMissingBean` 决定是否真注册 bean —— 比如 LangChain4j 的 OpenAI auto-config 会检查 `langchain4j.open-ai.chat-model.api-key` 存在才注册 `OpenAiChatModel`。这套机制让 starter 实现"加依赖就生效，但用户能用 properties 关掉或覆盖"。
+
+**Q2**：你的 `CodeReviewProperties` 为什么用 record？什么时候不能用？
+- **A**：用 record 三个好处：①不可变（线程安全，配置不该被运行时改）、②自动 equals/hashCode/toString、③零样板。**不能用 record 的场景**：①需要 setter（非典型场景，配置不应该改）、②需要 JSR-303 字段级注解放在 setter 上（record 注解放构造参数即可，问题不大）、③要继承（record 是 final）。我们这里都是叶子配置，完美适配。**坑**：record 用 `@ConfigurationProperties` 时**不要**加 `@Component`，否则 Spring 会双重注册抱怨。
+
+**Q3**：你把 web 关了（`web-application-type: none`），为什么不用 `spring-boot-starter` 而非 `spring-boot-starter-web`？这俩什么区别？
+- **A**：starter（无后缀）就是核心 starter，只包含 Spring 容器 + logging + auto-config 基础设施。starter-web 在 starter 基础上加 spring-webmvc + 嵌入式 Tomcat。我们项目是 CLI，不需要 HTTP 端口，所以选 starter。但 LangChain4j 的 OpenAI starter 会传递依赖 `httpclient5`（用来调 LLM HTTP API），所以 jar 里还是会有 HTTP 客户端 —— 那是出站调用，不是入站监听。`web-application-type: none` 是双保险：即使将来有人意外加了 web 依赖，运行时也不会启动 Tomcat。
+
+### Commit
+
+```
+feat: Spring Boot app skeleton + CodeReviewProperties
+```
+
+### 踩坑实录
+
+**坑 1：`git add` 时携带了 4 个不相关的 doc/ 文件**
+- 现象：`git add A B C` 然后 `git commit`，结果 commit 里多出了 4 个用户的个人 docx 文件
+- 原因：未深究，可能是 IDE 自动 stage 或某个 hook。这些文件本来 untracked
+- 修复：`git reset --soft HEAD~1` 撤销 commit（保留 staged 状态），`git reset HEAD doc/` 把 doc/ 路径 unstage，再 `git commit` 一次。现在它们回到 untracked 状态
+- 教训：**重要节点 commit 前先 `git status` 确认 staged 范围**，特别是用 `Write` 工具创建过新文件之后
+
+---
