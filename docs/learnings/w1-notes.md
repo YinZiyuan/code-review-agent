@@ -478,3 +478,97 @@ refactor(tools): GitDiffTool uses GitClient + per-file splitting
 ```
 
 ---
+
+## T7 · StaticAnalyzer 接口 + RegexAnalyzer
+
+### 技术细节
+
+1. **策略模式（Strategy Pattern）的现代 Java 写法**
+
+   ```java
+   public interface StaticAnalyzer {
+       String name();
+       List<Violation> analyze(List<DiffParser.FileDiff> files);
+   }
+   ```
+
+   - 一个接口、多个实现：W1 写 `RegexAnalyzer`，W2 可以加 `CheckstyleAnalyzer` / `SpotbugsAnalyzer` / `SemgrepAnalyzer`，**不改调用方**
+   - 调用方（T8 重构的 `RuleCheckerTool`）只依赖接口，Spring 用 `List<StaticAnalyzer>` 自动注入**所有实现**，多 analyzer 同时跑
+   - 没有 GoF 教科书里那种 "Strategy / Context / ConcreteStrategy" 类层级的繁琐 —— 现代 Java 的接口 + Spring IoC 让这个模式变得几乎隐形
+
+2. **规则内嵌为 `private record Rule` 的设计**
+
+   ```java
+   private record Rule(String id, Severity severity, Pattern pattern, String message) { }
+   private static final List<Rule> RULES = List.of(...)
+   ```
+
+   - 9 条规则全部是**数据**（regex + 元数据），不是行为 —— 用 record 表达比抽象类 / lambda 都更准确
+   - `static final List<Rule>` 启动时一次性编译所有 Pattern（Pattern 编译有成本，约 100μs/条），后续 `analyze()` 调用零编译开销
+   - `private` 嵌套 record 让 Rule 不污染 package 命名空间 —— 它是 RegexAnalyzer 的内部表示，不该泄漏到外部
+
+3. **`matches()` vs `find()` —— 经典正则坑**
+
+   - `matcher.matches()`：整个字符串**全匹配**正则
+   - `matcher.find()`：正则在字符串中能**找到**子串
+   - 我们规则全部用 `.*PATTERN.*` 包前后缀 + `matches()`，等价于 `find()` 但更明确意图："这一行包含某种模式"
+   - **反例**：如果写 `Pattern.compile("TODO")` + `matches()`，只有那一行字符串恰好就是 "TODO" 才命中，差点漏掉 99% 的 TODO 注释。**选错一个方法 = 100% 漏检**
+
+4. **报告"文件行号"而不是"diff 行号"** （延续 T4 的成果）
+
+   ```java
+   for (DiffParser.AddedLine added : file.addedLines()) {
+       // added.lineNumber() 已经是 DiffParser 算好的"新文件真实行号"
+       out.add(new Violation(..., added.lineNumber(), ...));
+   }
+   ```
+
+   - 因为 T4 的 DiffParser 已经做了 diff 行号 → 文件行号映射，Analyzer 直接消费**正确的语义行号**
+   - 这是分层架构的红利：Analyzer 不需要知道 unified diff 格式，更不需要解析 hunk header
+   - **测试 `reportsFileLineNotDiffLine` 守护这个不变量**：构造一个起始 line=100 的 FileDiff，违规行必须报 101（不是 list 索引 1 / 不是 diff 行 2）
+
+5. **`@Component` 让 Spring 自动收集所有 analyzer**
+
+   - 接口 `StaticAnalyzer` 没标注，实现类 `RegexAnalyzer` 标 `@Component`
+   - T8 注入：`private final List<StaticAnalyzer> analyzers;` —— Spring 自动把所有 `@Component` 实现的 `StaticAnalyzer` 注进 list
+   - 这是 Spring 的 **collection injection**：对 List/Set/Map 类型，Spring 把所有匹配的 bean 都装进来，**注册顺序 = 声明顺序 / `@Order` 注解**
+   - 加新 analyzer 只需要 ①实现接口、②加 `@Component`，**无需改任何注册代码**。这就是"开闭原则"在 IoC 容器里的体现
+
+6. **为什么先做 `Severity` 一行枚举（plan 说 T12 才做完整版）**
+
+   - T12 才系统化做 `Category`/`Severity`/`Citation`/`ReviewFinding` —— 完整的结构化输出模型
+   - 但 T7 的 `Violation` 已经需要 `Severity` —— **不可能跳过 T12 才做 T7**
+   - 折中：T7 先创建一行版 `enum Severity { CRITICAL, WARNING, SUGGESTION }`，T12 时如果要加字段（比如 numeric weight、display label）再扩
+   - 这是 **incremental construction**：复杂结构 W1 拆几个 milestone 渐进暴露，每个 milestone 内部都能跑
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| 自己写 regex vs 引入 Checkstyle/SpotBugs | 它们是真编译器级别的静态分析，但 ①需要项目能编译（agent 拿到的是 diff 不是完整项目），②依赖体积大（Checkstyle ~5MB），③学习曲线陡。**W1 用 regex 兜底，W2 加 Checkstyle 作为补充而非替代** |
+| 9 条规则硬编码 vs YAML 配置 | 配置化让"加规则不改代码"，但 ①调试难（YAML 写错正则没编译期检查），②W1 规则少且稳定。**硬编码 + 规则改动走 commit；规则膨胀到 50+ 条再配置化** |
+| Severity 三级 vs 五级 (BLOCKER/CRITICAL/MAJOR/MINOR/INFO) | 五级看似细，实际人很难稳定区分 MAJOR 和 MINOR。**三级（CRITICAL/WARNING/SUGGESTION）和团队心智模型对齐，符合 GitHub PR review 的常见三段态度** |
+| `Violation` 包含 raw line 字符串 vs 只有元数据 | 加 raw line 让报告自包含（不需要回读源码就能 review），但 violation 列表会显著膨胀 token。**只元数据**，需要时让 Tool 层从 FileDiff 反查 |
+| 把 analyzer 放 `analyzer/` 包还是 `tools/` 包 | analyzer 是基础设施（不依赖 LLM 注解，纯算法），属于 infra 类同辈；tools/ 是 LLM 工具门面。**`analyzer/` 独立包**，T8 的 `RuleCheckerTool`（tools/）依赖 `analyzer/` |
+
+### 面试 Q&A
+
+**Q1**：你为什么用策略模式做静态分析，而不是直接写一个大 if-else？
+
+- **A**：三个核心理由。①**开闭原则**：未来加 Checkstyle / SpotBugs / Semgrep analyzer，只新增类不改调用方。一个大 if-else 加规则要改主流程，触发更多回归测试。②**独立测试**：每个 analyzer 一组单测，新规则的失败不污染其他 analyzer 的测试报告。③**可观测性**：每条 `Violation` 带 `rule` 字段（来自具体 analyzer），评测时能拆"哪类 analyzer 的召回率高 / 误报多"，是评测指标拆分的前提。**反面**：如果只有 1 种 analyzer 且永不扩展，策略模式确实是 over-engineering；但 W1 plan 明确要在 W2/W3 加 Checkstyle、Semgrep，前置接口划分是合理的。
+
+**Q2**：你的规则是用 `matches()` + `.*PATTERN.*`，为什么不用 `find()`？两者什么区别？
+
+- **A**：语义上等价（都表示"行内包含某模式"），但 **`matches()` 强制全字符串覆盖**让正则设计意图更明确。如果哪天 maintainer 顺手把 `.*` 去掉一个，`find()` 还能正常工作（继续找子串），`matches()` 会立刻退化成"必须等于"——bug 在测试里立刻暴露。这是**显式优于隐式**的体现。**另一层面**：`matches()` 配合 `.*A.*`，让 Pattern 的可读性变成"必须长这样"，比 `find()` 的"在某处出现"更接近 SonarQube / Semgrep 那种规则定义风格。**经典坑**：很多人写 `Pattern.compile("TODO").matcher(line).matches()` 期望"包含 TODO 就命中"，结果只有那一行 trim 后恰好是 "TODO" 才命中——99% 的 TODO 漏检。**规则**：写 regex 之前先想清楚 matches/find，并写一个反例的测试卡住意图。
+
+**Q3**：Spring 的 collection injection (`List<StaticAnalyzer>`) 你是怎么用的？有什么注意点？
+
+- **A**：用法是声明 `private final List<StaticAnalyzer> analyzers`，Spring 会扫所有 `@Component`/`@Service` 实现的 `StaticAnalyzer` bean，全部注入 list。**三个注意点**。①**顺序**：默认按 bean 注册顺序（同 package 大致是文件名字母序，跨 package 不可控），需要确定顺序时用 `@Order(1)` 或实现 `Ordered`。我这里 analyzer 并行汇总结果，顺序不影响正确性。②**空列表**：没有任何实现时 Spring 注入空 list，**不报错**——这是好事（可关闭功能），但也可能掩盖配置 bug（忘了加 `@Component`）；建议在 `@PostConstruct` 或启动日志里 assert `!analyzers.isEmpty()`。③**Map 注入**：`Map<String, StaticAnalyzer>` 会用 **bean name 作为 key**，便于按名字路由（"用哪个 analyzer 取决于配置项"），这是更高级的用法。**为什么不用 `ApplicationContext.getBeansOfType()`**：那是手动检索，丢失类型安全和构造时校验。**collection injection 是声明式 IoC 的优雅落点**。
+
+### Commit
+
+```
+feat(analyzer): StaticAnalyzer interface + RegexAnalyzer
+```
+
+---
