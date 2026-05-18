@@ -572,3 +572,98 @@ feat(analyzer): StaticAnalyzer interface + RegexAnalyzer
 ```
 
 ---
+
+## T8 · RuleCheckerTool 重构 — 走 DiffParser + StaticAnalyzer
+
+### 技术细节
+
+1. **重构对照表：旧 vs 新**
+
+   | 维度 | 旧实现 | 新实现 |
+   | --- | --- | --- |
+   | git 子进程 | `new ProcessBuilder("git", "diff", ref)` 直接 fork | 注入 `GitClient`（超时 + InterruptedException 正确处理） |
+   | diff 解析 | `diff.split("\n")` + `for (i = ...) i+1` 当行号 | 注入 `DiffParser`，直接消费**新文件真实行号** |
+   | 规则检查 | 9 条硬编码 `if (code.matches(...))` 散在主流程 | 委派给 `List<StaticAnalyzer>`，主流程只做汇总 |
+   | 输出格式 | 手拼字符串，没有 rule id | 带 rule id 的结构化字符串（评测可以按 rule 聚合） |
+   | 行号正确性 | **错的**（diff 数组下标 + 1） | **对的**（hunk header + 行类型增减） |
+
+   每一列是独立的优化方向；这次重构一口气全做掉是因为它们互相耦合（修了行号 bug 但还用旧 ProcessBuilder 没意义）。
+
+2. **`List<StaticAnalyzer>` —— Spring collection injection 的实战首秀**
+
+   ```java
+   public RuleCheckerTool(GitClient g, DiffParser d, List<StaticAnalyzer> analyzers) {
+       this.analyzers = analyzers;
+   }
+   ```
+
+   - Spring 启动时扫描所有 `@Component` 实现的 `StaticAnalyzer`（目前只有 `RegexAnalyzer`），注入成一个 list
+   - 未来加 `CheckstyleAnalyzer` / `SemgrepAnalyzer` —— **零改动** RuleCheckerTool，新加的 analyzer 自动出现在 list 里
+   - 主循环 `for (StaticAnalyzer a : analyzers) all.addAll(a.analyze(files))` —— Tool 不知道有几个 analyzer、是什么 analyzer，只负责汇总结果
+   - 这就是依赖反转 + IoC 的实际收益：**主流程稳定，扩展通过新增 bean 实现**
+
+3. **简单顺序合并 vs 并行执行**
+
+   ```java
+   for (StaticAnalyzer a : analyzers) {
+       all.addAll(a.analyze(files));
+   }
+   ```
+
+   - 现在是同步串行：W1 只有 1 个 analyzer 无所谓；W2 加 Checkstyle / SpotBugs 后串行会慢（Checkstyle 一次可能 1-2s）
+   - 改并行最简洁的方式：`analyzers.parallelStream().flatMap(a -> a.analyze(files).stream()).toList()`
+   - **W1 暂不做的理由**：①只有 1 个 analyzer，并发收益为 0；②并行后**结果顺序不稳定**，会让 LLM 看到的 prompt 抖动，评测复现性变差；③parallelStream 共享 ForkJoinPool common pool，多个 review 同时跑会互相干扰
+   - 真要做并发，T4-evaluation Phase 加 `ExecutorService` 提供 deterministic ordering 控制更稳
+
+4. **错误转字符串而不是抛异常**
+
+   ```java
+   try { diff = gitClient.diff(...); }
+   catch (GitClient.GitException e) {
+       return "Error running git diff: " + e.getMessage();
+   }
+   ```
+
+   - LangChain4j 的 `@Tool` 方法**返回值就是 LLM 看到的工具输出**，抛异常会导致 agent 调用失败 → 整个 review 中断
+   - 把错误转成自然语言字符串，LLM 可以根据返回内容"决定下一步"——比如 "Error: not a git repo" 它可能放弃 / 改用其他工具 / 报告给用户
+   - 这是 LLM 工具设计的核心原则：**用文本反馈，让模型而不是异常处理器决策**
+   - **反面**：底层异常被吞掉，调试困难。生产里要在 Tool 边界 log 异常（logger.warn(...,e)），返回值简化给 LLM
+
+5. **每次 review 重新 git diff，没有缓存**
+
+   - `RuleCheckerTool.checkRules` 和 `GitDiffTool.getGitDiff` 都会 `gitClient.diff(repo, ref)` —— 同一次 review 跑了两次相同的 git 命令
+   - 30s 超时 + git diff 通常 <100ms，两次也就 200ms，**目前不优化**
+   - W2 引入 ReviewContext（封装"一次 review 的所有缓存数据"）后，两个 tool 共享同一个 FileDiff 对象，自然去重
+   - 这是典型的 "premature optimization" 警惕：先建链路，瓶颈出现了再加缓存
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| Tool 自己持 GitClient vs 让 GitDiffTool 暴露 FileDiff 给 RuleCheckerTool | 让两个 tool 共享中间结果会让 RuleCheckerTool 依赖 GitDiffTool —— 工具间耦合是危险的（agent 调用顺序由 LLM 决定，可能 RuleChecker 先于 GitDiff）。**Tool 自给自足，重复成本由 W2 ReviewContext 治理** |
+| 串行 analyzer vs 并行 | 见上面"技术细节 3"。**串行更可控**，等多 analyzer 后再考虑 |
+| 抛异常 vs 错误字符串 | LLM Tool 必须返回字符串，否则 agent 链路断。**返回错误字符串 + log warn** |
+| 输出字符串包含 rule id vs 不包含 | rule id 让评测可以"哪条规则误报最多 / 召回最低"做聚合 —— 评测必需。**包含** |
+| 移到 `tools/` 子包 vs in-place | 与 T6 GitDiffTool 同一逻辑，**tools/ 是 LLM 工具门面层** |
+
+### 面试 Q&A
+
+**Q1**：你这个 Tool 同时注入了 GitClient、DiffParser 和 `List<StaticAnalyzer>` 三个依赖，会不会职责太多？
+
+- **A**：表面看是三个依赖，本质上**三个角色对应一个端到端工作流**：①取数据（GitClient）、②结构化数据（DiffParser）、③分析数据（StaticAnalyzer）。每一步都有独立可测试的协作者，Tool 自己只做"流程编排 + 输出格式化"。这恰恰是**单一职责**——Tool 的职责就是"流程编排"，不是"git 调用 + diff 解析 + 规则检查"三件事。**反例**：如果让 Tool 自己 `new ProcessBuilder`、自己 `split("\n")`、自己写 9 个 `if`——那才是职责爆炸。**判断标准**：依赖的数量不是职责复杂度的代理；看 Tool 的"代码本身做了什么"——它只在 try/catch 和 for 循环里组合调用，**没有任何业务逻辑代码**，这就是良好抽象。
+
+**Q2**：你的 Tool 用 try-catch 把 GitException 转成字符串返回，而不是让异常向外冒泡。这是 anti-pattern 吗？
+
+- **A**：在普通 Java 服务里**是 anti-pattern**（吞异常隐藏 bug）；但在 LLM Tool 边界**是 best practice**。原因：LangChain4j 的 `@Tool` 注解方法返回值就是 LLM 看到的"工具输出"，**LLM 通过文本理解失败**——它可以选择重试、换工具、或报告给用户。如果抛异常，LangChain4j 的 agent 链路会中断（除非 framework 帮你 catch，但行为不可控）。两个补救措施让它不是真正的 "swallow exception"：①每次 catch 时 logger.warn 带堆栈（debug 时有线索），②错误消息**包含具体原因**（"git command timed out" / "Not a directory"），LLM 和最终用户都能读懂。**原则**：**进程边界吞异常，但留下日志线索 + 让对端能根据返回值决策**。LLM tool / HTTP API / gRPC 服务边界都遵循这个原则。
+
+**Q3**：你这个 Tool 和 GitDiffTool 都会 `gitClient.diff(...)` —— 一次 review 调两次 git diff。这不浪费吗？
+
+- **A**：理论上浪费，实际上 W1 不优化。三个理由。①**成本量级**：git diff 通常 <100ms，两次 200ms 相对于 LLM 调用（数百毫秒到秒级）可以忽略。②**为什么不让两个 tool 共享**：tool 是 agent 自主调用的，**调用顺序由 LLM 决定**（可能先 checkRules 再 getGitDiff，或反过来）；如果让 RuleChecker 依赖 GitDiffTool 的输出，相当于强制 LLM 必须先调 GitDiff——这剥夺了 agent 的自主权，也违反"工具自洽"原则。③**正确的优化时机**：W2 引入 `ReviewContext`（一次 review 创建一次的上下文对象，包含 repo/ref/FileDiff/缓存），所有 tool 共享同一个 context，自然去重——而不是工具间互相依赖。**反面**：如果 git diff 真的成了瓶颈（大 repo / 远程 git），可以在 GitClient 层加 in-memory cache（key = repo+ref），TTL 1s 就够。**先建链路，瓶颈出现再优化。**
+
+### Commit
+
+```
+refactor(tools): RuleCheckerTool uses DiffParser (real line numbers) + StaticAnalyzer
+```
+
+---
