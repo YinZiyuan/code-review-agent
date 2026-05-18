@@ -1706,7 +1706,7 @@ git commit -m "fix(agent): align prompt with tool signatures; wire via AgentConf
 **Files:**
 - Create: `src/main/java/dev/langchain4j/example/codereview/model/Category.java`
 
-- [ ] **Step 1: Create `Category.java`**
+- [x] **Step 1: Create `Category.java`**
 
 ```java
 package dev.langchain4j.example.codereview.model;
@@ -1716,7 +1716,7 @@ public enum Category {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/model/Category.java
