@@ -667,3 +667,130 @@ refactor(tools): RuleCheckerTool uses DiffParser (real line numbers) + StaticAna
 ```
 
 ---
+
+## T9 · EmbeddingCache — 把向量库序列化到本地 JSON
+
+### 技术细节
+
+1. **为什么要做这层缓存**
+
+   - `BgeSmallEnV15QuantizedEmbeddingModel` 是 ONNX 量化模型，单条 embedding 计算大约 5-20ms（CPU-only）
+   - 知识库（`review-guidelines/`）切 chunk 后可能有几十到几百个 segment，**整索引一次 1-5s**
+   - 每次启动 agent 都重算 → CLI 工具的"启动延迟感知"非常差（用户期望 <500ms）
+   - 缓存命中后启动从 **5s 降到 100ms 量级**，是 100% 用户体验改进
+   - 缓存的语义：embedding 是**模型 + 文档**的函数；只要模型不变、文档不变，向量就不变，**可以无脑磁盘缓存**
+
+2. **LangChain4j 内置的 `serializeToJson()` / `fromJson(String)`**
+
+   ```java
+   String json = store.serializeToJson();
+   InMemoryEmbeddingStore<TextSegment> restored = InMemoryEmbeddingStore.fromJson(json);
+   ```
+
+   - 用的是 `JacksonInMemoryEmbeddingStoreJsonCodec`（jar 里能看到这个类）
+   - 序列化时把每条 entry 的 `embedding（float[]）+ id（UUID）+ embedded（TextSegment）` 一并打包，**不只是向量**
+   - 这是 LangChain4j 设计的好处：常用的中间态有内置序列化，不用自己撸 Jackson mixin
+
+3. **API 漂移踩坑：`findRelevant` → `search`**
+
+   - plan 里写 `loaded.get().findRelevant(embedding, 1)` —— **1.15 里这个方法已经移除**（早期 deprecated 后 1.15 直接干掉）
+   - 现在的 API 是 `search(EmbeddingSearchRequest)` 返回 `EmbeddingSearchResult`：
+
+   ```java
+   EmbeddingSearchRequest req = EmbeddingSearchRequest.builder()
+           .queryEmbedding(emb).maxResults(1).build();
+   List<EmbeddingMatch<TextSegment>> matches = store.search(req).matches();
+   ```
+
+   - 怎么发现的：plan 在 T9 注释里就埋了"check method names and adjust"。我用 `javap -p` 直接看 `langchain4j-1.15.0.jar` 里的 `InMemoryEmbeddingStore.class`，对照 plan 的方法名，**几秒钟就锁定差异**
+   - **教训**：beta-版本依赖的 API 出现 plan-vs-实现偏差时，**别问 LLM，直接 javap jar**——LLM 训练数据可能停留在更老版本，jar 里的字节码是真实事实源
+
+4. **磁盘缓存的关键 4 步：mkdir → write → exists check → read**
+
+   ```java
+   Files.createDirectories(cacheDir);  // 幂等，目录不存在才创建
+   Files.writeString(file, json, UTF_8);  // 全量写
+   if (!Files.exists(file)) return Optional.empty();
+   String json = Files.readString(file, UTF_8);
+   ```
+
+   - `Files.createDirectories` vs `Files.createDirectory`：后者要求父目录存在 + 当前目录不存在，前者递归创建且幂等 —— **永远用 createDirectories**
+   - 全量 write 没有原子保证：写一半进程被杀会留下半截 JSON，下次 `fromJson` 解析失败抛异常。**生产应该写 tmpfile + Files.move(ATOMIC_MOVE)**；W1 不做（启动失败时手删 cache 即可）
+   - 显式 `StandardCharsets.UTF_8`：JSON 里没非 ASCII 字符也加上，**养成习惯**（Windows JVM 默认 GBK）
+
+5. **`sanitize(key)` —— 防止 key 注入文件系统**
+
+   ```java
+   key.replaceAll("[^a-zA-Z0-9._-]", "_")
+   ```
+
+   - 用户 / 调用方可能把 `"guidelines/v1"` 当 key —— 不 sanitize 就生成 `guidelines/v1.json` 触发**目录穿越**或文件系统 illegal char
+   - 白名单（保留可打印安全字符）比黑名单（替换危险字符）**更安全**：永远只可能产生合法字符
+   - 这是文件路径处理的**通用防御写法**：任何来自外部的 key 拼路径前都要 sanitize
+   - **反例**：用 `Path.resolve(key)` 不 sanitize，攻击 key `"../../etc/passwd"` 就能跳出 cacheDir。Java 的 `Path.resolve` 不会拦截 `..`
+
+6. **`@TempDir` 注入：JUnit 5 的临时目录便利**
+
+   ```java
+   @TempDir Path cacheDir;
+   ```
+
+   - JUnit 5 给每个 test 注入独立临时目录，跑完自动删
+   - **没有副作用泄露**：A test 写的 cache 不会污染 B test
+   - 之前 T5 GitClientTest 用过相同模式
+
+7. **`EmbeddingCache` 暂时不是 `@Component` 的原因**
+
+   - T9 单独看，加 `@Component` 也行
+   - 但 T10 `RagConfig` 是 `@Configuration`，会显式 `@Bean` 注册 `EmbeddingCache(props.rag().embeddingCacheDir())`
+   - 如果两边都注册（`@Component` + `@Bean`），Spring 会因"找到两个候选 bean"启动失败
+   - **决策**：W1 走 `@Bean` 路径（路径来自 properties，需要构造参数），不加 `@Component`。等 T10 commit 后这个组合就闭合了
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| JSON 序列化 vs Java native serialization | native serialization 紧凑、快，但 **跨版本不兼容**（LangChain4j 升级 entry 字段就破缓存）；JSON 慢一点但 schema 演化容忍度高 + 可读（debug 时能 cat 看）。**JSON** |
+| 自己拿 Jackson 序列化 vs `serializeToJson` 内置 | 自己写要 mixin TextSegment / Embedding，重复造轮子。LangChain4j 既然有就用。**用内置** |
+| 全量写 vs 增量 append | InMemoryEmbeddingStore 没暴露"导出 delta"的 API；增量需要 store 维护 dirty set。**全量** —— 写一次几 MB 不算开销 |
+| 缓存失效条件做版本号 vs hash | 简单 versioning（CACHE_KEY = "review-guidelines"）是 W1 的事；W2 可以 hash 所有 guideline 文件内容当 key，**guideline 改了 cache 自动失效**。**W1 先简单，W2 加 hash** |
+| cache miss 时静默重建 vs warn 用户 | T10 `KnowledgeBaseIndexer` log.info 说明 "Building from scratch" —— 让用户知道首次启动慢的原因 |
+
+### 面试 Q&A
+
+**Q1**：你为什么要给 embedding 加磁盘缓存？这个优化有什么常见误区？
+
+- **A**：embedding 缓存是 RAG 系统**最便宜也最有效**的启动优化。BGE-small 量化模型一条 5-20ms，知识库几百条就是几秒；CLI 工具每次启动重算，用户体验直接崩。**缓存语义**：embedding = f(model, text)，model 不变 + text 不变 → 向量必然相同，可以无脑缓存。**常见误区三个**。①**忘了把模型版本进 key**：从 BGE-small 升级到 BGE-large，老 cache 还在用，向量维度对不上爆炸。我现在用 `CACHE_KEY = "review-guidelines"`（W1 只有一个模型），下次升级要改成 `guidelines-bge-small-v15`。②**忘了文档变更失效**：guideline 文档改了，应该重建 cache。W2 计划用文档内容 hash 当 key 自动失效，W1 是手工删 `~/.code-review-agent/cache/`。③**没考虑并发**：多进程同时 cache miss 会全量重建并 race-condition 覆盖文件。CLI 单进程不是问题，将来上服务端要加文件锁。
+
+**Q2**：你的 cache `sanitize(key)` 用白名单替换非法字符 —— 这是不是 over-engineering？
+
+- **A**：**不是**。这是文件路径处理的标准防御。具体威胁：①**目录穿越**：用户 key 包含 `../../etc/passwd`，不 sanitize 直接 `cacheDir.resolve(key)` 就跳出 cacheDir 写到任意路径——`Path.resolve` 不会拦截 `..`。②**文件系统非法字符**：Windows 不允许 `<>:|?*`，Mac/Linux 允许但下次读会失败。③**键映射歧义**：`"foo/bar"` 和 `"foo_bar"` 可能映射到同一文件，cache 混乱。白名单（只保留 alphanumeric + `._-`）覆盖所有威胁，比黑名单**只能想到我已知的攻击向量**更安全。**性能成本**：一次 regex replace，O(n) on key length，几乎为零。**反例**：Snyk 早年统计过，文件路径相关的 CVE 里 60%+ 是 path traversal —— 这是真威胁，不是 over-engineering。
+
+**Q3**：你写的 `Files.writeString` 不是原子的，如果 JVM 中途崩了 cache 会损坏。生产里你会怎么改？
+
+- **A**：标准 fix 是 **temp file + atomic rename**：
+
+  ```java
+  Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+  Files.writeString(tmp, json, UTF_8);
+  Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+  ```
+
+  原理：POSIX `rename(2)` 是 inode 层的原子操作 —— 要么旧文件，要么新文件，**不存在"半新半旧"中间态**。`ATOMIC_MOVE` 在大多数文件系统（ext4 / APFS / NTFS）能保证；跨文件系统的 move 会降级成 copy+delete 失去原子性，会抛 `AtomicMoveNotSupportedException`，这种情况要选 cache 路径和工作目录同一卷。**W1 没做的原因**：①CLI 短期任务，写一次 cache 后立刻 close（被中断概率极低），②即使损坏了用户手删即可（无副作用），③加这个会让代码从 5 行变 15 行 + 一个异常分支测试。**生产服务（长跑 + 高并发）必须做**；CLI 工具的工程权衡可以省。**这就是 YAGNI 的合理应用 —— 知道什么时候该加，但有充分理由不加。**
+
+### Commit
+
+```
+feat(infra): EmbeddingCache JSON round-trip
+```
+
+### 踩坑实录
+
+**坑 4：plan 写的 `findRelevant(Embedding, int)` 在 langchain4j 1.15 已删**
+- 现象：测试编译报"找不到符号 findRelevant"
+- 原因：`findRelevant` 早期 deprecated 后 1.15 直接删，替换为 `search(EmbeddingSearchRequest)` 返回 `EmbeddingSearchResult`
+- 修复：测试改用 `EmbeddingSearchRequest.builder().queryEmbedding(...).maxResults(1).build()` + `.search(req).matches()`
+- 怎么找到的：plan 注释里早就提示 "If the method names differ, check javadoc and adjust"。用 `javap -p` 直接看 jar 里的 `InMemoryEmbeddingStore.class`，几秒钟锁定真实 API
+- 教训：**beta 依赖的 API 信息源排序：jar 里的字节码 > 官方 release notes > LLM > Stack Overflow**。jar 是真实事实源，前三个都可能滞后或错
+
+---
