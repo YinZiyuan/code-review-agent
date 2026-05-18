@@ -1,7 +1,6 @@
 package dev.langchain4j.example.codereview.cli;
 
-import dev.langchain4j.example.codereview.CodeReviewAgent;
-import org.springframework.beans.factory.ObjectProvider;
+import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
@@ -18,19 +17,14 @@ public class ReviewCommand implements Callable<Integer> {
     @Parameters(index = "1", description = "Git ref to diff against", defaultValue = "HEAD~1")
     private String ref;
 
-    private final ObjectProvider<CodeReviewAgent> agentProvider;
+    private final CodeReviewAgent agent;
 
-    public ReviewCommand(ObjectProvider<CodeReviewAgent> agentProvider) {
-        this.agentProvider = agentProvider;
+    public ReviewCommand(CodeReviewAgent agent) {
+        this.agent = agent;
     }
 
     @Override
     public Integer call() {
-        CodeReviewAgent agent = agentProvider.getIfAvailable();
-        if (agent == null) {
-            System.err.println("CodeReviewAgent bean not wired yet (lands in T11).");
-            return 2;
-        }
         System.out.println("Repository : " + repoPath);
         System.out.println("Diff ref   : " + ref);
 

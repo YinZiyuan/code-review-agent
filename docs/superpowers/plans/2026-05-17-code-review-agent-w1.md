@@ -1591,7 +1591,7 @@ git commit -m "feat(rag): KnowledgeBaseIndexer with disk-cached embeddings"
 - Modify: `src/main/java/dev/langchain4j/example/codereview/CodeReviewAgent.java` → `agents/CodeReviewAgent.java`
 - Create: `src/main/java/dev/langchain4j/example/codereview/config/AgentConfig.java`
 
-- [ ] **Step 1: Move + rewrite `CodeReviewAgent.java`**
+- [x] **Step 1: Move + rewrite `CodeReviewAgent.java`**
 
 Move to `src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java`.
 
@@ -1633,7 +1633,7 @@ public interface CodeReviewAgent {
 
 (Task 16 swaps the return type to `ReviewResult`. Keeping `String` for now keeps the picocli `ReviewCommand` working end-to-end.)
 
-- [ ] **Step 2: Create `AgentConfig.java`**
+- [x] **Step 2: Create `AgentConfig.java`**
 
 ```java
 package dev.langchain4j.example.codereview.config;
@@ -1665,17 +1665,17 @@ public class AgentConfig {
 }
 ```
 
-- [ ] **Step 3: Delete old root-level `CodeReviewAgent.java`**
+- [x] **Step 3: Delete old root-level `CodeReviewAgent.java`**
 
 ```bash
 git rm src/main/java/dev/langchain4j/example/codereview/CodeReviewAgent.java
 ```
 
-- [ ] **Step 4: Update `ReviewCommand` import**
+- [x] **Step 4: Update `ReviewCommand` import**
 
 Open `cli/ReviewCommand.java`, change import `dev.langchain4j.example.codereview.CodeReviewAgent;` to `dev.langchain4j.example.codereview.agents.CodeReviewAgent;`.
 
-- [ ] **Step 5: Build + run smoke test**
+- [x] **Step 5: Build + run smoke test**
 
 Run: `MOONSHOT_API_KEY=dummy mvn -q clean package -DskipTests`
 Expected: BUILD SUCCESS.
@@ -1687,7 +1687,7 @@ java -jar target/code-review-agent-1.0.0.jar review . HEAD~1
 ```
 Expected: agent fetches diff, runs analyzers, returns a Markdown review. Tool calls succeed without "Method not found" errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java \
