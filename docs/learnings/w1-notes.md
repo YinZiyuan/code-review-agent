@@ -387,3 +387,94 @@ feat(infra): GitClient subprocess wrapper with timeout
 ```
 
 ---
+
+## T6 · GitDiffTool 重构 — 走 GitClient + 按文件拆分
+
+### 技术细节
+
+1. **重构动机：把"工具"从"基础设施"里拆出来**
+
+   - 原 `GitDiffTool` 直接 `new ProcessBuilder("git", "diff", ref)` —— 既是 LLM 工具，又自己 fork 子进程，**职责糅在一起**
+   - 新结构：`tools/GitDiffTool` 只负责**呈现**（per-file 切分 + 截断 + 错误转文本），子进程交给 `infra/GitClient`，diff 解析交给 `infra/DiffParser`
+   - 包路径也反映分层：`tools/` = LLM agent 看见的工具门面，`infra/` = 不依赖 LLM 的基础设施。**未来加 `RuleCheckerTool`、`KnowledgeBaseTool` 都放 `tools/`**
+
+2. **per-file 截断策略：`MAX_PER_FILE_CHARS` + `MAX_TOTAL_CHARS` 两道阀门**
+
+   ```
+   per file:   ≤ 4000 chars → 原样返回
+              > 4000 chars → header（400 chars）+ "[... truncated, N added lines total ...]" + 前 20 个新增行
+   total:     超过 12000 → 在文件边界截断，附 "[diff truncated; N files total]"
+   ```
+
+   - 为什么两道：单文件爆炸（生成的 .pb.go / lock 文件）和总量爆炸（大型 PR）是两种独立失控模式
+   - 截断保留 `header（diff --git a/... + ---/+++）` 让 LLM 知道**这是什么文件**，附 20 个新增行让它知道**改了什么**，丢掉 hunk 上下文（context lines）—— 牺牲精度换 token 预算
+   - 数字怎么定的：Moonshot k1.5 context 是 128k tokens ≈ 400k chars，留 80% 给系统消息 + 规范 + RAG → 单次 diff 上限大约 12k chars。**这是经验值，看 baseline metrics 再调**
+
+3. **从 raw diff 里"切"文件段的小技巧**
+
+   ```java
+   String marker = "diff --git a/" + file.path() + " b/" + file.path();
+   int start = rawDiff.indexOf(marker);
+   int end = rawDiff.indexOf("\ndiff --git ", start + marker.length());
+   String section = (end < 0) ? rawDiff.substring(start) : rawDiff.substring(start, end);
+   ```
+
+   - **关键点**：`end` 搜的是 `\ndiff --git `（前缀换行），避免在同一文件内的 `diff --git` 字符串里误命中（比如 patch 文件本身包含 diff 文本）
+   - 为什么不让 DiffParser 直接返回 raw section：DiffParser 当前只输出**结构化的新增行**，加 raw section 字段会让它变成"半结构化 + 半 raw"，职责混淆。**保持 DiffParser 纯结构化，raw 切分留在 Tool 里**
+   - 性能：每个文件一次 `indexOf` O(n)，总体 O(n·files)；几十个文件没问题，几百个文件 PR 才需要预切（极少见）
+
+4. **Mockito + 真 `DiffParser` 的混合测试策略**
+
+   ```java
+   GitClient git = Mockito.mock(GitClient.class);
+   when(git.diff(any(), any())).thenReturn(fakeDiff);
+   GitDiffTool tool = new GitDiffTool(git, new DiffParser());
+   ```
+
+   - **mock 外部依赖**（GitClient 要 fork 进程 + 文件系统），**用真依赖**（DiffParser 是纯函数、无副作用）
+   - 这种"边界处 mock，内部用真"的测试结构叫 **sociable test**（vs solitary/isolation test）—— 测**协作行为**比单测 mock 验证更接近真实
+   - 反例：如果连 DiffParser 也 mock，测试只能验证"GitDiffTool 调用了 DiffParser"，**不验证拼装出的字符串结果**，等于自己跟自己核对脚本
+
+5. **Mockito 在 Spring Boot 项目里的"免配置"**
+
+   - `spring-boot-starter-test` 已经传递依赖了 Mockito 5、AssertJ、JUnit 5 —— **直接 import 用，不需要单独加依赖**
+   - pom.xml 里搜 mockito 没结果是正常的；`mvn dependency:tree | grep mockito` 才能看到它是 transitive
+   - 这是 starter 提供"测试一站式"体验的体现
+
+6. **`git rm` vs `rm`**
+
+   - 删 tracked 文件用 `git rm`：直接把删除登记到 index，下次 commit 就生效
+   - 用 `rm`：文件系统层删了，但 git 还认为它存在，要再 `git add path` 才登记
+   - 工作流上 `git rm` 一步到位、`rm + git add` 两步等价，**保持习惯用 `git rm` 减少 status 混乱**
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| 改 `GitDiffTool` in-place vs 移到 `tools/` 子包 | 移到子包让分层清晰（tools = 工具门面），未来 `RuleCheckerTool` 也搬过去；in-place 会让根包变成 "什么都有的大杂烩"。**移子包** |
+| 全 mock（含 DiffParser）vs sociable test（mock GitClient，真 DiffParser）| sociable test 验证更接近真实拼装；全 mock 太脆 + 信号弱。**sociable** |
+| 截断时保留前 20 个新增行 vs 取头尾各 10 行 | 头尾各 10 行更全景，但实现复杂；前 20 行简单且通常 PR 改动集中在前部。**前 20 行，等评测发现召回掉了再改** |
+| 把 raw section 抽取放进 DiffParser vs 留在 Tool | DiffParser 当前纯结构化（返回 records），加 raw 字段就混淆职责。**留 Tool**，未来若多个 Tool 都要 raw 再考虑抽到 DiffParser |
+| `MAX_PER_FILE_CHARS / MAX_TOTAL_CHARS` 写常量 vs 进 `CodeReviewProperties` | 进 properties 早晚要做（评测要扫不同上限的影响），但 W1 baseline 还没建立、调参没依据。**先常量，T17 之后看评测数据再迁** |
+
+### 面试 Q&A
+
+**Q1**：你的 LLM "工具"（Tool）和你的"基础设施"（GitClient/DiffParser）为什么分两层？
+
+- **A**：核心是**职责单一 + 复用边界**。Tool 是给 LLM 看的门面 —— `@Tool` 注解 + `@P` 参数描述 + 返回字符串。它的职责是"把基础事实转成 LLM 能消化的格式"（截断、per-file 分块、错误转文本）。基础设施（GitClient/DiffParser）是**不依赖 LLM 也能跑**的纯逻辑 —— GitClient 只管 fork 子进程，DiffParser 只管解析。这么分有三个好处：①**复用**：未来 `EvaluationRunner` 跑评测时直接用 GitClient/DiffParser，不需要走 LLM 工具链；②**测试性**：GitClient 用 `@TempDir + 真 git`，DiffParser 用 fixture，**都不需要 mock LLM**；③**演化解耦**：换 LLM 框架（LangChain4j → Spring AI）只动 Tool 层，基础设施零改动。**反例**：原来 GitDiffTool 直接 `new ProcessBuilder`，要复用 git 调用必须复制 ProcessBuilder 代码或者实例化整个 Tool —— 又得拉 LangChain4j 注解依赖。
+
+**Q2**：LLM 工具返回字符串太长怎么办？你的截断策略是什么？为什么这么定？
+
+- **A**：两道阀门。①**per-file 上限 4000 字符**：超了保留 header（让 LLM 知道是什么文件）+ 前 20 个新增行（让 LLM 知道改了什么）+ "truncated" 标记。②**总量上限 12000 字符**：在**文件边界**截断（不切到 hunk 中间），附 "N files total" 提示。**为什么按文件边界**：切到 hunk 中间，LLM 看到半截上下文可能瞎猜补全；按文件切，每个文件要么完整、要么被显式标"省略"，模型不会幻觉。**为什么这两个数字**：Moonshot k1.5 上下文 128k tokens ≈ 400k chars，留 80% 给系统消息 + RAG + 规范 + 输出预算 → diff 大约能用 12k。**实际**：W1 跑通后通过 evaluation 看"超长 diff 案例的召回率掉多少"，再决定要不要调成动态预算 / 大模型路由。**经验值不是真理 —— 用评测验证。**
+
+**Q3**：你测 GitDiffTool 时 mock 了 GitClient 但用真的 DiffParser，这种混合策略有什么讲究？
+
+- **A**：这叫 **sociable test**（合作式测试），相对的是 solitary/isolation test（所有协作者都 mock）。原则是 **mock 难以控制 / 副作用大 / 慢的依赖，真实使用纯函数 / 无 I/O 依赖**。GitClient 要 fork 子进程 + 依赖文件系统 + 跨平台 git 行为 —— mock 让测试稳定快 + 能模拟 timeout / 异常路径。DiffParser 是纯函数（无状态，无 I/O），用真实例可以**额外验证拼装逻辑**（GitDiffTool 喂给 DiffParser 的字符串能正确解析吗？拼出来的最终字符串包含 + 行吗？）。**反面**：全 isolation 测试只验证"我调用了 X.method(args)"，这种验证容易过拟合实现细节，重构时一改 method 签名所有测试爆红 —— 信号弱、维护贵。**混合策略的代价**：偶尔会 transitive 拉真依赖的复杂逻辑进来，让测试边界模糊；这时候考虑提取一个更小的子组件。**这次 DiffParser 100 行、纯函数，是 sociable 的完美场景。**
+
+### Commit
+
+```
+refactor(tools): GitDiffTool uses GitClient + per-file splitting
+```
+
+---
