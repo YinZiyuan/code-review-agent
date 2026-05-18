@@ -294,3 +294,96 @@ feat(infra): DiffParser with file-line-number mapping
 ```
 
 ---
+
+## T5 · GitClient — 唯一的 git 子进程封装
+
+### 技术细节
+
+1. **JDK `ProcessBuilder` 的关键 4 个方法**
+
+   ```java
+   new ProcessBuilder("git", "diff", ref)
+       .directory(repoPath.toFile())      // 设置 cwd（不设就是 JVM 启动目录）
+       .redirectErrorStream(true)         // stderr 合并到 stdout，方便 readAllBytes 一把抓
+       .start()                            // 异步启动子进程
+       .waitFor(timeout, MILLISECONDS);   // 阻塞等待退出，超时返回 false
+   ```
+
+   - 不调 `redirectErrorStream(true)` 的话，stderr 默认到 `Process.getErrorStream()`，需要额外 thread 排空，否则**子进程 stderr 缓冲区满了会卡死**（经典坑）
+   - `waitFor(timeout)` vs `waitFor()`：无 timeout 会无限等，**生产代码永远用带超时的版本**
+
+2. **`readAllBytes() + UTF_8` 的现代写法**
+
+   ```java
+   String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+   ```
+
+   - JDK 9+ 才有 `readAllBytes()`，之前要用 `BufferedReader` 循环 readLine 拼起来
+   - 显式传 `StandardCharsets.UTF_8` —— 不传会用 JVM 默认 charset，**Windows 上是 GBK 会乱码**
+   - 这种"小命令、小输出"场景 readAllBytes 最简洁；大输出（>10MB）要改流式处理避免 OOM
+
+3. **超时 + 强制销毁的双保险**
+
+   ```java
+   if (!p.waitFor(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+       p.destroyForcibly();
+       throw new GitException("git command timed out after " + TIMEOUT);
+   }
+   ```
+
+   - `destroyForcibly()` 发 SIGKILL，比 `destroy()` (SIGTERM) 更狠 —— 子进程拒绝退出时唯一的兜底
+   - 没有这一步，git 卡住时 JVM 退出后仍然有僵尸进程占资源
+
+4. **`InterruptedException` 的正确处理**
+
+   ```java
+   catch (IOException | InterruptedException e) {
+       if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+       throw new GitException(...);
+   }
+   ```
+
+   - `InterruptedException` 被 catch 时，**JVM 的中断标志会被自动清掉**
+   - 上层（线程池、调用方）依靠中断标志判断是否要继续工作；不重置就会"中断信号丢失"
+   - 这是 Java 并发的经典反例：教科书反复强调"never swallow InterruptedException without resetting"
+
+5. **`@BeforeEach` 里搭真实 git 仓库的优势**
+
+   - Mock `ProcessBuilder` 太脆 —— 要 mock `Process` / `InputStream` 一大串
+   - `@TempDir` 给临时目录（每个测试一个），跑完自动清理
+   - 在里面真跑 `git init` + 2 个 commit ≈ 200ms，**测试时间换正确性**
+   - 副作用：测试机器必须装了 git CLI（CI 镜像基本都有）
+
+6. **`commit.gpgsign=false` 配置的必要性**
+
+   - 如果开发机的 `~/.gitconfig` 全局开了 `commit.gpgsign = true`，测试里的 `git commit` 会要求 GPG 密钥，CI 上没密钥就 fail
+   - 测试里显式 `git config commit.gpgsign false`（local 覆盖 global），保证测试在任何机器上都过
+   - **写测试时永远问一遍：测试结果依赖哪些环境配置？能不能用 local config 锁住？**
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| `ProcessBuilder` vs jgit `Git.open(repo)` API | jgit 是纯 Java 实现，不依赖系统 git，但 ~3MB 体积 + API 复杂。系统 git 几乎所有 dev/CI 环境都装了。**ProcessBuilder** |
+| `RuntimeException` (GitException) vs checked exception | checked 强制调用方处理，但 git 错误通常是"不可恢复，报错给用户"性质。RuntimeException 让 tool 方法签名清爽。**RuntimeException** |
+| 30s timeout vs 配置化 | 30s 对所有 git 操作够用（diff/show/log），加配置项 over-engineering。等出问题再加 |
+| stderr 合并到 stdout vs 分开 | 分开能区分"正常输出" vs "warning/error"，但我们用 exit code 区分成功失败，stderr 内容只是失败时的诊断信息。合并简化代码 |
+
+### 面试 Q&A
+
+**Q1**：你封装 git 用 ProcessBuilder，相比 jgit 有什么取舍？
+- **A**：ProcessBuilder 三个优势：①**零依赖**（系统 git 几乎处处都有），②**功能完整**（git 所有命令都能用，不像 jgit 只实现了子集），③**调试简单**（出问题 copy 命令到 shell 就能复现）。jgit 三个优势：①**跨平台一致**（不依赖系统 git 版本差异），②**性能更好**（同进程，没 fork 开销），③**API 类型安全**（不用解析文本输出）。**我选 ProcessBuilder** 因为这个 agent 跑在开发机和 CI 上，git 100% 存在；且 W1 只需要 `diff` / `show` 两三个命令，文本解析量小。**反面**：如果要做服务端常驻、并发跑几百次 git 操作，jgit 的同进程优势就明显。
+
+**Q2**：你的 GitClient `run()` 方法里为什么要 `destroyForcibly()`，不是 `destroy()`？
+- **A**：`destroy()` 在 Unix 发 SIGTERM —— 子进程可以注册 handler、做清理、甚至忽略。我们超时场景下进程**已经表现出有问题**（可能死循环、可能卡 I/O），SIGTERM 没法保证退出。`destroyForcibly()` 发 SIGKILL —— 内核强制 reap，子进程不可拒绝。**对应 JDK 文档保证**：destroyForcibly 返回的 Process 一定会终止。**反面**：destroyForcibly 不给子进程清理机会，可能留下临时文件 / 半写入的状态。对 git diff/show 这种**纯只读**操作没影响；对 git commit / push 就要小心（不过我们 GitClient 只暴露只读命令）。
+
+**Q3**：你处理 InterruptedException 时为什么要 `Thread.currentThread().interrupt()`？
+- **A**：Java 线程的"中断"是协作模型 —— 不是强制杀线程，而是设一个 boolean 标志。`Thread.sleep` / `wait` / `Object.wait` / `Process.waitFor` 等阻塞方法检测到中断标志会抛 `InterruptedException`，**抛出的同时把标志清掉**。如果我 catch 了不重置，外层（线程池 / Future / 调用方循环）就以为没人中断过我，继续派活。`Thread.currentThread().interrupt()` 重新设上标志，让中断信号沿调用栈传播。**经典 bug**：线程池里跑长任务，外面 `future.cancel(true)` 想停掉，被 catch 吞了中断信号 → 任务跑完才退出 → 线程池关不掉。**规则**：catch `InterruptedException` 之后必须做两件事之一 —— ①重新抛出（让上层处理）、②重新设中断标志（让上层检测）。我们这里因为要包装成 GitException，选②。
+
+### Commit
+
+```
+feat(infra): GitClient subprocess wrapper with timeout
+```
+
+---
