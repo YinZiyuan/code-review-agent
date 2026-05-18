@@ -1,6 +1,8 @@
 package dev.langchain4j.example.codereview.cli;
 
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
+import dev.langchain4j.example.codereview.model.ReviewResult;
+import dev.langchain4j.example.codereview.reporting.MarkdownReporter;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
@@ -18,9 +20,11 @@ public class ReviewCommand implements Callable<Integer> {
     private String ref;
 
     private final CodeReviewAgent agent;
+    private final MarkdownReporter reporter;
 
-    public ReviewCommand(CodeReviewAgent agent) {
+    public ReviewCommand(CodeReviewAgent agent, MarkdownReporter reporter) {
         this.agent = agent;
+        this.reporter = reporter;
     }
 
     @Override
@@ -30,10 +34,9 @@ public class ReviewCommand implements Callable<Integer> {
 
         String request = "Review code changes in repo: " + repoPath +
                 "\nCompare against ref: " + ref +
-                "\nCall getGitDiff first, then checkRules, then produce the review.";
-        // CodeReviewAgent still returns String until T15 swaps it to ReviewResult.
-        String result = agent.review(request);
-        System.out.println("\n" + result);
+                "\nCall getGitDiff first, then checkRules, then produce the ReviewResult.";
+        ReviewResult result = agent.review(request);
+        System.out.println("\n" + reporter.render(result));
         return 0;
     }
 }

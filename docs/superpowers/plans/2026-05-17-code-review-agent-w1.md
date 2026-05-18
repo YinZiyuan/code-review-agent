@@ -1734,7 +1734,7 @@ git commit -m "feat(model): Category enum"
 - Create: `src/main/java/dev/langchain4j/example/codereview/model/ReviewResult.java`
 - Create: `src/test/java/dev/langchain4j/example/codereview/model/ReviewFindingTest.java`
 
-- [ ] **Step 1: Create POJOs**
+- [x] **Step 1: Create POJOs**
 
 ```java
 // Citation.java
@@ -1790,7 +1790,7 @@ public record ReviewResult(
 }
 ```
 
-- [ ] **Step 2: Write failing test for JSON round-trip + schema validation**
+- [x] **Step 2: Write failing test for JSON round-trip + schema validation**
 
 ```java
 package dev.langchain4j.example.codereview.model;
@@ -1865,7 +1865,7 @@ class ReviewFindingTest {
 
 The default `ObjectMapper` won't auto-convert snake_case JSON keys (`line_range`) to camelCase Java properties. To support both, add Jackson naming strategy in a config class later, OR write JSON in tests using camelCase. For simplicity here we'll register `PropertyNamingStrategies.SNAKE_CASE` globally in the next step.
 
-- [ ] **Step 3: Register snake_case ObjectMapper**
+- [x] **Step 3: Register snake_case ObjectMapper**
 
 Create `src/main/java/dev/langchain4j/example/codereview/config/JsonConfig.java`:
 
@@ -1899,12 +1899,12 @@ private final ObjectMapper mapper = new ObjectMapper()
         .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE);
 ```
 
-- [ ] **Step 4: Run, confirm pass**
+- [x] **Step 4: Run, confirm pass**
 
 Run: `mvn -q test -Dtest=ReviewFindingTest`
 Expected: 3 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/model/ \
@@ -1921,7 +1921,7 @@ git commit -m "feat(model): ReviewFinding/ReviewResult POJOs + snake_case JSON c
 - Create: `src/main/java/dev/langchain4j/example/codereview/reporting/MarkdownReporter.java`
 - Create: `src/test/java/dev/langchain4j/example/codereview/reporting/MarkdownReporterTest.java`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```java
 package dev.langchain4j.example.codereview.reporting;
@@ -1996,12 +1996,12 @@ class MarkdownReporterTest {
 }
 ```
 
-- [ ] **Step 2: Run, confirm fail**
+- [x] **Step 2: Run, confirm fail**
 
 Run: `mvn -q test -Dtest=MarkdownReporterTest`
 Expected: compile error.
 
-- [ ] **Step 3: Implement `MarkdownReporter.java`**
+- [x] **Step 3: Implement `MarkdownReporter.java`**
 
 ```java
 package dev.langchain4j.example.codereview.reporting;
@@ -2068,12 +2068,12 @@ public class MarkdownReporter {
 
 `Severity` enum order is `CRITICAL, WARNING, SUGGESTION` — so natural enum ordering already sorts critical first.
 
-- [ ] **Step 4: Run, confirm pass**
+- [x] **Step 4: Run, confirm pass**
 
 Run: `mvn -q test -Dtest=MarkdownReporterTest`
 Expected: 4 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/reporting/ \
@@ -2089,7 +2089,7 @@ git commit -m "feat(reporting): MarkdownReporter with severity sort + citations"
 - Modify: `src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java`
 - Modify: `src/main/java/dev/langchain4j/example/codereview/cli/ReviewCommand.java`
 
-- [ ] **Step 1: Rewrite `CodeReviewAgent.java`**
+- [x] **Step 1: Rewrite `CodeReviewAgent.java`**
 
 ```java
 package dev.langchain4j.example.codereview.agents;
@@ -2125,7 +2125,7 @@ public interface CodeReviewAgent {
 
 LangChain4j `AiServices` will see the return type and instruct the model to produce JSON conforming to `ReviewResult`. The library handles the JSON-mode prompt and parsing.
 
-- [ ] **Step 2: Update `ReviewCommand` to use `MarkdownReporter`**
+- [x] **Step 2: Update `ReviewCommand` to use `MarkdownReporter`**
 
 ```java
 package dev.langchain4j.example.codereview.cli;
@@ -2172,7 +2172,7 @@ public class ReviewCommand implements Callable<Integer> {
 }
 ```
 
-- [ ] **Step 3: Build + smoke test**
+- [x] **Step 3: Build + smoke test**
 
 Run: `MOONSHOT_API_KEY=dummy mvn -q clean package -DskipTests`
 Expected: BUILD SUCCESS.
@@ -2184,7 +2184,7 @@ java -jar target/code-review-agent-1.0.0.jar review . HEAD~1
 ```
 Expected: a Markdown report is printed. If the model occasionally fails JSON parsing, that's OK for W1 — evaluation will reveal the rate. If it fails systematically, lower `max-tokens` to force shorter output or strengthen the schema description in the prompt.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java \
@@ -2204,7 +2204,7 @@ git commit -m "feat(agent): CodeReviewAgent returns structured ReviewResult"
 - Create: `src/main/java/dev/langchain4j/example/codereview/eval/ExpectedIssue.java`
 - Create: `src/main/java/dev/langchain4j/example/codereview/eval/SuppressedPattern.java`
 
-- [ ] **Step 1: Create POJOs**
+- [x] **Step 1: Create POJOs**
 
 ```java
 // SuppressedPattern.java
@@ -2293,12 +2293,12 @@ public record Sample(
 }
 ```
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `mvn -q compile`
 Expected: BUILD SUCCESS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/eval/
@@ -2314,7 +2314,7 @@ git commit -m "feat(eval): Sample/Annotation/ExpectedIssue/SuppressedPattern POJ
 - Create: `src/main/java/dev/langchain4j/example/codereview/eval/SampleMetrics.java`
 - Create: `src/test/java/dev/langchain4j/example/codereview/eval/MetricsTest.java`
 
-- [ ] **Step 1: Create `SampleMetrics.java`**
+- [x] **Step 1: Create `SampleMetrics.java`**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2334,7 +2334,7 @@ public record SampleMetrics(
 ) { }
 ```
 
-- [ ] **Step 2: Write failing tests for `Metrics`**
+- [x] **Step 2: Write failing tests for `Metrics`**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2420,12 +2420,12 @@ class MetricsTest {
 }
 ```
 
-- [ ] **Step 3: Run, confirm fail**
+- [x] **Step 3: Run, confirm fail**
 
 Run: `mvn -q test -Dtest=MetricsTest`
 Expected: compile error.
 
-- [ ] **Step 4: Implement `Metrics.java`**
+- [x] **Step 4: Implement `Metrics.java`**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2484,12 +2484,12 @@ public final class Metrics {
 }
 ```
 
-- [ ] **Step 5: Run, confirm pass**
+- [x] **Step 5: Run, confirm pass**
 
 Run: `mvn -q test -Dtest=MetricsTest`
 Expected: 7 tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/eval/Metrics.java \
@@ -2508,7 +2508,7 @@ git commit -m "feat(eval): Metrics with recall/precision/fp/severity/latency/tok
 - Create: `src/main/java/dev/langchain4j/example/codereview/eval/Matcher.java`
 - Create: `src/test/java/dev/langchain4j/example/codereview/eval/MatcherTest.java`
 
-- [ ] **Step 1: Create supporting types**
+- [x] **Step 1: Create supporting types**
 
 ```java
 // MatchResult.java
@@ -2540,7 +2540,7 @@ public interface LlmJudge {
 }
 ```
 
-- [ ] **Step 2: Write failing tests for `Matcher`**
+- [x] **Step 2: Write failing tests for `Matcher`**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2654,12 +2654,12 @@ class MatcherTest {
 }
 ```
 
-- [ ] **Step 3: Run, confirm fail**
+- [x] **Step 3: Run, confirm fail**
 
 Run: `mvn -q test -Dtest=MatcherTest`
 Expected: compile error.
 
-- [ ] **Step 4: Implement `Matcher.java`**
+- [x] **Step 4: Implement `Matcher.java`**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2707,12 +2707,12 @@ public class Matcher {
 }
 ```
 
-- [ ] **Step 5: Run, confirm pass**
+- [x] **Step 5: Run, confirm pass**
 
 Run: `mvn -q test -Dtest=MatcherTest`
 Expected: 5 tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/eval/MatchResult.java \
@@ -2729,7 +2729,7 @@ git commit -m "feat(eval): two-layer Matcher (position + LLM judge)"
 **Files:**
 - Create: `src/main/java/dev/langchain4j/example/codereview/eval/LlmJudgeImpl.java`
 
-- [ ] **Step 1: Implement**
+- [x] **Step 1: Implement**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2791,7 +2791,7 @@ public class LlmJudgeImpl implements LlmJudge {
 }
 ```
 
-- [ ] **Step 2: Wire into `AgentConfig`**
+- [x] **Step 2: Wire into `AgentConfig`**
 
 Append to `config/AgentConfig.java`:
 
@@ -2810,12 +2810,12 @@ Append to `config/AgentConfig.java`:
     }
 ```
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 Run: `mvn -q compile`
 Expected: BUILD SUCCESS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/eval/LlmJudgeImpl.java \
@@ -2831,7 +2831,7 @@ git commit -m "feat(eval): LlmJudgeImpl + bean wiring"
 - Create: `src/main/java/dev/langchain4j/example/codereview/eval/EvalReport.java`
 - Create: `src/main/java/dev/langchain4j/example/codereview/eval/EvaluationRunner.java`
 
-- [ ] **Step 1: Create `EvalReport.java`**
+- [x] **Step 1: Create `EvalReport.java`**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2851,7 +2851,7 @@ public record EvalReport(
 ) { }
 ```
 
-- [ ] **Step 2: Create `EvaluationRunner.java`**
+- [x] **Step 2: Create `EvaluationRunner.java`**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -2993,7 +2993,7 @@ public class EvaluationRunner {
 
 Note on tokens: token tracking is left as `0L` in W1. W2 can add an `OpenAiTokenUsageListener` once we move past `1.15-beta`. The metric stays in the schema for forward compatibility.
 
-- [ ] **Step 3: Wire into `AgentConfig`**
+- [x] **Step 3: Wire into `AgentConfig`**
 
 Append to `config/AgentConfig.java`:
 
@@ -3007,12 +3007,12 @@ Append to `config/AgentConfig.java`:
     }
 ```
 
-- [ ] **Step 4: Build**
+- [x] **Step 4: Build**
 
 Run: `mvn -q compile`
 Expected: BUILD SUCCESS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/eval/EvalReport.java \
@@ -3028,7 +3028,7 @@ git commit -m "feat(eval): EvaluationRunner orchestrates sample → agent → ma
 **Files:**
 - Modify: `src/main/java/dev/langchain4j/example/codereview/cli/EvalCommand.java`
 
-- [ ] **Step 1: Rewrite `EvalCommand.java`**
+- [x] **Step 1: Rewrite `EvalCommand.java`**
 
 ```java
 package dev.langchain4j.example.codereview.cli;
@@ -3086,12 +3086,12 @@ public class EvalCommand implements Callable<Integer> {
 }
 ```
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `mvn -q clean package -DskipTests`
 Expected: BUILD SUCCESS. With `MOONSHOT_API_KEY=dummy` if needed.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/cli/EvalCommand.java
@@ -3112,7 +3112,7 @@ git commit -m "feat(cli): EvalCommand wires EvaluationRunner to picocli"
 - Create: `src/test/resources/eval-fixtures/sample-fail/source-before/.gitkeep`
 - Create: `src/test/java/dev/langchain4j/example/codereview/TestChatModelConfig.java`
 
-- [ ] **Step 1: Create sample fixtures**
+- [x] **Step 1: Create sample fixtures**
 
 `sample-pass/diff.patch`:
 ```
@@ -3180,7 +3180,7 @@ diff --git a/Clean.java b/Clean.java
 }
 ```
 
-- [ ] **Step 2: Test config that mocks `ChatModel`**
+- [x] **Step 2: Test config that mocks `ChatModel`**
 
 ```java
 // src/test/java/dev/langchain4j/example/codereview/TestChatModelConfig.java
@@ -3245,7 +3245,7 @@ public class TestChatModelConfig {
 
 Adjust imports/method names for `ChatModel` if `1.15-beta25` exposes a different interface; if so, fall back to mocking via Mockito on the actual interface.
 
-- [ ] **Step 3: Write the integration test**
+- [x] **Step 3: Write the integration test**
 
 ```java
 package dev.langchain4j.example.codereview.eval;
@@ -3319,14 +3319,14 @@ class EvaluationRunnerIT {
 }
 ```
 
-- [ ] **Step 4: Run the integration test**
+- [x] **Step 4: Run the integration test**
 
 Run: `mvn -q test -Dtest=EvaluationRunnerIT`
 Expected: 1 test passes. The report file appears at `<tmp>/reports/v0-test.json` and contains the expected per-sample metrics.
 
 If Spring Boot fails to start because the `ChatModel` bean is being auto-configured by LangChain4j starter (auto-config might detect the missing API key), the simplest workaround is to set `langchain4j.open-ai.chat-model.api-key=dummy` in `application-test.yml` and activate test profile via `@ActiveProfiles("test")`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/test/java/dev/langchain4j/example/codereview/TestChatModelConfig.java \

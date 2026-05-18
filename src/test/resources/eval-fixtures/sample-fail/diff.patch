@@ -1,0 +1,7 @@
+diff --git a/Clean.java b/Clean.java
+--- a/Clean.java
++++ b/Clean.java
+@@ -1,2 +1,3 @@
+ public class Clean {
++    int x = 1;
+ }

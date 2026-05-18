@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-001",
+      "file": "User.java",
+      "line": 11,
+      "line_range": [11, 11],
+      "category": "SECURITY",
+      "subcategory": "hardcoded_credential",
+      "severity": "CRITICAL",
+      "description": "Hardcoded credential",
+      "must_detect": true,
+      "alternative_descriptions": ["password in code", "secret in source"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "test fixture"
+}
