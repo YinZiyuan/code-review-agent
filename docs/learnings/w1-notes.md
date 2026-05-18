@@ -204,3 +204,93 @@ feat(cli): picocli root + review/eval/sample subcommands
 - 教训：**增量开发时，bean 依赖按"先有 placeholder，再补真实"组织**。ObjectProvider 是这种 staged 开发的关键工具
 
 ---
+
+## T4 · DiffParser — 解析 unified diff，从 diff 行号到文件真实行号
+
+### 技术细节
+
+1. **Unified Diff 格式拆解（必背）**
+
+   ```
+   diff --git a/Foo.java b/Foo.java          ← 文件分隔标志
+   index 1111111..2222222 100644             ← blob hash + mode（可选）
+   --- a/Foo.java                            ← old 文件标识（a/ 前缀）
+   +++ b/Foo.java                            ← new 文件标识（b/ 前缀）
+   @@ -10,3 +10,5 @@ public class Foo {      ← hunk header
+       int x = 1;                            ← 上下文行（' ' 开头）
+       int y = 2;                            ← 上下文行
+   +    int z = 3;                           ← 新增行（'+' 开头）
+   +    System.out.println(z);               ← 新增行
+       int w = 4;                            ← 上下文行
+   ```
+
+   - hunk header `@@ -OLD_START,OLD_COUNT +NEW_START,NEW_COUNT @@` —— `+10,5` 表示**新文件**从第 10 行起共 5 行（包含上下文 + 新增）
+   - hunk header 后面的 `public class Foo {` 是"section header"（git diff 自动从最近的 `^[a-zA-Z]` 行抓的上下文），不参与解析
+
+2. **行号映射的核心逻辑：`newLineNum` 计数器**
+
+   ```
+   for line in hunk:
+     if line starts with '+' (not '+++'):
+        record (newLineNum, content); newLineNum++
+     elif line starts with '-' (not '---'):
+        do nothing  ← 删除行不影响新文件行号
+     else:                              ← 上下文行
+        newLineNum++
+   ```
+
+   关键洞察：**新增行和上下文行都让 newLineNum 前进；删除行不前进**。这是把"diff 第 N 行"翻译成"new file 第 M 行"的全部秘密。
+   - 原来 `RuleCheckerTool` 的 bug：直接用 `i + 1`（i 是 diff 数组的 index），导致行号偏离 — 比如说 hunk header `@@ -10,3 +10,5` 的 i 可能是 4，但实际文件行号是 10，差了 6
+
+3. **正则的小细节**
+
+   - `FILE_HEADER = ^\+\+\+ b/(.+)$` —— 只匹配新文件的 `+++ b/...`，不用 `--- a/...`（删除路径在 rename 场景下和新路径不同）
+   - `HUNK_HEADER = ^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@.*$`
+     - `(?:,\d+)?` 用 non-capturing group + `?` —— hunk 只有一行时 git 会省略 `,COUNT`（写成 `@@ -10 +10 @@`），所以是可选
+     - `\+(\d+)` 捕获新文件起始行号（**只关心新行号**，老行号在这个 use case 里无用）
+
+4. **为什么 `split("\n", -1)` 而不是 `split("\n")`**
+
+   - `String.split(regex)` 默认丢掉**末尾空字符串**（`"a\n\n".split("\n")` 得到 `["a"]`）
+   - `split(regex, -1)` 保留所有，包括末尾的空（得到 `["a", "", ""]`）
+   - 这里我们循环逐行，**末尾空行没影响**，但养成习惯：解析文本类输入永远用 `-1`，避免 patch 文件最后一行被吞掉
+
+5. **`record` 嵌套在外部类里**
+
+   - `DiffParser.FileDiff` 和 `DiffParser.AddedLine` 是 static nested records（record 默认 static）
+   - 这种"返回类型紧凑挂在 parser 类里"的写法，避免给每个简单 DTO 起独立文件名 + 包路径，是 Java 17+ 处理小数据结构的惯用法
+   - 也是为什么 LangChain4j 的 `ChatResponse` 用类似嵌套结构
+
+6. **`@Component` 注解为什么 W1 就加上**
+
+   - DiffParser 是无状态、线程安全的 —— 完美的 singleton bean
+   - T6 `GitDiffTool` 要构造注入 `DiffParser` → 必须是 Spring bean
+   - 不加 `@Component` 也行（写 `new DiffParser()`），但每次都 new 浪费、且违反 IoC 原则
+
+### 设计权衡
+
+| 选项 | 评估 |
+| --- | --- |
+| 自己写 vs 用 `org.eclipse.jgit.diff.DiffParser` | jgit 是个 ~3MB 的依赖，且 API 偏 git 内部模型（`FileHeader`/`HunkHeader`/`Edit`），用起来比自己写正则还重。**自己写** |
+| 解析所有行（含删除、上下文） vs 只关心新增 | W1 评测只关心**新增行的位置**（agent 报"哪行有问题"）。删除行不需要 review。**只关心新增** |
+| 返回 `Map<String, List<AddedLine>>` vs `List<FileDiff>` | List 保留文件顺序（有时报告需要按文件顺序）；Map 查找快但丢顺序。**List** |
+| 用 String 路径 vs `java.nio.file.Path` | git 路径都是 `/` 分隔的字符串，跨 OS 行为一致；`Path` 会做 OS 解析容易踩坑（Windows 反斜杠）。**用 String** |
+
+### 面试 Q&A
+
+**Q1**：你的 DiffParser 怎么把 diff 行号翻译成文件真实行号的？为什么之前的实现错了？
+- **A**：核心是**只在 hunk 内、根据 hunk header 起始行号 + 行类型增减计数器**。hunk header `@@ -X,Y +M,N @@` 里 `+M` 是新文件的起始行号；遇到 `+` 或上下文行（` ` 开头）就 `newLineNum++`，遇到 `-` 行不变。原来的实现错在用 `i + 1`（diff 数组下标），不区分 hunk header 的偏移，所以每个 hunk 之后的行号都跑偏。**Bug 影响**：agent 报告"`Foo.java:5` 有问题"，但实际问题在 `Foo.java:42`，团队 review 找不到地方就不信任 agent。**修复后**所有 finding 的行号可以直接当 GitHub PR 评论的锚点用。
+
+**Q2**：为什么你不用 jgit / 现成库来做 diff 解析？
+- **A**：三个考虑。①**依赖体积**：jgit 是 ~3MB，对一个 CLI agent 不划算。②**API 错配**：jgit 的 `DiffParser` 返回 `FileHeader/HunkHeader/Edit` 这套 git 内部模型，我要的是"文件 → 新增行列表"这种 review 视角的数据结构，转换成本不低。③**unified diff 格式很稳定**：30+ 年没改过，自己写 100 行 + 5 个正则就能解决，可控性高。**反面**：如果未来要支持 rename 检测、merge conflict、binary diff，那时候考虑引入 jgit 是合理的。**原则**：选库前先问"我的需求是不是库的子集"。
+
+**Q3**：你的 DiffParser 是 `@Component` 单例。线程安全吗？
+- **A**：是的。两个层面。①**无可变状态**：类只有两个 `static final Pattern`，`parse()` 方法的所有变量（`currentPath` / `newLineNum` / `currentAdded`）都是**方法局部变量**，每次调用独立栈，多线程互不干扰。②**`Pattern` 自身线程安全**：JDK 文档明确说明 `java.util.regex.Pattern` 是 immutable + thread-safe，`Matcher` 不安全但每次调用 `pattern.matcher(line)` 都新建一个，留在栈上。**这就是"singleton + 无状态" 模式的标准应用**，Spring 默认的 singleton 作用域和它天然契合。**反面**：如果哪天加缓存 / 计数器作为字段，立刻就不安全了，那时候要么改成 prototype scope、要么用 `ConcurrentHashMap` / `AtomicInteger`。
+
+### Commit
+
+```
+feat(infra): DiffParser with file-line-number mapping
+```
+
+---
