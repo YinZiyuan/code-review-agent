@@ -1440,7 +1440,7 @@ git commit -m "feat(infra): EmbeddingCache JSON round-trip"
 - Create: `src/main/java/dev/langchain4j/example/codereview/config/RagConfig.java`
 - Delete: `src/main/java/dev/langchain4j/example/codereview/KnowledgeBaseLoader.java`
 
-- [ ] **Step 1: Create `KnowledgeBaseIndexer.java`**
+- [x] **Step 1: Create `KnowledgeBaseIndexer.java`**
 
 ```java
 package dev.langchain4j.example.codereview.rag;
@@ -1516,7 +1516,7 @@ public class KnowledgeBaseIndexer {
 }
 ```
 
-- [ ] **Step 2: Create `RagConfig.java`**
+- [x] **Step 2: Create `RagConfig.java`**
 
 ```java
 package dev.langchain4j.example.codereview.config;
@@ -1563,18 +1563,18 @@ public class RagConfig {
 }
 ```
 
-- [ ] **Step 3: Delete old `KnowledgeBaseLoader.java`**
+- [x] **Step 3: Delete old `KnowledgeBaseLoader.java`**
 
 ```bash
 git rm src/main/java/dev/langchain4j/example/codereview/KnowledgeBaseLoader.java
 ```
 
-- [ ] **Step 4: Build**
+- [x] **Step 4: Build**
 
 Run: `mvn -q compile`
 Expected: BUILD SUCCESS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/rag/KnowledgeBaseIndexer.java \
