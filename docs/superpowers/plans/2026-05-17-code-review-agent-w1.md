@@ -3350,7 +3350,7 @@ git commit -m "test(eval): integration test runs 2 fixture samples through full 
 - Create: `eval/samples/README.md`
 - Create: `eval/.gitignore`
 
-- [ ] **Step 1: Pick a single real fix commit as worked example**
+- [x] **Step 1: Pick a single real fix commit as worked example**
 
 Open https://github.com/apache/dubbo/commits/main and search for a commit with message `fix npe`, `fix sql injection`, `fix race condition`, etc. Open one with a small diff (≤ 50 lines).
 
@@ -3361,7 +3361,7 @@ Use `gh` or `git format-patch` to grab the patch:
 gh api repos/apache/dubbo/commits/<HASH> -H "Accept: application/vnd.github.v3.diff" > /tmp/fix.patch
 ```
 
-- [ ] **Step 2: Reverse the patch (so `diff.patch` becomes the "broken" state under review)**
+- [x] **Step 2: Reverse the patch (so `diff.patch` becomes the "broken" state under review)**
 
 ```bash
 mkdir -p eval/samples/reverse-001/source-before eval/samples/reverse-001/source-after
@@ -3372,7 +3372,7 @@ mkdir -p eval/samples/reverse-001/source-before eval/samples/reverse-001/source-
 #   3. Build diff.patch via: diff -u source-before/F.java source-after/F.java
 ```
 
-- [ ] **Step 3: Write `meta.json`**
+- [x] **Step 3: Write `meta.json`**
 
 ```json
 {
@@ -3387,7 +3387,7 @@ mkdir -p eval/samples/reverse-001/source-before eval/samples/reverse-001/source-
 }
 ```
 
-- [ ] **Step 4: Write `annotation.json`**
+- [x] **Step 4: Write `annotation.json`**
 
 Read the commit message and any linked issue; that's your ground truth. Fill in:
 ```json
@@ -3411,7 +3411,7 @@ Read the commit message and any linked issue; that's your ground truth. Fill in:
 }
 ```
 
-- [ ] **Step 5: Write `eval/samples/README.md`**
+- [x] **Step 5: Write `eval/samples/README.md`**
 
 ````markdown
 # Eval Samples
@@ -3443,14 +3443,14 @@ Each subdirectory is one PR sample. Layout:
 The evaluation runner only exposes `diff.patch` and `source-before/` to the agent. `annotation.json`, `source-after/`, and the `category/difficulty/notes` fields of `meta.json` are forbidden inputs.
 ````
 
-- [ ] **Step 6: `.gitignore` cache files inside eval dir**
+- [x] **Step 6: `.gitignore` cache files inside eval dir**
 
 ```
 # eval/.gitignore
 reports/*-traces/
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add eval/
@@ -3464,7 +3464,7 @@ git commit -m "docs(eval): sample directory format + worked example reverse-001"
 **Files:**
 - Create: `eval/samples/reverse-002/...` through `eval/samples/reverse-005/...`
 
-- [ ] **Step 1: Pick 4 more fix commits across 4 different categories**
+- [x] **Step 1: Pick 4 more fix commits across 4 different categories**
 
 | Sample | Category | Suggested search |
 | --- | --- | --- |
@@ -3475,15 +3475,15 @@ git commit -m "docs(eval): sample directory format + worked example reverse-001"
 
 Source repos to scan (have many high-quality fix commits): `apache/dubbo`, `spring-projects/spring-framework`, `apache/rocketmq`, `apache/kafka`, `netty/netty`.
 
-- [ ] **Step 2: For each, repeat the workflow from Task 23 steps 1-4**
+- [x] **Step 2: For each, repeat the workflow from Task 23 steps 1-4**
 
 Aim for small diffs (≤ 50 lines), clear commit messages, and a single dominant issue. Skip commits where the fix is "rewrite the function" — those don't give clean ground truth.
 
-- [ ] **Step 3: Audit your annotations**
+- [x] **Step 3: Audit your annotations**
 
 For each sample, ask: "If I described this finding in 3 different phrasings, would the LLM judge call them equivalent?" If unsure, add more `alternative_descriptions`.
 
-- [ ] **Step 4: Commit per sample**
+- [x] **Step 4: Commit per sample**
 
 ```bash
 git add eval/samples/reverse-002/

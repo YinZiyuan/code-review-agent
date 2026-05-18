@@ -1,0 +1,15 @@
+diff --git a/ConfigLoader.java b/ConfigLoader.java
+--- a/ConfigLoader.java
++++ b/ConfigLoader.java
+@@ -1,7 +1,7 @@
+ public class ConfigLoader {
+     public Properties load(Path path) throws IOException {
+-        InputStream in = Files.newInputStream(path);
+-        Properties props = new Properties();
++        Properties props = new Properties();
++        try (InputStream in = Files.newInputStream(path)) {
+         props.load(in);
++        }
+         return props;
+     }
+ }

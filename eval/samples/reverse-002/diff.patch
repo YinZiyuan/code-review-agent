@@ -1,0 +1,12 @@
+diff --git a/UserRepository.java b/UserRepository.java
+--- a/UserRepository.java
++++ b/UserRepository.java
+@@ -1,6 +1,7 @@
+ public class UserRepository {
+     public User findById(String id) {
+-        String sql = "select * from users where id = '" + id + "'";
+-        return jdbc.queryForObject(sql, User.class);
++        return jdbc.queryForObject("select * from users where id = ?",
++                User.class, id);
+     }
+ }
