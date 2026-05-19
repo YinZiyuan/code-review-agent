@@ -3573,19 +3573,19 @@ git commit -m "docs: README with v0-baseline metrics and quick start"
 
 ### Task 26: Final W1 verification
 
-- [ ] **Step 1: Run all unit + integration tests**
+- [x] **Step 1: Run all unit + integration tests**
 
 Run: `mvn -q clean test`
 Expected: all tests pass.
 
-- [ ] **Step 2: Run smoke review against this repo**
+- [x] **Step 2: Run smoke review against this repo**
 
 ```bash
 java -jar target/code-review-agent-1.0.0.jar review . HEAD~1
 ```
 Expected: a Markdown review is produced; line numbers refer to real file lines (not diff lines).
 
-- [ ] **Step 3: Verify git log**
+- [x] **Step 3: Verify git log**
 
 ```bash
 git log --oneline | head -30
