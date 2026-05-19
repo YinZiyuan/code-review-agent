@@ -1,0 +1,83 @@
+{
+  "version" : "v0-baseline",
+  "commit" : "387206f48d4a0271d21600046db075eaf756d631",
+  "tag" : null,
+  "timestamp" : "2026-05-19T15:23:47.794667Z",
+  "config" : {
+    "runs_per_sample" : 1,
+    "judge_model" : "moonshot-v1-8k",
+    "pipeline" : "w1-single-agent"
+  },
+  "allowed_inputs" : [ "diff.patch", "source-before/" ],
+  "metrics" : {
+    "tool_success_rate" : 0.0,
+    "avg_latency_ms" : 8035.6,
+    "fp_rate" : 0.5,
+    "severity_accuracy" : 0.3333333333333333,
+    "avg_input_tokens" : 0.0,
+    "avg_output_tokens" : 0.0,
+    "precision" : 0.5,
+    "recall" : 0.6
+  },
+  "per_sample" : [ {
+    "sample_id" : "reverse-001",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 6806,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0
+  }, {
+    "sample_id" : "reverse-002",
+    "true_positives" : 0,
+    "false_positives" : 0,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 7544,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0
+  }, {
+    "sample_id" : "reverse-003",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5853,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0
+  }, {
+    "sample_id" : "reverse-004",
+    "true_positives" : 1,
+    "false_positives" : 2,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 12535,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0
+  }, {
+    "sample_id" : "reverse-005",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 7440,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0
+  } ]
+}

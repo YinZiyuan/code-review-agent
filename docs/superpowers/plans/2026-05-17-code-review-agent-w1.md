@@ -3499,13 +3499,13 @@ git commit -m "eval(sample): reverse-002 (SQL injection from <repo>@<hash>)"
 - Create: `eval/reports/v0-baseline.json` (produced by running)
 - Create or modify: `README.md`
 
-- [ ] **Step 1: Build the jar**
+- [x] **Step 1: Build the jar**
 
 ```bash
 mvn -q clean package -DskipTests
 ```
 
-- [ ] **Step 2: Run baseline evaluation**
+- [x] **Step 2: Run baseline evaluation**
 
 ```bash
 export MOONSHOT_API_KEY=<real>
@@ -3516,7 +3516,7 @@ Expected: console prints `recall=0.xx precision=0.yy fp_rate=0.zz`, and `eval/re
 
 This run will take a few minutes (5 samples × 1 review call each + ~5 judge calls). If the agent JSON-parses fail repeatedly, debug by examining the raw response (`logging.level.dev.langchain4j=DEBUG` to see the LLM round trips).
 
-- [ ] **Step 3: Stage and tag the baseline**
+- [x] **Step 3: Stage and tag the baseline**
 
 ```bash
 git add eval/reports/v0-baseline.json
@@ -3524,7 +3524,7 @@ git commit -m "eval: v0-baseline metrics from 5 reverse-constructed samples"
 git tag v0-baseline
 ```
 
-- [ ] **Step 4: Create or update `README.md`**
+- [x] **Step 4: Create or update `README.md`**
 
 ```markdown
 # Code Review Agent
@@ -3562,7 +3562,7 @@ Full design spec: [`docs/superpowers/specs/2026-05-17-code-review-agent-design.m
 
 Replace `<pct>` placeholders with the numbers you just got.
 
-- [ ] **Step 5: Commit README**
+- [x] **Step 5: Commit README**
 
 ```bash
 git add README.md
