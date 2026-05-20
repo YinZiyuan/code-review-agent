@@ -97,7 +97,7 @@
 - Modify: `pom.xml` (full rewrite)
 - Modify: `.gitignore`
 
-- [ ] **Step 1: Rewrite `pom.xml`**
+- [x] **Step 1: Rewrite `pom.xml`**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -179,12 +179,12 @@
 </project>
 ```
 
-- [ ] **Step 2: Verify dependency tree resolves**
+- [x] **Step 2: Verify dependency tree resolves**
 
 Run: `mvn -q dependency:tree | head -80`
 Expected: no conflict warnings; `langchain4j-core` resolves to a single version. If `1.15.0-beta25` is unavailable (LangChain4j releases beta versions rapidly), check Maven Central for the latest `1.15.x-betaN` and update `langchain4j.version`. **Do not** mix beta generations.
 
-- [ ] **Step 3: Update `.gitignore`**
+- [x] **Step 3: Update `.gitignore`**
 
 ```
 target/
@@ -196,13 +196,13 @@ target/
 eval/reports/*-traces/
 ```
 
-- [ ] **Step 4: Confirm clean compile**
+- [x] **Step 4: Confirm clean compile**
 
 Run: `mvn -q clean compile`
 Expected: BUILD SUCCESS (the existing source under `dev/langchain4j/example/codereview` will still compile — it imports only LangChain4j types that still exist in 1.15).
 If compilation fails, fix imports inline (LangChain4j 1.15 may have renamed `ChatModel` etc.). Note any breaking changes for later tasks.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pom.xml .gitignore
@@ -218,7 +218,7 @@ git commit -m "build: migrate to Spring Boot 3.5 + LangChain4j 1.15 starters"
 - Create: `src/main/resources/application.yml`
 - Create: `src/main/java/dev/langchain4j/example/codereview/config/CodeReviewProperties.java`
 
-- [ ] **Step 1: Create `CodeReviewApplication.java`**
+- [x] **Step 1: Create `CodeReviewApplication.java`**
 
 ```java
 package dev.langchain4j.example.codereview;
@@ -237,7 +237,7 @@ public class CodeReviewApplication {
 }
 ```
 
-- [ ] **Step 2: Create `application.yml`**
+- [x] **Step 2: Create `application.yml`**
 
 ```yaml
 langchain4j:
@@ -278,7 +278,7 @@ logging:
     dev.langchain4j.example: INFO
 ```
 
-- [ ] **Step 3: Create `CodeReviewProperties.java`**
+- [x] **Step 3: Create `CodeReviewProperties.java`**
 
 ```java
 package dev.langchain4j.example.codereview.config;
@@ -315,14 +315,14 @@ public record CodeReviewProperties(
 }
 ```
 
-- [ ] **Step 4: Smoke-test app starts**
+- [x] **Step 4: Smoke-test app starts**
 
 Run: `MOONSHOT_API_KEY=dummy mvn -q spring-boot:run -Dspring-boot.run.arguments="--help" 2>&1 | tail -20`
 Expected: Spring Boot starts (banner suppressed), then exits cleanly because no `CommandLineRunner` is registered yet. No exception stack traces.
 
 If `ChatModel` bean fails to construct due to missing API key, that's expected before we wire picocli — fine to ignore for now.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/CodeReviewApplication.java \
@@ -343,7 +343,7 @@ git commit -m "feat: Spring Boot app skeleton + CodeReviewProperties"
 - Create: `src/main/java/dev/langchain4j/example/codereview/cli/SampleCommand.java` (stub)
 - Delete: `src/main/java/dev/langchain4j/example/codereview/CodeReviewRunner.java`
 
-- [ ] **Step 1: Create `RootCommand.java`**
+- [x] **Step 1: Create `RootCommand.java`**
 
 ```java
 package dev.langchain4j.example.codereview.cli;
@@ -363,7 +363,7 @@ public class RootCommand implements Runnable {
 }
 ```
 
-- [ ] **Step 2: Create `ReviewCommand.java`**
+- [x] **Step 2: Create `ReviewCommand.java`**
 
 ```java
 package dev.langchain4j.example.codereview.cli;
@@ -407,7 +407,7 @@ public class ReviewCommand implements Callable<Integer> {
 }
 ```
 
-- [ ] **Step 3: Stub `EvalCommand.java` and `SampleCommand.java`**
+- [x] **Step 3: Stub `EvalCommand.java` and `SampleCommand.java`**
 
 ```java
 // EvalCommand.java
@@ -447,7 +447,7 @@ public class SampleCommand implements Callable<Integer> {
 }
 ```
 
-- [ ] **Step 4: Create `CliRunner.java`**
+- [x] **Step 4: Create `CliRunner.java`**
 
 ```java
 package dev.langchain4j.example.codereview.cli;
@@ -483,20 +483,20 @@ public class CliRunner implements ExitCodeGenerator {
 
 Note: `picocli-spring-boot-starter` auto-registers an `IFactory` that resolves picocli `@Component` commands from the Spring context.
 
-- [ ] **Step 5: Delete the old `CodeReviewRunner`**
+- [x] **Step 5: Delete the old `CodeReviewRunner`**
 
 ```bash
 git rm src/main/java/dev/langchain4j/example/codereview/CodeReviewRunner.java
 ```
 
-- [ ] **Step 6: Verify build + help works**
+- [x] **Step 6: Verify build + help works**
 
 Run: `mvn -q clean package -DskipTests` (this requires `MOONSHOT_API_KEY` to be set — even just a dummy: `export MOONSHOT_API_KEY=dummy`).
 
 Then run: `MOONSHOT_API_KEY=dummy java -jar target/code-review-agent-1.0.0.jar --help 2>&1 | head -20`
 Expected: picocli prints help text listing `review`, `eval`, `sample`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/cli/
@@ -516,7 +516,7 @@ git commit -m "feat: picocli root + review/eval/sample subcommands"
 - Create: `src/test/resources/fixtures/diff-hunks/simple-add.patch`
 - Create: `src/test/resources/fixtures/diff-hunks/multi-file.patch`
 
-- [ ] **Step 1: Create fixtures**
+- [x] **Step 1: Create fixtures**
 
 `src/test/resources/fixtures/diff-hunks/simple-add.patch`:
 ```
@@ -551,7 +551,7 @@ diff --git a/B.java b/B.java
  line8
 ```
 
-- [ ] **Step 2: Write failing tests**
+- [x] **Step 2: Write failing tests**
 
 `DiffParserTest.java`:
 ```java
@@ -611,12 +611,12 @@ class DiffParserTest {
 }
 ```
 
-- [ ] **Step 3: Run tests to confirm they fail**
+- [x] **Step 3: Run tests to confirm they fail**
 
 Run: `mvn -q test -Dtest=DiffParserTest`
 Expected: compile error (class `DiffParser` does not exist).
 
-- [ ] **Step 4: Implement `DiffParser.java`**
+- [x] **Step 4: Implement `DiffParser.java`**
 
 ```java
 package dev.langchain4j.example.codereview.infra;
@@ -684,12 +684,12 @@ public class DiffParser {
 }
 ```
 
-- [ ] **Step 5: Run tests, confirm pass**
+- [x] **Step 5: Run tests, confirm pass**
 
 Run: `mvn -q test -Dtest=DiffParserTest`
 Expected: 4 tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/infra/DiffParser.java \
@@ -706,7 +706,7 @@ git commit -m "feat(infra): DiffParser with file-line-number mapping"
 - Create: `src/main/java/dev/langchain4j/example/codereview/infra/GitClient.java`
 - Create: `src/test/java/dev/langchain4j/example/codereview/infra/GitClientTest.java`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```java
 package dev.langchain4j.example.codereview.infra;
@@ -764,12 +764,12 @@ class GitClientTest {
 }
 ```
 
-- [ ] **Step 2: Run, confirm failing (class missing)**
+- [x] **Step 2: Run, confirm failing (class missing)**
 
 Run: `mvn -q test -Dtest=GitClientTest`
 Expected: compile error.
 
-- [ ] **Step 3: Implement `GitClient.java`**
+- [x] **Step 3: Implement `GitClient.java`**
 
 ```java
 package dev.langchain4j.example.codereview.infra;
@@ -831,12 +831,12 @@ public class GitClient {
 }
 ```
 
-- [ ] **Step 4: Run tests, confirm pass**
+- [x] **Step 4: Run tests, confirm pass**
 
 Run: `mvn -q test -Dtest=GitClientTest`
 Expected: 3 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/infra/GitClient.java \
@@ -852,7 +852,7 @@ git commit -m "feat(infra): GitClient subprocess wrapper with timeout"
 - Modify: `src/main/java/dev/langchain4j/example/codereview/GitDiffTool.java` (move to `tools/`)
 - Create: `src/test/java/dev/langchain4j/example/codereview/tools/GitDiffToolTest.java`
 
-- [ ] **Step 1: Move + rewrite `GitDiffTool.java`**
+- [x] **Step 1: Move + rewrite `GitDiffTool.java`**
 
 Move file to `src/main/java/dev/langchain4j/example/codereview/tools/GitDiffTool.java`.
 
@@ -932,7 +932,7 @@ public class GitDiffTool {
 }
 ```
 
-- [ ] **Step 2: Write a focused test**
+- [x] **Step 2: Write a focused test**
 
 ```java
 package dev.langchain4j.example.codereview.tools;
@@ -982,18 +982,18 @@ class GitDiffToolTest {
 }
 ```
 
-- [ ] **Step 3: Remove old root-level `GitDiffTool.java`**
+- [x] **Step 3: Remove old root-level `GitDiffTool.java`**
 
 ```bash
 git rm src/main/java/dev/langchain4j/example/codereview/GitDiffTool.java
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `mvn -q test -Dtest=GitDiffToolTest`
 Expected: 2 tests pass. Compile may break temporarily because `CodeReviewRunner` was deleted in Task 3 and `CodeReviewAgent` still imports the old `GitDiffTool` location — fix that import to `tools.GitDiffTool`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/tools/GitDiffTool.java \
@@ -1012,7 +1012,7 @@ git commit -m "refactor(tools): GitDiffTool uses GitClient + per-file splitting"
 - Create: `src/main/java/dev/langchain4j/example/codereview/analyzer/RegexAnalyzer.java`
 - Create: `src/test/java/dev/langchain4j/example/codereview/analyzer/RegexAnalyzerTest.java`
 
-- [ ] **Step 1: Create `Violation.java`**
+- [x] **Step 1: Create `Violation.java`**
 
 ```java
 package dev.langchain4j.example.codereview.analyzer;
@@ -1036,7 +1036,7 @@ package dev.langchain4j.example.codereview.model;
 public enum Severity { CRITICAL, WARNING, SUGGESTION }
 ```
 
-- [ ] **Step 2: Create `StaticAnalyzer.java`**
+- [x] **Step 2: Create `StaticAnalyzer.java`**
 
 ```java
 package dev.langchain4j.example.codereview.analyzer;
@@ -1051,7 +1051,7 @@ public interface StaticAnalyzer {
 }
 ```
 
-- [ ] **Step 3: Write failing test for `RegexAnalyzer`**
+- [x] **Step 3: Write failing test for `RegexAnalyzer`**
 
 ```java
 package dev.langchain4j.example.codereview.analyzer;
@@ -1129,12 +1129,12 @@ class RegexAnalyzerTest {
 }
 ```
 
-- [ ] **Step 4: Run, confirm fail**
+- [x] **Step 4: Run, confirm fail**
 
 Run: `mvn -q test -Dtest=RegexAnalyzerTest`
 Expected: compile error.
 
-- [ ] **Step 5: Implement `RegexAnalyzer.java`**
+- [x] **Step 5: Implement `RegexAnalyzer.java`**
 
 ```java
 package dev.langchain4j.example.codereview.analyzer;
@@ -1203,12 +1203,12 @@ public class RegexAnalyzer implements StaticAnalyzer {
 }
 ```
 
-- [ ] **Step 6: Run, confirm pass**
+- [x] **Step 6: Run, confirm pass**
 
 Run: `mvn -q test -Dtest=RegexAnalyzerTest`
 Expected: 7 tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/analyzer/ \
@@ -1224,7 +1224,7 @@ git commit -m "feat(analyzer): StaticAnalyzer interface + RegexAnalyzer"
 **Files:**
 - Modify: move `src/main/java/dev/langchain4j/example/codereview/RuleCheckerTool.java` → `tools/RuleCheckerTool.java`
 
-- [ ] **Step 1: Rewrite `RuleCheckerTool.java`**
+- [x] **Step 1: Rewrite `RuleCheckerTool.java`**
 
 ```java
 package dev.langchain4j.example.codereview.tools;
@@ -1283,23 +1283,23 @@ public class RuleCheckerTool {
 }
 ```
 
-- [ ] **Step 2: Delete old root-level `RuleCheckerTool.java`**
+- [x] **Step 2: Delete old root-level `RuleCheckerTool.java`**
 
 ```bash
 git rm src/main/java/dev/langchain4j/example/codereview/RuleCheckerTool.java
 ```
 
-- [ ] **Step 3: Build to confirm refactor doesn't break compile**
+- [x] **Step 3: Build to confirm refactor doesn't break compile**
 
 Run: `mvn -q compile`
 Expected: BUILD SUCCESS. If `CodeReviewAgent` import paths are off, fix them inline.
 
-- [ ] **Step 4: Run full test suite**
+- [x] **Step 4: Run full test suite**
 
 Run: `mvn -q test`
 Expected: all tests pass (DiffParserTest, GitClientTest, GitDiffToolTest, RegexAnalyzerTest).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/tools/RuleCheckerTool.java
@@ -1315,7 +1315,7 @@ git commit -m "refactor(tools): RuleCheckerTool uses DiffParser (real line numbe
 - Create: `src/main/java/dev/langchain4j/example/codereview/infra/EmbeddingCache.java`
 - Create: `src/test/java/dev/langchain4j/example/codereview/infra/EmbeddingCacheTest.java`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```java
 package dev.langchain4j.example.codereview.infra;
@@ -1360,12 +1360,12 @@ class EmbeddingCacheTest {
 
 Note: `InMemoryEmbeddingStore` in LangChain4j provides `serializeToJson()` / `fromJson(String)`. If the method names differ in `1.15.0-beta25`, check `InMemoryEmbeddingStore` javadoc and adjust.
 
-- [ ] **Step 2: Run, confirm fail**
+- [x] **Step 2: Run, confirm fail**
 
 Run: `mvn -q test -Dtest=EmbeddingCacheTest`
 Expected: compile error.
 
-- [ ] **Step 3: Implement `EmbeddingCache.java`**
+- [x] **Step 3: Implement `EmbeddingCache.java`**
 
 ```java
 package dev.langchain4j.example.codereview.infra;
@@ -1418,12 +1418,12 @@ public class EmbeddingCache {
 }
 ```
 
-- [ ] **Step 4: Run, confirm pass**
+- [x] **Step 4: Run, confirm pass**
 
 Run: `mvn -q test -Dtest=EmbeddingCacheTest`
 Expected: 2 tests pass. If `serializeToJson` / `fromJson` method names differ, adjust per actual LangChain4j 1.15.x API; the test will tell you immediately.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/dev/langchain4j/example/codereview/infra/EmbeddingCache.java \

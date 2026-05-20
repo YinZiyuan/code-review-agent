@@ -26,6 +26,38 @@ java -jar target/code-review-agent-1.0.0.jar eval --version v0-baseline
 
 See [`eval/samples/README.md`](eval/samples/README.md) for sample format.
 
+## Architecture (W1 snapshot)
+
+```text
+              ┌──────────────┐
+   CLI args ─▶│ picocli Root │──▶ review / eval / sample
+              └──────┬───────┘
+                     │
+        ┌────────────┴────────────┐
+        ▼                         ▼
+┌───────────────┐         ┌────────────────────┐
+│ ReviewCommand │         │   EvalCommand      │
+└───────┬───────┘         └─────────┬──────────┘
+        │                           │
+        ▼                           ▼
+┌─────────────────────┐    ┌────────────────────┐
+│  CodeReviewAgent    │◀───│ EvaluationRunner   │
+│ (LangChain4j AiSvc) │    │  + Matcher + Judge │
+└──┬────────────┬─────┘    └─────────┬──────────┘
+   │ tools      │ RAG                │
+   ▼            ▼                    ▼
+┌────────┐ ┌──────────────┐  ┌────────────────┐
+│GitDiff │ │ Embedding    │  │  EvalReport    │
+│RuleChk │ │ Store (BGE)  │  │ eval/reports/  │
+└───┬────┘ └──────────────┘  └────────────────┘
+    ▼
+┌─────────┐ ┌────────────┐
+│GitClient│ │DiffParser  │── real file line numbers
+└─────────┘ └────────────┘
+```
+
+Single-agent pipeline today (W1). W3 splits this into `DiffAnalyzer → ToolFindings → LlmReviewer → Summarizer`; W3-stretch adds parallel Security/Performance/Test reviewers. Full Mermaid diagram lands in W4.
+
 ## Design
 
 Full design spec: [`docs/superpowers/specs/2026-05-17-code-review-agent-design.md`](docs/superpowers/specs/2026-05-17-code-review-agent-design.md)
