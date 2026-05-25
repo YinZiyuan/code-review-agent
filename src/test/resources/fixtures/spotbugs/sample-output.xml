@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BugCollection version="4.8.6">
+  <BugInstance type="NP_NULL_ON_SOME_PATH" priority="1" rank="9" abbrev="NP" category="CORRECTNESS">
+    <Class classname="com.example.UserService"/>
+    <Method classname="com.example.UserService" name="displayName"/>
+    <SourceLine classname="com.example.UserService" start="5" end="5" sourcefile="UserService.java" sourcepath="com/example/UserService.java"/>
+    <LongMessage>Possible null pointer dereference of user.getProfile() at UserService.java:5</LongMessage>
+  </BugInstance>
+  <BugInstance type="DM_EXIT" priority="2" rank="14" abbrev="DM" category="BAD_PRACTICE">
+    <Class classname="com.example.Util"/>
+    <SourceLine classname="com.example.Util" start="42" end="42" sourcefile="Util.java" sourcepath="com/example/Util.java"/>
+    <LongMessage>Util.java:42 calls System.exit(...) which shuts down the entire VM.</LongMessage>
+  </BugInstance>
+</BugCollection>
