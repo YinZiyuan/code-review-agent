@@ -1,0 +1,31 @@
+# Performance Review Guidelines
+
+## Algorithmic Complexity
+- Watch for nested loops over unbounded collections.
+- Prefer maps or sets for repeated membership checks.
+- Treat accidental O(n^2) behavior as a production risk in batch jobs.
+- Keep complexity comments near non-obvious optimizations.
+
+## Allocation Pressure
+- Avoid creating large temporary collections when streaming is enough.
+- Reuse formatters or parsers only when they are thread-safe.
+- Be cautious with repeated string concatenation in loops.
+- Limit per-request buffers and avoid loading entire files into memory.
+
+## Blocking Calls
+- Do not block inside async callbacks, event loops, or parallel streams.
+- Separate CPU-bound pools from IO-bound pools.
+- Add timeouts to remote calls and database operations.
+- Avoid Thread.sleep in production workflows.
+
+## Caching
+- Every cache needs an invalidation or freshness story.
+- Bound cache size and define eviction behavior.
+- Avoid caching user-specific data under global keys.
+- Treat stale permission or pricing data as correctness bugs, not only performance bugs.
+
+## Large Data Paths
+- Paginate API responses and database reads.
+- Prefer streaming exports over materializing all rows.
+- Measure before and after significant performance changes.
+- Include backpressure or throttling for producer-consumer pipelines.

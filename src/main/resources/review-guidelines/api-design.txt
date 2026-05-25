@@ -1,0 +1,31 @@
+# API Design Review Guidelines
+
+## Resource Modeling
+- Use stable resource names and avoid verb-heavy URLs.
+- Keep identifiers opaque to clients unless the format is part of the contract.
+- Separate internal domain models from external request and response DTOs.
+- Avoid exposing fields that clients cannot safely rely on.
+
+## Idempotency
+- Make retryable write APIs idempotent where possible.
+- Use idempotency keys for payment, order, and provisioning operations.
+- Document whether PUT, PATCH, and POST endpoints can be retried.
+- Avoid hidden side effects in read endpoints.
+
+## Status Codes And Errors
+- Return precise status codes instead of always returning 200.
+- Include machine-readable error codes and human-readable messages.
+- Avoid leaking stack traces or internal class names to clients.
+- Keep validation errors field-specific when possible.
+
+## Versioning
+- Prefer additive changes for backward compatibility.
+- Do not silently change enum semantics or default values.
+- Deprecate fields before removing them.
+- Track API behavior changes in release notes or migration docs.
+
+## Pagination And Limits
+- Set default and maximum page sizes.
+- Include stable ordering when pagination is used.
+- Use cursor pagination for high-churn datasets.
+- Document whether counts are exact, approximate, or omitted.

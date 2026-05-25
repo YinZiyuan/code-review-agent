@@ -1,0 +1,30 @@
+# Exception Handling Review Guidelines
+
+## Preserve Context
+- Wrap third-party exceptions with operation-specific context.
+- Include identifiers needed for debugging, but avoid secrets and personal data.
+- Preserve the original cause when rethrowing.
+- Do not replace a precise exception with a vague RuntimeException.
+
+## Avoid Swallowing Failures
+- Empty catch blocks are almost always a bug.
+- Log at the boundary where the error can be acted on.
+- Do not log and rethrow repeatedly through every layer.
+- Make fallback behavior visible through metrics or tool status.
+
+## API Boundaries
+- Do not leak low-level checked exceptions across module boundaries.
+- Translate infrastructure errors into domain-level failures.
+- Keep public API errors stable and documented.
+- Avoid using exceptions for ordinary control flow.
+
+## Recovery
+- Retry only when the operation is safe or idempotent.
+- Use bounded retries with backoff and timeouts.
+- Do not hide partial failure in batch workflows.
+- Return enough detail for callers to decide whether to retry.
+
+## Testing Errors
+- Test negative paths for validation, timeouts, and downstream failures.
+- Assert that important context appears in the thrown or returned error.
+- Use fake dependencies to make error cases deterministic.
