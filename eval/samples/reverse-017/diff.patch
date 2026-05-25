@@ -1,0 +1,12 @@
+diff --git a/BlockingReportService.java b/BlockingReportService.java
+--- a/BlockingReportService.java
++++ b/BlockingReportService.java
+@@ -2,7 +2,7 @@
+ 
+ public class BlockingReportService {
+     public List<String> render(List<String> ids) {
+-        return ids.parallelStream().map(this::fetchRemote).toList();
++        return ids.stream().map(this::fetchRemote).toList();
+     }
+     private String fetchRemote(String id) { return id; }
+ }
