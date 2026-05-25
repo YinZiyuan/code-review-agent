@@ -1,0 +1,17 @@
+diff --git a/StreamLoader.java b/StreamLoader.java
+--- a/StreamLoader.java
++++ b/StreamLoader.java
+@@ -1,10 +1,10 @@
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+-import java.util.stream.Stream;
+ 
+ public class StreamLoader {
+     public long count(Path path) throws Exception {
+-        Stream<String> lines = Files.lines(path);
+-        return lines.count();
++        try (var lines = Files.lines(path)) {
++            return lines.count();
++        }
+     }
+ }
