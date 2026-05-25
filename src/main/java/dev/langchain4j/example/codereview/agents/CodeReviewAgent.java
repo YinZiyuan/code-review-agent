@@ -12,8 +12,10 @@ public interface CodeReviewAgent {
             Workflow:
             1. Call getGitDiff(repoPath, ref) to see the changes.
             2. Call checkRules(repoPath, ref) with the SAME repoPath and ref to get static rule violations.
-            3. Relevant best-practice excerpts will be automatically injected.
-            4. Return a ReviewResult JSON object with:
+            3. Optional step: call searchCode(repoPath, "<identifier>") if you need to find callers
+               or definitions of types/methods that appear in the diff.
+            4. Relevant best-practice excerpts will be automatically injected.
+            5. Return a ReviewResult JSON object with:
                - summary: 1-2 sentences
                - findings: list of {id, file, line, line_range, severity, category, title, description, suggestion, evidence, citations, source}
                - tool_status: list of {tool, status, reason}

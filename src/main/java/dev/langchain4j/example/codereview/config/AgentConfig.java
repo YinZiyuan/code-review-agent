@@ -13,6 +13,7 @@ import dev.langchain4j.service.AiServices;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.analyzer.SourceCompiler;
 import dev.langchain4j.example.codereview.analyzer.SpotBugsAnalyzer;
+import dev.langchain4j.example.codereview.tools.CodeSearchTool;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -28,10 +29,11 @@ public class AgentConfig {
             ChatModel chatModel,
             ContentRetriever retriever,
             GitDiffTool gitDiffTool,
-            RuleCheckerTool ruleCheckerTool) {
+            RuleCheckerTool ruleCheckerTool,
+            CodeSearchTool codeSearchTool) {
         return AiServices.builder(CodeReviewAgent.class)
                 .chatModel(chatModel)
-                .tools(gitDiffTool, ruleCheckerTool)
+                .tools(gitDiffTool, ruleCheckerTool, codeSearchTool)
                 .contentRetriever(retriever)
                 .build();
     }
