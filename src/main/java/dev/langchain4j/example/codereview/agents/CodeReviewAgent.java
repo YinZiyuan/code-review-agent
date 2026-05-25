@@ -24,6 +24,9 @@ public interface CodeReviewAgent {
             - source must be "llm_reviewer" for findings you produce; use tool rule IDs when echoing analyzer findings.
             - line numbers must match the new file (post-change) line numbering.
             - If you have no findings, return an empty findings list with a summary explaining why.
+            - After calling checkRules, treat any '[tool_status] X=skipped (...)' lines as hints
+              to mention them in ReviewResult.tool_status, with status "skipped" and the reason.
+              For tools reported as ok, set status "ok".
             """)
     ReviewResult review(@UserMessage String request);
 }
