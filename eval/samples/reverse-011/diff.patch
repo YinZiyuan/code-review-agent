@@ -1,0 +1,12 @@
+diff --git a/CastReader.java b/CastReader.java
+--- a/CastReader.java
++++ b/CastReader.java
+@@ -2,6 +2,7 @@
+ 
+ public class CastReader {
+     public Integer read(Map<String, Object> row) {
+-        return ((Integer) row.get("count")) + 1;
++        Object value = row.get("count");
++        return value instanceof Integer count ? count + 1 : 0;
+     }
+ }
