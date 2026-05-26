@@ -32,7 +32,7 @@ The CLI is a picocli app with three subcommands wired in `RootCommand`: `review`
 This is a LangChain4j agent that reviews git diffs and emits a structured `ReviewResult`. Three things are worth understanding before touching code:
 
 **1. The agent is a LangChain4j AI Service, not hand-written orchestration.**
-[CodeReviewAgent](src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java) is just an interface with a `@SystemMessage` prompt; [AgentConfig.codeReviewAgent](src/main/java/dev/langchain4j/example/codereview/config/AgentConfig.java) builds the implementation via `AiServices.builder(...).tools(...).contentRetriever(...)`. The LLM (Moonshot/Kimi over the OpenAI-compatible endpoint, configured in [application.yml](src/main/resources/application.yml)) decides when to call tools. Two tools are exposed: [GitDiffTool.getGitDiff](src/main/java/dev/langchain4j/example/codereview/tools/GitDiffTool.java) and [RuleCheckerTool.checkRules](src/main/java/dev/langchain4j/example/codereview/tools/RuleCheckerTool.java). RAG excerpts from `src/main/resources/review-guidelines/*.txt` are injected automatically by the `ContentRetriever` — the agent does NOT call a retrieval tool. To change agent behavior, prefer editing the `@SystemMessage` prompt or the tool `@Tool` descriptions over writing imperative glue.
+[CodeReviewAgent](src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java) is just an interface with a `@SystemMessage` prompt; [AgentConfig.codeReviewAgent](src/main/java/dev/langchain4j/example/codereview/config/AgentConfig.java) builds the implementation via `AiServices.builder(...).tools(...).contentRetriever(...)`. The LLM (Moonshot/Kimi over the OpenAI-compatible endpoint, configured in [application.yml](src/main/resources/application.yml)) decides when to call tools. Three tools are exposed: [GitDiffTool.getGitDiff](src/main/java/dev/langchain4j/example/codereview/tools/GitDiffTool.java), [RuleCheckerTool.checkRules](src/main/java/dev/langchain4j/example/codereview/tools/RuleCheckerTool.java), and [CodeSearchTool.searchCode](src/main/java/dev/langchain4j/example/codereview/tools/CodeSearchTool.java). RAG excerpts from `src/main/resources/review-guidelines/*.txt` are injected automatically by the `ContentRetriever` — the agent does NOT call a retrieval tool. To change agent behavior, prefer editing the `@SystemMessage` prompt or the tool `@Tool` descriptions over writing imperative glue.
 
 **2. Diff line numbers come from `DiffParser`, not from raw diff offsets.**
 A historical bug treated hunk-local diff line numbers as file line numbers. [DiffParser](src/main/java/dev/langchain4j/example/codereview/infra/DiffParser.java) parses hunk headers and computes real post-change file line numbers; every analyzer and every reported finding MUST use those. The same applies to `ReviewFinding.line` — it refers to the new file. Static analyzers implement [StaticAnalyzer](src/main/java/dev/langchain4j/example/codereview/analyzer/StaticAnalyzer.java); they receive parsed `FileDiff` objects with the correct line numbers attached.
@@ -46,14 +46,14 @@ Per [eval/samples/README.md](eval/samples/README.md): the agent is only allowed 
 
 ### Configuration
 
-Strongly-typed config lives in [CodeReviewProperties](src/main/java/dev/langchain4j/example/codereview/config/CodeReviewProperties.java) (a `@ConfigurationProperties` record) bound to the `code-review.*` block of `application.yml`. RAG params (`top-k`, `min-score`, `rerank-enabled`), eval params (`judge-model`, `runs-per-sample`, `samples-dir`, `report-dir`), and orchestration params all flow from there. The LLM endpoint is configured under `langchain4j.open-ai.chat-model.*`. Embedding cache is persisted to `~/.code-review-agent/cache` to avoid re-indexing on every startup.
+Strongly-typed config lives in [CodeReviewProperties](src/main/java/dev/langchain4j/example/codereview/config/CodeReviewProperties.java) (a `@ConfigurationProperties` record) bound to the `code-review.*` block of `application.yml`. RAG params (`top-k`, `min-score`, `rerank-enabled`, `bm25-top-k`, `rerank-top-k`, `rrf-k`), eval params (`judge-model`, `runs-per-sample`, `samples-dir`, `report-dir`), and orchestration params all flow from there. The LLM endpoint is configured under `langchain4j.open-ai.chat-model.*`. Embedding cache is persisted to `~/.code-review-agent/cache` to avoid re-indexing on every startup.
 
 ## Project Roadmap Context
 
 The repo is structured around a 4-week evolution (see [docs/superpowers/specs/2026-05-17-code-review-agent-design.md](docs/superpowers/specs/2026-05-17-code-review-agent-design.md)):
 
-- **W1** (current, branch `feat/w1`): single-agent + regex analyzer + 5 reverse-style samples → v0 baseline.
-- **W2**: SpotBugs + CodeSearchTool + hybrid RAG + reranker + 20 samples → v1/v2.
+- **W1** (done): single-agent + regex analyzer + 5 reverse-style samples → v0 baseline (60% recall / 50% precision).
+- **W2** (current, branch `feat/w2`): SpotBugs + CodeSearchTool + hybrid RAG + reranker + 20 samples → v1/v2 pending clean eval reports.
 - **W3**: pipeline split (`DiffAnalyzer` → `ToolFindings` → `LlmReviewer` → `Summarizer`); optional multi-agent (parallel Security/Performance/Test reviewers).
 - **W4**: 40-sample release evaluation, tuning, README/demo.
 
