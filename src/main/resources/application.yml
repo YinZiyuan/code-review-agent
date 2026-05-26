@@ -15,7 +15,10 @@ code-review:
     embedding-cache-dir: ${user.home}/.code-review-agent/cache
     top-k: 3
     min-score: 0.4
-    rerank-enabled: false   # W2 turns this on
+    rerank-enabled: true
+    bm25-top-k: 8
+    rerank-top-k: 4
+    rrf-k: 60
   orchestration:
     reviewer-timeout: 60s
     parallelism: 3

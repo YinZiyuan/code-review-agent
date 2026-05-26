@@ -25,7 +25,7 @@ class KnowledgeBaseIndexerTest {
         EmbeddingCache cache = new EmbeddingCache(cacheDir);
         InMemoryEmbeddingStore<TextSegment> cachedStore = new InMemoryEmbeddingStore<>();
         cachedStore.add(Embedding.from(new float[]{1.0f, 0.0f, 0.0f}), TextSegment.from("cached guideline"));
-        cache.save("review-guidelines", cachedStore);
+        cache.save(KnowledgeBaseIndexer.CACHE_KEY, cachedStore);
 
         KnowledgeBaseIndexer indexer = new KnowledgeBaseIndexer(new FailingEmbeddingModel(), cache);
 
@@ -47,7 +47,7 @@ class KnowledgeBaseIndexerTest {
 
         InMemoryEmbeddingStore<TextSegment> store = indexer.buildOrLoad();
 
-        Optional<InMemoryEmbeddingStore<TextSegment>> cached = cache.load("review-guidelines");
+        Optional<InMemoryEmbeddingStore<TextSegment>> cached = cache.load(KnowledgeBaseIndexer.CACHE_KEY);
         assertThat(cached).isPresent();
         EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
                 .queryEmbedding(Embedding.from(new float[]{1.0f, 0.0f, 0.0f}))

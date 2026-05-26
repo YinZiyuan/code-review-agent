@@ -15,7 +15,10 @@ public record CodeReviewProperties(
             Path embeddingCacheDir,
             int topK,
             double minScore,
-            boolean rerankEnabled
+            boolean rerankEnabled,
+            int bm25TopK,
+            int rerankTopK,
+            int rrfK
     ) { }
 
     public record Orchestration(
