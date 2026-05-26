@@ -24,6 +24,9 @@ public class EvalCommand implements Callable<Integer> {
     @Option(names = "--report-dir", description = "Override reports output directory")
     private Path reportDirOverride;
 
+    @Option(names = "--pipeline", description = "Pipeline label recorded in report config", defaultValue = "w1-single-agent")
+    private String pipeline;
+
     private final EvaluationRunner runner;
     private final CodeReviewProperties props;
 
@@ -39,7 +42,7 @@ public class EvalCommand implements Callable<Integer> {
         Map<String, Object> config = Map.of(
                 "judge_model", props.eval().judgeModel(),
                 "runs_per_sample", props.eval().runsPerSample(),
-                "pipeline", "w1-single-agent"
+                "pipeline", pipeline
         );
 
         EvalReport report = runner.run(samples, reports, version, config);

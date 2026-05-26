@@ -102,7 +102,12 @@ public class EvaluationRunner {
         }
 
         return new SampleMetrics(sample.id(), tp, fp, fn, severityMatches, severityComparisons,
-                latency, 0L, 0L, 0, 0);
+                latency, 0L, 0L,
+                result.toolStatus() == null ? 0 : result.toolStatus().size(),
+                result.toolStatus() == null ? 0 : (int) result.toolStatus().stream()
+                        .filter(status -> !"ok".equalsIgnoreCase(status.status()))
+                        .count(),
+                result.toolStatus() == null ? List.of() : result.toolStatus());
     }
 
     private List<Path> listSampleDirs(Path samplesDir) throws IOException {
