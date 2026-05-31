@@ -28,7 +28,10 @@ public class CitationKeywordInjector {
                     .toLowerCase(Locale.ROOT);
             List<Citation> matched = new ArrayList<>();
             for (Citation candidate : candidates) {
-                if (matches(haystack, candidate.section())) {
+                String citationText = safe(candidate.id()) + " "
+                        + safe(candidate.source()) + " "
+                        + safe(candidate.section());
+                if (matches(haystack, citationText)) {
                     matched.add(candidate);
                 }
             }
@@ -45,12 +48,12 @@ public class CitationKeywordInjector {
         }
         String normalizedSection = section.toLowerCase(Locale.ROOT);
         for (String word : normalizedSection.split("[^a-z0-9]+")) {
-            if (word.length() >= 4 && haystack.contains(word)) {
+            if (word.length() >= 3 && haystack.contains(word)) {
                 return true;
             }
         }
         return Arrays.stream(haystack.split("[^a-z0-9]+"))
-                .anyMatch(word -> word.length() >= 4 && normalizedSection.contains(word));
+                .anyMatch(word -> word.length() >= 3 && normalizedSection.contains(word));
     }
 
     private static String safe(String value) {
