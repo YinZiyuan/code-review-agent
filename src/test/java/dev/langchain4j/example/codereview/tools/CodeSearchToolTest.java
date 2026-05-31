@@ -11,7 +11,7 @@ class CodeSearchToolTest {
 
     @Test
     void findsSubstringAcrossFilesAndReportsLine() {
-        String result = tool.searchCode(FIXTURES, "Foo");
+        String result = tool.grep(FIXTURES, "Foo");
         assertThat(result)
                 .contains("Foo.java:")
                 .contains("Bar.java:");
@@ -19,19 +19,19 @@ class CodeSearchToolTest {
 
     @Test
     void emptyResultMessageWhenNoMatches() {
-        String result = tool.searchCode(FIXTURES, "definitely-not-here-zzz");
+        String result = tool.grep(FIXTURES, "definitely-not-here-zzz");
         assertThat(result).contains("No matches");
     }
 
     @Test
     void honorsNestedJavaFiles() {
-        String result = tool.searchCode(FIXTURES, "println");
+        String result = tool.grep(FIXTURES, "println");
         assertThat(result).contains("nested/Baz.java");
     }
 
     @Test
     void capsHitsAndReportsTruncation() {
-        String result = tool.searchCode(FIXTURES, "{");
+        String result = tool.grep(FIXTURES, "{");
         long lines = result.lines().filter(l -> l.contains(".java:")).count();
         assertThat(lines).isLessThanOrEqualTo(50);
     }

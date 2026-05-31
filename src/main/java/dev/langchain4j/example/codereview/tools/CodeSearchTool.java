@@ -1,7 +1,5 @@
 package dev.langchain4j.example.codereview.tools;
 
-import dev.langchain4j.agent.tool.P;
-import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -18,14 +16,7 @@ public class CodeSearchTool {
     private static final int MAX_HITS = 50;
     private static final int MAX_LINE_LEN = 200;
 
-    @Tool("""
-            Searches a local directory tree (Java files only) for a substring.
-            Returns lines in the form 'relative/path.java:LINE: matched-line-snippet'.
-            Use it to find callers, definitions, or other occurrences of identifiers you see in the diff.
-            """)
-    public String searchCode(
-            @P("Absolute path to a directory to search") String rootPath,
-            @P("Substring (literal, case-sensitive) to look for") String needle) {
+    public String grep(String rootPath, String needle) {
         Path root = Path.of(rootPath);
         if (!Files.isDirectory(root)) {
             return "Not a directory: " + rootPath;
