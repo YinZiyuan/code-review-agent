@@ -32,7 +32,7 @@ class EvaluationRunnerIT {
 
         ObjectMapper mapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-        CodeReviewAgent agent = request -> new ReviewResult(
+        CodeReviewAgent agent = (request, sourceRoot) -> new ReviewResult(
                 "1 finding",
                 List.of(new ReviewFinding(
                         "F-001", "User.java", 11, new int[]{11, 11},

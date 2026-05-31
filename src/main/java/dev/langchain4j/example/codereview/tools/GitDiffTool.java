@@ -1,7 +1,5 @@
 package dev.langchain4j.example.codereview.tools;
 
-import dev.langchain4j.agent.tool.P;
-import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.infra.GitClient;
 import org.springframework.stereotype.Component;
@@ -24,10 +22,7 @@ public class GitDiffTool {
         this.diffParser = diffParser;
     }
 
-    @Tool("Retrieves the git diff for a repository. Diff is split per file; oversized files are summarized.")
-    public String getGitDiff(
-            @P("Absolute path to the git repository") String repoPath,
-            @P("Git ref to compare against, e.g. 'HEAD~1'") String ref) {
+    public String getGitDiff(String repoPath, String ref) {
         try {
             String effectiveRef = (ref == null || ref.isBlank()) ? "HEAD~1" : ref;
             String raw = gitClient.diff(Path.of(repoPath), effectiveRef);

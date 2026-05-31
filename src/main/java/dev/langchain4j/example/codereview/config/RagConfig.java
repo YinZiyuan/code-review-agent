@@ -6,17 +6,13 @@ import dev.langchain4j.example.codereview.rag.CitationTracker;
 import dev.langchain4j.example.codereview.rag.HybridRetriever;
 import dev.langchain4j.example.codereview.rag.KnowledgeBaseIndexer;
 import dev.langchain4j.example.codereview.rag.LlmReranker;
-import dev.langchain4j.example.codereview.rag.RetrievalRecorder;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.bgesmallenv15q.BgeSmallEnV15QuantizedEmbeddingModel;
-import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.List;
 
 @Configuration
 public class RagConfig {
@@ -48,8 +44,7 @@ public class RagConfig {
             KnowledgeBaseIndexer indexer,
             EmbeddingModel embeddingModel,
             ChatModel chatModel,
-            CodeReviewProperties props,
-            RetrievalRecorder recorder) {
+            CodeReviewProperties props) {
         ContentRetriever vector = EmbeddingStoreContentRetriever.builder()
                 .embeddingStore(indexer.buildOrLoad())
                 .embeddingModel(embeddingModel)
@@ -62,14 +57,9 @@ public class RagConfig {
         ContentRetriever hybrid = new HybridRetriever(vector, bm25Wrapped,
                 props.rag().rrfK(), props.rag().rerankTopK());
 
-        ContentRetriever effective = props.rag().rerankEnabled()
-                ? new LlmReranker(hybrid, chatModel, props.rag().rerankTopK())
-                : hybrid;
-
-        return query -> {
-            List<Content> hits = effective.retrieve(query);
-            recorder.record(hits);
-            return hits;
-        };
+        if (!props.rag().rerankEnabled()) {
+            return hybrid;
+        }
+        return new LlmReranker(hybrid, chatModel, props.rag().rerankTopK());
     }
 }

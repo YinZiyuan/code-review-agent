@@ -88,7 +88,7 @@ public class EvaluationRunner {
         try {
             String request = "Review the following diff. The full diff is below; do not call git tools.\n\n"
                     + sample.diffPatch();
-            result = callAgentWithRetry(request, sample.id());
+            result = callAgentWithRetry(request, sample.sourceBeforeDir(), sample.id());
         } catch (Exception e) {
             log.warn("Sample {} review failed: {}", sample.id(), e.toString());
             result = ReviewResult.empty("review error: " + e.getMessage());
@@ -121,15 +121,15 @@ public class EvaluationRunner {
                 result.toolStatus() == null ? List.of() : result.toolStatus());
     }
 
-    private ReviewResult callAgentWithRetry(String request, String sampleId) {
+    private ReviewResult callAgentWithRetry(String request, Path sourceRoot, String sampleId) {
         try {
-            return agent.review(request);
+            return agent.review(request, sourceRoot);
         } catch (RuntimeException e) {
             if (!isRetryable(e)) {
                 throw e;
             }
             log.warn("Sample {} review timed out; retrying once: {}", sampleId, e.toString());
-            return agent.review(request);
+            return agent.review(request, sourceRoot);
         }
     }
 

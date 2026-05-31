@@ -3,10 +3,12 @@ package dev.langchain4j.example.codereview.cli;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
 import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.example.codereview.reporting.MarkdownReporter;
+import dev.langchain4j.example.codereview.tools.GitDiffTool;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
+import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 @Component
@@ -21,21 +23,25 @@ public class ReviewCommand implements Callable<Integer> {
 
     private final CodeReviewAgent agent;
     private final MarkdownReporter reporter;
+    private final GitDiffTool gitDiffTool;
 
-    public ReviewCommand(CodeReviewAgent agent, MarkdownReporter reporter) {
+    public ReviewCommand(CodeReviewAgent agent, MarkdownReporter reporter, GitDiffTool gitDiffTool) {
         this.agent = agent;
         this.reporter = reporter;
+        this.gitDiffTool = gitDiffTool;
     }
 
     @Override
     public Integer call() {
-        System.out.println("Repository : " + repoPath);
-        System.out.println("Diff ref   : " + ref);
+        String effectiveRepo = repoPath == null || repoPath.isBlank() ? "." : repoPath;
+        String effectiveRef = ref == null || ref.isBlank() ? "HEAD~1" : ref;
+        System.out.println("Repository : " + effectiveRepo);
+        System.out.println("Diff ref   : " + effectiveRef);
 
-        String request = "Review code changes in repo: " + repoPath +
-                "\nCompare against ref: " + ref +
-                "\nCall getGitDiff first, then checkRules, then produce the ReviewResult.";
-        ReviewResult result = agent.review(request);
+        String diff = gitDiffTool.getGitDiff(effectiveRepo, effectiveRef);
+        String request = "Review the following diff. The full diff is below; do not call git tools.\n\n"
+                + diff;
+        ReviewResult result = agent.review(request, Path.of(effectiveRepo).toAbsolutePath());
         System.out.println("\n" + reporter.render(result));
         return 0;
     }

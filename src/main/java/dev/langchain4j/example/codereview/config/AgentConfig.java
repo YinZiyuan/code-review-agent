@@ -1,28 +1,17 @@
 package dev.langchain4j.example.codereview.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
-import dev.langchain4j.example.codereview.agents.GuardedCodeReviewAgent;
+import dev.langchain4j.example.codereview.analyzer.SourceCompiler;
+import dev.langchain4j.example.codereview.analyzer.SpotBugsAnalyzer;
 import dev.langchain4j.example.codereview.eval.EvaluationRunner;
 import dev.langchain4j.example.codereview.eval.LlmJudge;
 import dev.langchain4j.example.codereview.eval.LlmJudgeImpl;
 import dev.langchain4j.example.codereview.eval.Matcher;
 import dev.langchain4j.example.codereview.infra.JsonRepair;
-import dev.langchain4j.example.codereview.rag.CitationKeywordInjector;
-import dev.langchain4j.example.codereview.rag.CitationTracker;
-import dev.langchain4j.example.codereview.rag.RetrievalRecorder;
-import dev.langchain4j.example.codereview.tools.GitDiffTool;
-import dev.langchain4j.example.codereview.tools.RuleCheckerTool;
 import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.rag.content.retriever.ContentRetriever;
-import dev.langchain4j.service.AiServices;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.example.codereview.analyzer.SourceCompiler;
-import dev.langchain4j.example.codereview.analyzer.SpotBugsAnalyzer;
-import dev.langchain4j.example.codereview.tools.CodeSearchTool;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -34,31 +23,6 @@ public class AgentConfig {
     @Bean
     public JsonRepair jsonRepair(ChatModel chatModel, ObjectMapper mapper) {
         return new JsonRepair(chatModel, mapper);
-    }
-
-    @Bean
-    public CodeReviewAgent aiServicesCodeReviewAgent(
-            ChatModel chatModel,
-            ContentRetriever retriever,
-            GitDiffTool gitDiffTool,
-            RuleCheckerTool ruleCheckerTool,
-            CodeSearchTool codeSearchTool) {
-        return AiServices.builder(CodeReviewAgent.class)
-                .chatModel(chatModel)
-                .tools(gitDiffTool, ruleCheckerTool, codeSearchTool)
-                .contentRetriever(retriever)
-                .build();
-    }
-
-    @Bean
-    @Primary
-    public CodeReviewAgent guardedCodeReviewAgent(
-            @Qualifier("aiServicesCodeReviewAgent") CodeReviewAgent inner,
-            JsonRepair jsonRepair,
-            RetrievalRecorder recorder,
-            CitationTracker tracker,
-            CitationKeywordInjector injector) {
-        return new GuardedCodeReviewAgent(inner, jsonRepair, recorder, tracker, injector);
     }
 
     @Bean
