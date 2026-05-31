@@ -6,7 +6,7 @@ langchain4j:
       model-name: moonshot-v1-8k
       temperature: 0
       max-tokens: 4096
-      timeout: 60s
+      timeout: 90s
       log-requests: false
       log-responses: false
 
