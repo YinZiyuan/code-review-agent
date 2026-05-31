@@ -13,4 +13,4 @@ target/
 .settings/
 .env
 eval/reports/*-traces/
-
+.worktrees/
