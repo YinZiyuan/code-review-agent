@@ -2,6 +2,7 @@ package dev.langchain4j.example.codereview.infra;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -19,21 +20,24 @@ public class JsonRepair {
 
     private final ChatModel model;
     private final ObjectMapper mapper;
+    private final ObjectMapper snakeCaseMapper;
 
     public JsonRepair(ChatModel model, ObjectMapper mapper) {
         this.model = model;
         this.mapper = mapper;
+        this.snakeCaseMapper = mapper.copy()
+                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     }
 
     public <T> T parseOrRepair(String raw, Class<T> type) {
         String normalized = normalize(raw);
         try {
-            return mapper.readValue(extractJson(normalized), type);
+            return readValue(extractJson(normalized), type);
         } catch (JsonProcessingException first) {
             log.warn("JSON parse failed ({}); attempting repair", first.getOriginalMessage());
             String repaired = askForRepair(normalized);
             try {
-                return mapper.readValue(extractJson(repaired), type);
+                return readValue(extractJson(repaired), type);
             } catch (JsonProcessingException second) {
                 throw new RepairFailedException(
                         "Repair did not produce valid JSON: " + second.getOriginalMessage(),
@@ -45,7 +49,7 @@ public class JsonRepair {
     public <T> T repairThenParse(String raw, Class<T> type) {
         String repaired = askForRepair(normalize(raw));
         try {
-            return mapper.readValue(extractJson(repaired), type);
+            return readValue(extractJson(repaired), type);
         } catch (JsonProcessingException e) {
             throw new RepairFailedException(
                     "Repair did not produce valid JSON: " + e.getOriginalMessage(),
@@ -65,6 +69,18 @@ public class JsonRepair {
                 .messages(UserMessage.from(prompt))
                 .build());
         return response.aiMessage().text();
+    }
+
+    private <T> T readValue(String json, Class<T> type) throws JsonProcessingException {
+        try {
+            return mapper.readValue(json, type);
+        } catch (JsonProcessingException first) {
+            try {
+                return snakeCaseMapper.readValue(json, type);
+            } catch (JsonProcessingException ignored) {
+                throw first;
+            }
+        }
     }
 
     private String normalize(String raw) {
