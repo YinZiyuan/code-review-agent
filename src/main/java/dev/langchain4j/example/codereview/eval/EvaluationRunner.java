@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class EvaluationRunner {
 
@@ -32,7 +33,17 @@ public class EvaluationRunner {
     }
 
     public EvalReport run(Path samplesDir, Path reportsDir, String version, Map<String, Object> config) throws IOException {
+        return run(samplesDir, reportsDir, version, config, null);
+    }
+
+    public EvalReport run(Path samplesDir, Path reportsDir, String version,
+                          Map<String, Object> config, Set<String> sampleIdFilter) throws IOException {
         List<Path> sampleDirs = listSampleDirs(samplesDir);
+        if (sampleIdFilter != null && !sampleIdFilter.isEmpty()) {
+            sampleDirs = sampleDirs.stream()
+                    .filter(path -> sampleIdFilter.contains(path.getFileName().toString()))
+                    .toList();
+        }
         List<SampleMetrics> perSample = new ArrayList<>();
 
         for (Path dir : sampleDirs) {
@@ -77,7 +88,7 @@ public class EvaluationRunner {
         try {
             String request = "Review the following diff. The full diff is below; do not call git tools.\n\n"
                     + sample.diffPatch();
-            result = agent.review(request);
+            result = callAgentWithRetry(request, sample.id());
         } catch (Exception e) {
             log.warn("Sample {} review failed: {}", sample.id(), e.toString());
             result = ReviewResult.empty("review error: " + e.getMessage());
@@ -108,6 +119,30 @@ public class EvaluationRunner {
                         .filter(status -> !"ok".equalsIgnoreCase(status.status()))
                         .count(),
                 result.toolStatus() == null ? List.of() : result.toolStatus());
+    }
+
+    private ReviewResult callAgentWithRetry(String request, String sampleId) {
+        try {
+            return agent.review(request);
+        } catch (RuntimeException e) {
+            if (!isRetryable(e)) {
+                throw e;
+            }
+            log.warn("Sample {} review timed out; retrying once: {}", sampleId, e.toString());
+            return agent.review(request);
+        }
+    }
+
+    private static boolean isRetryable(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            String name = cur.getClass().getName();
+            if (name.equals("java.net.http.HttpTimeoutException")
+                    || name.equals("java.net.SocketTimeoutException")
+                    || name.equals("org.springframework.web.client.ResourceAccessException")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<Path> listSampleDirs(Path samplesDir) throws IOException {
