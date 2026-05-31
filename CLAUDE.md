@@ -23,22 +23,26 @@ java -jar target/code-review-agent-1.0.0.jar review . HEAD~1
 
 # Run the evaluation suite against eval/samples/, writing eval/reports/<version>.json
 java -jar target/code-review-agent-1.0.0.jar eval --version v0-baseline
+env -u DEBUG java -jar target/code-review-agent-1.0.0.jar eval \
+  --version v3-pipeline \
+  --pipeline w3-pipeline \
+  --suite dev
 ```
 
 The CLI is a picocli app with three subcommands wired in `RootCommand`: `review`, `eval`, `sample`. The Spring Boot app is configured `web-application-type: none` — it's a CLI, not a server.
 
 ## Architecture
 
-This is a LangChain4j agent that reviews git diffs and emits a structured `ReviewResult`. Three things are worth understanding before touching code:
+This is a LangChain4j-backed code review pipeline that reviews git diffs and emits a structured `ReviewResult`. Three things are worth understanding before touching code:
 
-**1. The agent is a LangChain4j AI Service, not hand-written orchestration.**
-[CodeReviewAgent](src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java) is just an interface with a `@SystemMessage` prompt; [AgentConfig.codeReviewAgent](src/main/java/dev/langchain4j/example/codereview/config/AgentConfig.java) builds the implementation via `AiServices.builder(...).tools(...).contentRetriever(...)`. The LLM (Moonshot/Kimi over the OpenAI-compatible endpoint, configured in [application.yml](src/main/resources/application.yml)) decides when to call tools. Three tools are exposed: [GitDiffTool.getGitDiff](src/main/java/dev/langchain4j/example/codereview/tools/GitDiffTool.java), [RuleCheckerTool.checkRules](src/main/java/dev/langchain4j/example/codereview/tools/RuleCheckerTool.java), and [CodeSearchTool.searchCode](src/main/java/dev/langchain4j/example/codereview/tools/CodeSearchTool.java). RAG excerpts from `src/main/resources/review-guidelines/*.txt` are injected automatically by the `ContentRetriever` — the agent does NOT call a retrieval tool. To change agent behavior, prefer editing the `@SystemMessage` prompt or the tool `@Tool` descriptions over writing imperative glue.
+**1. The agent is deterministic orchestration with one bounded LLM call.**
+[CodeReviewAgent](src/main/java/dev/langchain4j/example/codereview/agents/CodeReviewAgent.java) is a plain interface. [PipelineCodeReviewer](src/main/java/dev/langchain4j/example/codereview/agents/pipeline/PipelineCodeReviewer.java) implements it by running `DiffAnalyzer -> ToolFindingsProducer -> LlmReviewer -> Summarizer`. Production code no longer exposes LangChain4j `@Tool` methods or builds the agent through `AiServices`. The LLM (Moonshot/Kimi over the OpenAI-compatible endpoint, configured in [application.yml](src/main/resources/application.yml)) is called directly by [LlmReviewer](src/main/java/dev/langchain4j/example/codereview/agents/pipeline/LlmReviewer.java), which receives bounded diff context, tool findings, and Hybrid RAG citation candidates. [Summarizer](src/main/java/dev/langchain4j/example/codereview/agents/pipeline/Summarizer.java) performs deterministic deduplication, missing-finding fill, citation back-fill, and severity sorting.
 
 **2. Diff line numbers come from `DiffParser`, not from raw diff offsets.**
-A historical bug treated hunk-local diff line numbers as file line numbers. [DiffParser](src/main/java/dev/langchain4j/example/codereview/infra/DiffParser.java) parses hunk headers and computes real post-change file line numbers; every analyzer and every reported finding MUST use those. The same applies to `ReviewFinding.line` — it refers to the new file. Static analyzers implement [StaticAnalyzer](src/main/java/dev/langchain4j/example/codereview/analyzer/StaticAnalyzer.java); they receive parsed `FileDiff` objects with the correct line numbers attached.
+A historical bug treated hunk-local diff line numbers as file line numbers. [DiffParser](src/main/java/dev/langchain4j/example/codereview/infra/DiffParser.java) parses hunk headers and computes real post-change file line numbers; every analyzer and every reported finding MUST use those. The same applies to `ReviewFinding.line` — it refers to the new file. Static analyzers implement [StaticAnalyzer](src/main/java/dev/langchain4j/example/codereview/analyzer/StaticAnalyzer.java); they receive parsed `FileDiff` objects with the correct line numbers attached. The pipeline path feeds those analyzers through [ToolFindingsProducer](src/main/java/dev/langchain4j/example/codereview/agents/pipeline/ToolFindingsProducer.java).
 
 **3. Evaluation is the contract, not the tests.**
-The project follows eval-driven development: every capability change is expected to ship with metrics in `eval/reports/`. [EvaluationRunner](src/main/java/dev/langchain4j/example/codereview/eval/EvaluationRunner.java) iterates samples, calls the agent with the bare `diff.patch` (no git tools), matches agent findings against `ExpectedIssue`s via [Matcher](src/main/java/dev/langchain4j/example/codereview/eval/Matcher.java) (line-window prefilter + `LlmJudge` semantic match), aggregates with [Metrics](src/main/java/dev/langchain4j/example/codereview/eval/Metrics.java), and writes a JSON report named `<version>.json`. Severity/category enums are fixed: `CRITICAL|WARNING|SUGGESTION` and `SECURITY|PERFORMANCE|STABILITY|CONCURRENCY|TEST|STYLE|OTHER`.
+The project follows eval-driven development: every capability change is expected to ship with metrics in `eval/reports/`. [EvaluationRunner](src/main/java/dev/langchain4j/example/codereview/eval/EvaluationRunner.java) iterates samples, calls the agent with the bare `diff.patch` plus the sample's `source-before/` as `sourceRoot`, matches agent findings against `ExpectedIssue`s via [Matcher](src/main/java/dev/langchain4j/example/codereview/eval/Matcher.java) (line-window prefilter + `LlmJudge` semantic match), aggregates with [Metrics](src/main/java/dev/langchain4j/example/codereview/eval/Metrics.java), and writes a JSON report named `<version>.json`. Severity/category enums are fixed: `CRITICAL|WARNING|SUGGESTION` and `SECURITY|PERFORMANCE|STABILITY|CONCURRENCY|TEST|STYLE|OTHER`.
 
 ### Sample isolation (do not violate)
 
@@ -53,8 +57,8 @@ Strongly-typed config lives in [CodeReviewProperties](src/main/java/dev/langchai
 The repo is structured around a 4-week evolution (see [docs/superpowers/specs/2026-05-17-code-review-agent-design.md](docs/superpowers/specs/2026-05-17-code-review-agent-design.md)):
 
 - **W1** (done): single-agent + regex analyzer + 5 reverse-style samples → v0 baseline (60% recall / 50% precision).
-- **W2** (current, branch `feat/w2`): SpotBugs + CodeSearchTool + hybrid RAG + reranker + 20 samples → v1/v2 pending clean eval reports.
-- **W3**: pipeline split (`DiffAnalyzer` → `ToolFindings` → `LlmReviewer` → `Summarizer`); optional multi-agent (parallel Security/Performance/Test reviewers).
+- **W2** (done): SpotBugs + CodeSearchTool + hybrid RAG + reranker + 20 samples → v1/v2 eval reports.
+- **W3** (current, branch `feat/w3-pipeline`): pipeline split (`DiffAnalyzer` → `ToolFindingsProducer` → `LlmReviewer` → `Summarizer`) → v3 eval report.
 - **W4**: 40-sample release evaluation, tuning, README/demo.
 
-The W3 pipeline split is deliberate — when adding a new reviewer stage, plan for it to slot into that pipeline rather than expanding the single `CodeReviewAgent` prompt.
+The W3 pipeline split is deliberate. When adding a new reviewer stage, slot it into the pipeline rather than reintroducing a single autonomous `AiServices` agent.

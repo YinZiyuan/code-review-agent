@@ -2,17 +2,18 @@
 
 A LangChain4j-based Java agent that reviews git diffs and produces structured findings, evaluated against a small baseline sample set.
 
-## Status (W2 in progress)
+## Status (W3 pipeline)
 
-| Version | Recall | Precision | FP Rate | Samples |
-|---------|--------|-----------|---------|---------|
-| v0-baseline | 60% | 50% | 50% | 5 reverse-style samples |
-| v1-spotbugs-search | pending | pending | pending | 20 reverse-style samples |
-| v2-rag-hybrid | pending | pending | pending | 20 reverse-style samples |
+| Version | Recall | Precision | FP Rate | Avg Latency | Samples |
+|---------|--------|-----------|---------|-------------|---------|
+| v0-baseline | 60% | 50% | 50% | - | 5 reverse-style samples |
+| v1-spotbugs-search | 50% | 31.25% | 68.75% | 34.62s | 20 reverse-style samples |
+| v2-rag-hybrid | 65% | 37.14% | 62.86% | 8.35s | 20 reverse-style samples |
+| v3-pipeline | 70% | 66.67% | 33.33% | 4.53s | 20 reverse-style samples |
 
-Full report: [`eval/reports/v0-baseline.json`](eval/reports/v0-baseline.json)
+Reports: [`v0`](eval/reports/v0-baseline.json), [`v1`](eval/reports/v1-spotbugs-search.json), [`v2`](eval/reports/v2-rag-hybrid.json), [`v3`](eval/reports/v3-pipeline.json)
 
-W2 implementation adds SpotBugs integration, CodeSearchTool, 20 reverse-style samples, 8 guideline domains, hybrid BM25/vector retrieval, LLM reranking, and citation metadata. See [`docs/learnings/w2-notes.md`](docs/learnings/w2-notes.md) for verification notes and eval status.
+W3 replaces the W2 single AI-service agent with a deterministic review pipeline: diff context collection, static/tool findings, one bounded LLM review call, then deterministic summarization and citation back-fill. See [`docs/learnings/w3-notes.md`](docs/learnings/w3-notes.md) for implementation and evaluation notes.
 
 ## Quick Start
 
@@ -27,13 +28,14 @@ java -jar target/code-review-agent-1.0.0.jar review . HEAD~1
 ```bash
 java -jar target/code-review-agent-1.0.0.jar eval --version v0-baseline
 env -u DEBUG java -jar target/code-review-agent-1.0.0.jar eval \
-  --version v2-rag-hybrid \
-  --pipeline w2-hybrid-rerank
+  --version v3-pipeline \
+  --pipeline w3-pipeline \
+  --suite dev
 ```
 
 See [`eval/samples/README.md`](eval/samples/README.md) for sample format.
 
-## Architecture (W2 snapshot)
+## Architecture (W3 pipeline)
 
 ```text
               ┌──────────────┐
@@ -48,22 +50,30 @@ See [`eval/samples/README.md`](eval/samples/README.md) for sample format.
         │                           │
         ▼                           ▼
 ┌─────────────────────┐    ┌────────────────────┐
-│  CodeReviewAgent    │◀───│ EvaluationRunner   │
-│ (LangChain4j AiSvc) │    │  + Matcher + Judge │
-└──┬────────────┬─────┘    └─────────┬──────────┘
-   │ tools      │ RAG                │
-   ▼            ▼                    ▼
-┌────────┐ ┌──────────────┐  ┌────────────────┐
-│GitDiff │ │ Hybrid RAG   │  │  EvalReport    │
-│RuleChk │ │ BGE + BM25   │  │ eval/reports/  │
-└───┬────┘ └──────────────┘  └────────────────┘
-    ▼
-┌─────────┐ ┌────────────┐
-│GitClient│ │DiffParser  │── real file line numbers
-└─────────┘ └────────────┘
+│ PipelineCodeReviewer│◀───│ EvaluationRunner   │
+│  implements agent   │    │  + Matcher + Judge │
+└──────────┬──────────┘    └─────────┬──────────┘
+           │                         │
+           ▼                         ▼
+┌─────────────────────┐      ┌────────────────┐
+│ DiffAnalyzer        │      │  EvalReport    │
+│ diff parse + grep   │      │ eval/reports/  │
+└──────────┬──────────┘      └────────────────┘
+           ▼
+┌─────────────────────┐
+│ ToolFindingsProducer│── Regex + SpotBugs
+└──────────┬──────────┘
+           ▼
+┌─────────────────────┐
+│ LlmReviewer         │── ChatModel + Hybrid RAG citations
+└──────────┬──────────┘
+           ▼
+┌─────────────────────┐
+│ Summarizer          │── dedup + fill + severity sort
+└─────────────────────┘
 ```
 
-Single-agent pipeline today (W2), now with SpotBugs, CodeSearchTool, hybrid retrieval, reranking, and citation metadata. W3 splits this into `DiffAnalyzer → ToolFindings → LlmReviewer → Summarizer`; W3-stretch adds parallel Security/Performance/Test reviewers.
+`CodeReviewAgent` is now a plain interface. No production tool is exposed through LangChain4j `@Tool`, and the main review path no longer uses `AiServices`; the only LLM call is the bounded `LlmReviewer` prompt, parsed through `JsonRepair`.
 
 ## Design
 
