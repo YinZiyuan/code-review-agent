@@ -8,9 +8,14 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.regex.Pattern;
+
 public class JsonRepair {
 
     private static final Logger log = LoggerFactory.getLogger(JsonRepair.class);
+    private static final Pattern BASE64_PAYLOAD = Pattern.compile("\\(base64: \"([A-Za-z0-9+/=]+)\"\\)");
 
     private final ChatModel model;
     private final ObjectMapper mapper;
@@ -21,11 +26,12 @@ public class JsonRepair {
     }
 
     public <T> T parseOrRepair(String raw, Class<T> type) {
+        String normalized = normalize(raw);
         try {
-            return mapper.readValue(extractJson(raw), type);
+            return mapper.readValue(extractJson(normalized), type);
         } catch (JsonProcessingException first) {
             log.warn("JSON parse failed ({}); attempting repair", first.getOriginalMessage());
-            String repaired = askForRepair(raw);
+            String repaired = askForRepair(normalized);
             try {
                 return mapper.readValue(extractJson(repaired), type);
             } catch (JsonProcessingException second) {
@@ -37,7 +43,7 @@ public class JsonRepair {
     }
 
     public <T> T repairThenParse(String raw, Class<T> type) {
-        String repaired = askForRepair(raw);
+        String repaired = askForRepair(normalize(raw));
         try {
             return mapper.readValue(extractJson(repaired), type);
         } catch (JsonProcessingException e) {
@@ -59,6 +65,22 @@ public class JsonRepair {
                 .messages(UserMessage.from(prompt))
                 .build());
         return response.aiMessage().text();
+    }
+
+    private String normalize(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        var matcher = BASE64_PAYLOAD.matcher(raw);
+        if (matcher.find()) {
+            try {
+                byte[] decoded = Base64.getDecoder().decode(matcher.group(1));
+                return new String(decoded, StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException e) {
+                log.warn("Could not decode base64 JSON payload: {}", e.getMessage());
+            }
+        }
+        return raw;
     }
 
     private String extractJson(String body) {
