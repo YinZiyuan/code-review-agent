@@ -11,5 +11,7 @@ public record EvalReport(
         Map<String, Object> config,
         List<String> allowedInputs,
         Map<String, Double> metrics,
-        List<SampleMetrics> perSample
+        List<SampleMetrics> perSample,
+        List<Map<String, Double>> perRunMetrics,
+        Map<String, Double> metricsStdDev
 ) { }

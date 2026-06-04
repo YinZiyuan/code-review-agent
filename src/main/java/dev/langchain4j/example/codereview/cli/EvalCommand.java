@@ -48,6 +48,11 @@ public class EvalCommand implements Callable<Integer> {
             defaultValue = "dev")
     private String suite;
 
+    @Option(names = "--runs",
+            description = "Repeat each sample N times for variance. Default: 1.",
+            defaultValue = "1")
+    private int runs;
+
     private final EvaluationRunner runner;
     private final CodeReviewProperties props;
 
@@ -68,12 +73,12 @@ public class EvalCommand implements Callable<Integer> {
         Path reports = reportDirOverride != null ? reportDirOverride : props.eval().reportDir();
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("judge_model", props.eval().judgeModel());
-        config.put("runs_per_sample", props.eval().runsPerSample());
+        config.put("runs_per_sample", runs);
         config.put("pipeline", pipeline);
         config.put("suite", suite);
 
         Set<String> filter = parseFilter(samplesCsv, suite, samples);
-        EvalReport report = runner.run(samples, reports, version, config, filter);
+        EvalReport report = runner.run(samples, reports, version, config, filter, runs);
         System.out.printf("recall=%.2f precision=%.2f fp_rate=%.2f%n",
                 report.metrics().get("recall"),
                 report.metrics().get("precision"),

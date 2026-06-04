@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,35 +34,40 @@ public class EvaluationRunner {
     }
 
     public EvalReport run(Path samplesDir, Path reportsDir, String version, Map<String, Object> config) throws IOException {
-        return run(samplesDir, reportsDir, version, config, null);
+        return run(samplesDir, reportsDir, version, config, null, 1);
     }
 
     public EvalReport run(Path samplesDir, Path reportsDir, String version,
                           Map<String, Object> config, Set<String> sampleIdFilter) throws IOException {
+        return run(samplesDir, reportsDir, version, config, sampleIdFilter, 1);
+    }
+
+    public EvalReport run(Path samplesDir, Path reportsDir, String version,
+                          Map<String, Object> config, Set<String> sampleIdFilter, int runs) throws IOException {
+        int runCount = Math.max(1, runs);
         List<Path> sampleDirs = listSampleDirs(samplesDir);
         if (sampleIdFilter != null && !sampleIdFilter.isEmpty()) {
             sampleDirs = sampleDirs.stream()
                     .filter(path -> sampleIdFilter.contains(path.getFileName().toString()))
                     .toList();
         }
-        List<SampleMetrics> perSample = new ArrayList<>();
+        List<SampleMetrics> flattened = new ArrayList<>();
+        List<Map<String, Double>> perRunMetrics = new ArrayList<>();
 
-        for (Path dir : sampleDirs) {
-            Sample sample = Sample.load(dir, mapper);
-            log.info("Evaluating sample {}", sample.id());
-            perSample.add(evaluateOne(sample));
+        for (int r = 0; r < runCount; r++) {
+            List<SampleMetrics> thisRun = new ArrayList<>();
+            for (Path dir : sampleDirs) {
+                Sample sample = Sample.load(dir, mapper);
+                log.info("Evaluating sample {} (run {}/{})", sample.id(), r + 1, runCount);
+                SampleMetrics m = evaluateOne(sample);
+                thisRun.add(m);
+                flattened.add(runCount > 1 ? withRunSuffix(m, r + 1) : m);
+            }
+            perRunMetrics.add(aggregate(thisRun));
         }
 
-        Map<String, Double> aggregate = Map.of(
-                "recall", Metrics.recall(perSample),
-                "precision", Metrics.precision(perSample),
-                "fp_rate", Metrics.fpRate(perSample),
-                "severity_accuracy", Metrics.severityAccuracy(perSample),
-                "avg_latency_ms", Metrics.avgLatencyMs(perSample),
-                "avg_input_tokens", Metrics.avgInputTokens(perSample),
-                "avg_output_tokens", Metrics.avgOutputTokens(perSample),
-                "tool_success_rate", Metrics.toolSuccessRate(perSample)
-        );
+        Map<String, Double> meanMetrics = meanAcrossRuns(perRunMetrics);
+        Map<String, Double> stdDevMetrics = stdDevAcrossRuns(perRunMetrics, meanMetrics);
 
         EvalReport report = new EvalReport(
                 version,
@@ -70,8 +76,10 @@ public class EvaluationRunner {
                 Instant.now().toString(),
                 config,
                 List.of("diff.patch", "source-before/"),
-                aggregate,
-                perSample
+                meanMetrics,
+                flattened,
+                perRunMetrics,
+                stdDevMetrics
         );
 
         Files.createDirectories(reportsDir);
@@ -80,6 +88,52 @@ public class EvaluationRunner {
                 reportMapper.writeValueAsString(report),
                 StandardCharsets.UTF_8);
         return report;
+    }
+
+    private static Map<String, Double> aggregate(List<SampleMetrics> perSample) {
+        Map<String, Double> agg = new LinkedHashMap<>();
+        agg.put("recall", Metrics.recall(perSample));
+        agg.put("precision", Metrics.precision(perSample));
+        agg.put("fp_rate", Metrics.fpRate(perSample));
+        agg.put("severity_accuracy", Metrics.severityAccuracy(perSample));
+        agg.put("avg_latency_ms", Metrics.avgLatencyMs(perSample));
+        agg.put("avg_input_tokens", Metrics.avgInputTokens(perSample));
+        agg.put("avg_output_tokens", Metrics.avgOutputTokens(perSample));
+        agg.put("tool_success_rate", Metrics.toolSuccessRate(perSample));
+        return agg;
+    }
+
+    private static Map<String, Double> meanAcrossRuns(List<Map<String, Double>> runs) {
+        Map<String, Double> mean = new LinkedHashMap<>();
+        if (runs.isEmpty()) {
+            return mean;
+        }
+        for (String key : runs.get(0).keySet()) {
+            double sum = runs.stream().mapToDouble(m -> m.getOrDefault(key, 0.0)).sum();
+            mean.put(key, sum / runs.size());
+        }
+        return mean;
+    }
+
+    private static Map<String, Double> stdDevAcrossRuns(List<Map<String, Double>> runs, Map<String, Double> mean) {
+        Map<String, Double> sd = new LinkedHashMap<>();
+        for (String key : mean.keySet()) {
+            double mu = mean.get(key);
+            double var = runs.stream()
+                    .mapToDouble(m -> {
+                        double d = m.getOrDefault(key, 0.0) - mu;
+                        return d * d;
+                    })
+                    .average().orElse(0.0);
+            sd.put(key, Math.sqrt(var));
+        }
+        return sd;
+    }
+
+    private static SampleMetrics withRunSuffix(SampleMetrics m, int run) {
+        return new SampleMetrics(m.sampleId() + "#run" + run, m.truePositives(), m.falsePositives(),
+                m.falseNegatives(), m.severityMatches(), m.severityComparisons(), m.latencyMs(),
+                m.inputTokens(), m.outputTokens(), m.toolCallsTotal(), m.toolCallsFailed(), m.toolStatuses());
     }
 
     private SampleMetrics evaluateOne(Sample sample) {
