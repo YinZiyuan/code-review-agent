@@ -107,5 +107,7 @@ class LlmReviewerTest {
         assertThat(prompt).contains("CRITICAL");
         assertThat(prompt).contains("WARNING");
         assertThat(prompt).contains("SUGGESTION");
+        assertThat(prompt).contains("Use only the category enum values listed in the JSON schema");
+        assertThat(prompt).contains("return an empty findings array");
     }
 }
