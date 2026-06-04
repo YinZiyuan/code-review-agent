@@ -17,6 +17,11 @@ Each subdirectory is one PR sample. Layout:
 - `real-NNN/`: real PR sampled from a public project.
 - `synthetic-NNN/`: hand-crafted edge case.
 
+The W4 release suite is entirely hand-built: `reverse-*` and `synthetic-*`
+samples. This makes the suite reproducible and useful for regression pressure,
+but it is not a random real-PR benchmark and should not be read as production
+accuracy on arbitrary repositories.
+
 ## Severity / Category Enums
 
 - `severity`: `CRITICAL | WARNING | SUGGESTION`

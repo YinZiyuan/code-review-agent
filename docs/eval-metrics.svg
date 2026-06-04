@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="360" viewBox="0 0 820 360">
+<rect width="100%" height="100%" fill="white"/>
+<text x="24" y="24" font-family="Arial" font-size="18" font-weight="700">Release Metrics</text>
+<line x1="80" y1="290.0" x2="760" y2="290.0" stroke="#e5e7eb"/>
+<text x="68" y="294.0" text-anchor="end" font-family="Arial" font-size="11" fill="#4b5563">0%</text>
+<line x1="80" y1="240.0" x2="760" y2="240.0" stroke="#e5e7eb"/>
+<text x="68" y="244.0" text-anchor="end" font-family="Arial" font-size="11" fill="#4b5563">20%</text>
+<line x1="80" y1="190.0" x2="760" y2="190.0" stroke="#e5e7eb"/>
+<text x="68" y="194.0" text-anchor="end" font-family="Arial" font-size="11" fill="#4b5563">40%</text>
+<line x1="80" y1="140.0" x2="760" y2="140.0" stroke="#e5e7eb"/>
+<text x="68" y="144.0" text-anchor="end" font-family="Arial" font-size="11" fill="#4b5563">60%</text>
+<line x1="80" y1="90.0" x2="760" y2="90.0" stroke="#e5e7eb"/>
+<text x="68" y="94.0" text-anchor="end" font-family="Arial" font-size="11" fill="#4b5563">80%</text>
+<line x1="80" y1="40.0" x2="760" y2="40.0" stroke="#e5e7eb"/>
+<text x="68" y="44.0" text-anchor="end" font-family="Arial" font-size="11" fill="#4b5563">100%</text>
+<line x1="80" y1="40" x2="80" y2="290" stroke="#9ca3af"/>
+<line x1="80" y1="290" x2="760" y2="290" stroke="#9ca3af"/>
+<polyline fill="none" stroke="#2563eb" stroke-width="3" points="80.0,114.3"/>
+<circle cx="80.0" cy="114.3" r="4" fill="#2563eb"/>
+<polyline fill="none" stroke="#16a34a" stroke-width="3" points="80.0,135.2"/>
+<circle cx="80.0" cy="135.2" r="4" fill="#16a34a"/>
+<polyline fill="none" stroke="#dc2626" stroke-width="3" points="80.0,194.8"/>
+<circle cx="80.0" cy="194.8" r="4" fill="#dc2626"/>
+<polyline fill="none" stroke="#9333ea" stroke-width="3" points="80.0,164.8"/>
+<circle cx="80.0" cy="164.8" r="4" fill="#9333ea"/>
+<text x="80.0" y="314" text-anchor="middle" font-family="Arial" font-size="12" fill="#111827">v3</text>
+<rect x="80" y="330" width="12" height="12" fill="#2563eb"/>
+<text x="98" y="341" font-family="Arial" font-size="12" fill="#111827">recall</text>
+<rect x="250" y="330" width="12" height="12" fill="#16a34a"/>
+<text x="268" y="341" font-family="Arial" font-size="12" fill="#111827">precision</text>
+<rect x="420" y="330" width="12" height="12" fill="#dc2626"/>
+<text x="438" y="341" font-family="Arial" font-size="12" fill="#111827">fp_rate</text>
+<rect x="590" y="330" width="12" height="12" fill="#9333ea"/>
+<text x="608" y="341" font-family="Arial" font-size="12" fill="#111827">severity_accuracy</text>
+</svg>
