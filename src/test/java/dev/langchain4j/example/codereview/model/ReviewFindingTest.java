@@ -54,7 +54,7 @@ class ReviewFindingTest {
                         Severity.WARNING, Category.STYLE,
                         "Bad name", "Bad name detected", "Rename it", "the name is x1",
                         List.of(), "regex")),
-                List.of(new ToolStatus("regex", "ok", null))
+                List.of(new ToolStatus("regex", ToolRunState.RAN, null))
         );
 
         String json = mapper.writeValueAsString(r);

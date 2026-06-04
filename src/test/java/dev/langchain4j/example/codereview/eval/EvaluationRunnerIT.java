@@ -7,6 +7,8 @@ import dev.langchain4j.example.codereview.model.Category;
 import dev.langchain4j.example.codereview.model.ReviewFinding;
 import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.example.codereview.model.Severity;
+import dev.langchain4j.example.codereview.model.ToolRunState;
+import dev.langchain4j.example.codereview.model.ToolStatus;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -125,6 +127,29 @@ class EvaluationRunnerIT {
         assertThat(report.perSample()).hasSize(1);
         assertThat(report.perSample().get(0).sampleId()).isEqualTo("sample-pass");
         assertThat(report.metricsStdDev().values()).allSatisfy(v -> assertThat(v).isEqualTo(0.0));
+    }
+
+    @Test
+    void toolCountsExcludeExpectedSkips() throws Exception {
+        Path samples = workDir.resolve("samples-tool");
+        Path reports = workDir.resolve("reports-tool");
+        Files.createDirectories(samples);
+        copyFixture("sample-pass", samples);
+
+        ObjectMapper mapper = new ObjectMapper()
+                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        CodeReviewAgent agent = (request, sourceRoot) -> new ReviewResult(
+                "n", List.of(),
+                List.of(new ToolStatus("regex", ToolRunState.RAN, null),
+                        new ToolStatus("spotbugs", ToolRunState.SKIPPED_EXPECTED, "not buildable"),
+                        new ToolStatus("other", ToolRunState.FAILED, "boom")));
+        Matcher matcher = new Matcher((e, f) -> new LlmJudge.JudgeVerdict(false, 0.0, "no"), 5);
+        EvaluationRunner runner = new EvaluationRunner(agent, matcher, mapper);
+
+        EvalReport report = runner.run(samples, reports, "v-tool", Map.of("pipeline", "test"));
+        SampleMetrics m = report.perSample().get(0);
+        assertThat(m.toolCallsTotal()).isEqualTo(2);
+        assertThat(m.toolCallsFailed()).isEqualTo(1);
     }
 
     private void copyFixture(String name, Path samplesRoot) throws Exception {

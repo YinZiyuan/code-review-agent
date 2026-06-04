@@ -5,6 +5,7 @@ import dev.langchain4j.example.codereview.model.Citation;
 import dev.langchain4j.example.codereview.model.ReviewFinding;
 import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.example.codereview.model.Severity;
+import dev.langchain4j.example.codereview.model.ToolRunState;
 import dev.langchain4j.example.codereview.model.ToolStatus;
 import org.junit.jupiter.api.Test;
 
@@ -68,13 +69,13 @@ class MarkdownReporterTest {
         ReviewResult r = new ReviewResult(
                 "ok",
                 List.of(),
-                List.of(new ToolStatus("spotbugs", "skipped", "project did not compile"))
+                List.of(new ToolStatus("spotbugs", ToolRunState.SKIPPED_EXPECTED, "project did not compile"))
         );
 
         String md = reporter.render(r);
 
         assertThat(md).contains("spotbugs");
-        assertThat(md).contains("skipped");
+        assertThat(md).contains("SKIPPED_EXPECTED");
         assertThat(md).contains("project did not compile");
     }
 }

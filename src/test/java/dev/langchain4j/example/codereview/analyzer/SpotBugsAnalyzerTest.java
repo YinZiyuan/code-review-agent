@@ -31,13 +31,14 @@ class SpotBugsAnalyzerTest {
         Path sourceDir = Files.createDirectory(tmp.resolve("src"));
         Files.writeString(sourceDir.resolve("UserService.java"), "public class UserService {}");
 
-        List<Violation> v = analyzer.analyzeWithSource(List.of(changed), sourceDir);
+        SpotBugsResult result = analyzer.analyzeWithSource(List.of(changed), sourceDir);
 
-        assertThat(v).hasSize(1);
-        assertThat(v.get(0).file()).isEqualTo("UserService.java");
-        assertThat(v.get(0).line()).isEqualTo(5);
-        assertThat(v.get(0).rule()).isEqualTo("NP_NULL_ON_SOME_PATH");
-        assertThat(v.get(0).severity()).isEqualTo(Severity.CRITICAL);
+        assertThat(result.ran()).isTrue();
+        assertThat(result.violations()).hasSize(1);
+        assertThat(result.violations().get(0).file()).isEqualTo("UserService.java");
+        assertThat(result.violations().get(0).line()).isEqualTo(5);
+        assertThat(result.violations().get(0).rule()).isEqualTo("NP_NULL_ON_SOME_PATH");
+        assertThat(result.violations().get(0).severity()).isEqualTo(Severity.CRITICAL);
     }
 
     @Test
@@ -52,8 +53,9 @@ class SpotBugsAnalyzerTest {
                 },
                 new SourceCompiler());
 
-        List<Violation> v = analyzer.analyzeWithSource(List.of(), sourceDir);
-        assertThat(v).isEmpty();
+        SpotBugsResult result = analyzer.analyzeWithSource(List.of(), sourceDir);
+        assertThat(result.ran()).isFalse();
+        assertThat(result.violations()).isEmpty();
     }
 
     @Test

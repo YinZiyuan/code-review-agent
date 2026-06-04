@@ -6,6 +6,7 @@ import dev.langchain4j.example.codereview.model.Citation;
 import dev.langchain4j.example.codereview.model.ReviewFinding;
 import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.example.codereview.model.Severity;
+import dev.langchain4j.example.codereview.model.ToolRunState;
 import dev.langchain4j.example.codereview.model.ToolStatus;
 import dev.langchain4j.example.codereview.rag.CitationKeywordInjector;
 import org.junit.jupiter.api.Test;
@@ -67,8 +68,8 @@ class SummarizerTest {
         ReviewResult out = summarizer.summarize(
                 new ReviewResult("s", List.of(), List.of()),
                 new ToolFindings(List.of(),
-                        List.of(new ToolStatus("regex", "ok", null),
-                                new ToolStatus("spotbugs", "skipped", "x"))),
+                        List.of(new ToolStatus("regex", ToolRunState.RAN, null),
+                                new ToolStatus("spotbugs", ToolRunState.SKIPPED_EXPECTED, "x"))),
                 List.of());
 
         assertThat(out.toolStatus()).hasSize(2);

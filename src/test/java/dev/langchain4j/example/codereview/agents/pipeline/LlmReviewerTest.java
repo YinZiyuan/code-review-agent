@@ -8,6 +8,7 @@ import dev.langchain4j.example.codereview.analyzer.Violation;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.infra.JsonRepair;
 import dev.langchain4j.example.codereview.model.Severity;
+import dev.langchain4j.example.codereview.model.ToolRunState;
 import dev.langchain4j.example.codereview.model.ToolStatus;
 import dev.langchain4j.example.codereview.rag.CitationTracker;
 import dev.langchain4j.model.chat.ChatModel;
@@ -44,7 +45,7 @@ class LlmReviewerTest {
         LlmReviewer reviewer = new LlmReviewer(model, retriever, tracker, repair);
 
         ReviewContext ctx = new ReviewContext("diff", List.of(), Map.of(), Path.of("/tmp"));
-        ToolFindings tools = new ToolFindings(List.of(), List.of(new ToolStatus("regex", "ok", null)));
+        ToolFindings tools = new ToolFindings(List.of(), List.of(new ToolStatus("regex", ToolRunState.RAN, null)));
 
         var draft = reviewer.review(ctx, tools);
 

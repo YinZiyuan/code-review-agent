@@ -49,22 +49,22 @@ public class SpotBugsAnalyzer implements StaticAnalyzer {
         return List.of();
     }
 
-    public List<Violation> analyzeWithSource(List<DiffParser.FileDiff> files, Path sourceDir) {
+    public SpotBugsResult analyzeWithSource(List<DiffParser.FileDiff> files, Path sourceDir) {
         Optional<Path> classesDir = compiler.compile(sourceDir);
         if (classesDir.isEmpty()) {
             log.debug("SpotBugs skipped: source not compilable at {}", sourceDir);
-            return List.of();
+            return SpotBugsResult.skipped();
         }
         try {
             Path output = Files.createTempFile("spotbugs-", ".xml");
             if (!runner.run(classesDir.get(), output)) {
                 log.debug("SpotBugs runner reported skip");
-                return List.of();
+                return SpotBugsResult.skipped();
             }
-            return parseAndFilter(output, files);
+            return new SpotBugsResult(true, parseAndFilter(output, files));
         } catch (IOException e) {
             log.warn("SpotBugs I/O error: {}", e.toString());
-            return List.of();
+            return SpotBugsResult.skipped();
         }
     }
 

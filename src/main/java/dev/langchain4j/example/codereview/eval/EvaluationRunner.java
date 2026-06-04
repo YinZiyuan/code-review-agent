@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
 import dev.langchain4j.example.codereview.model.ReviewFinding;
 import dev.langchain4j.example.codereview.model.ReviewResult;
+import dev.langchain4j.example.codereview.model.ToolRunState;
+import dev.langchain4j.example.codereview.model.ToolStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -166,13 +168,16 @@ public class EvaluationRunner {
             }
         }
 
+        List<ToolStatus> statuses = result.toolStatus() == null ? List.of() : result.toolStatus();
+        int toolTotal = (int) statuses.stream()
+                .filter(s -> s.state() != ToolRunState.SKIPPED_EXPECTED)
+                .count();
+        int toolFailed = (int) statuses.stream()
+                .filter(s -> s.state() == ToolRunState.FAILED)
+                .count();
+
         return new SampleMetrics(sample.id(), tp, fp, fn, severityMatches, severityComparisons,
-                latency, 0L, 0L,
-                result.toolStatus() == null ? 0 : result.toolStatus().size(),
-                result.toolStatus() == null ? 0 : (int) result.toolStatus().stream()
-                        .filter(status -> !"ok".equalsIgnoreCase(status.status()))
-                        .count(),
-                result.toolStatus() == null ? List.of() : result.toolStatus());
+                latency, 0L, 0L, toolTotal, toolFailed, statuses);
     }
 
     private ReviewResult callAgentWithRetry(String request, Path sourceRoot, String sampleId) {

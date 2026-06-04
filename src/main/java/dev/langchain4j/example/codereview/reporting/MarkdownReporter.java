@@ -48,7 +48,7 @@ public class MarkdownReporter {
         if (result.toolStatus() != null && !result.toolStatus().isEmpty()) {
             sb.append("### Tool Status\n");
             for (ToolStatus ts : result.toolStatus()) {
-                sb.append("- `").append(ts.tool()).append("`: ").append(ts.status());
+                sb.append("- `").append(ts.tool()).append("`: ").append(ts.state());
                 if (ts.reason() != null) sb.append(" - ").append(ts.reason());
                 sb.append("\n");
             }
