@@ -1,0 +1,364 @@
+{
+  "version" : "v2-rag-hybrid",
+  "commit" : "4729fcdf879515aaae8743349ec58175fc82b822",
+  "tag" : null,
+  "timestamp" : "2026-05-31T09:05:25.329907Z",
+  "config" : {
+    "judge_model" : "moonshot-v1-8k",
+    "runs_per_sample" : 1,
+    "pipeline" : "w2-hybrid-rerank",
+    "suite" : "dev"
+  },
+  "allowed_inputs" : [ "diff.patch", "source-before/" ],
+  "metrics" : {
+    "avg_input_tokens" : 0.0,
+    "severity_accuracy" : 0.46153846153846156,
+    "fp_rate" : 0.6285714285714286,
+    "avg_latency_ms" : 8353.9,
+    "tool_success_rate" : 0.7,
+    "recall" : 0.65,
+    "precision" : 0.37142857142857144,
+    "avg_output_tokens" : 0.0
+  },
+  "per_sample" : [ {
+    "sample_id" : "reverse-001",
+    "true_positives" : 1,
+    "false_positives" : 2,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 14700,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analysis",
+      "status" : "ok",
+      "reason" : "No static code analysis tools were run as part of this review."
+    } ]
+  }, {
+    "sample_id" : "reverse-002",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 8273,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analysis",
+      "status" : "ok",
+      "reason" : "No static code analysis tools were called, but the review was conducted manually."
+    } ]
+  }, {
+    "sample_id" : "reverse-003",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5719,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analysis",
+      "status" : "ok",
+      "reason" : "No static code analysis violations detected in the provided diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-004",
+    "true_positives" : 1,
+    "false_positives" : 3,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 14177,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analyzer",
+      "status" : "ok",
+      "reason" : "No violations found in the diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-005",
+    "true_positives" : 0,
+    "false_positives" : 2,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 9423,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analyzer",
+      "status" : "ok",
+      "reason" : "No static code analysis violations detected in the diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-006",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5117,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ ]
+  }, {
+    "sample_id" : "reverse-007",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5250,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ ]
+  }, {
+    "sample_id" : "reverse-008",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 9425,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 3,
+    "tool_calls_failed" : 3,
+    "tool_statuses" : [ {
+      "tool" : "getGitDiff",
+      "status" : "skipped",
+      "reason" : "Full diff provided, no need to call tool."
+    }, {
+      "tool" : "checkRules",
+      "status" : "skipped",
+      "reason" : "Full diff provided, no need to call tool."
+    }, {
+      "tool" : "searchCode",
+      "status" : "skipped",
+      "reason" : "No need to search for identifiers in this context."
+    } ]
+  }, {
+    "sample_id" : "reverse-009",
+    "true_positives" : 1,
+    "false_positives" : 2,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 11887,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "static_code_analysis",
+      "status" : "ok",
+      "reason" : "No static code analysis tools were run, but the review was conducted manually."
+    } ]
+  }, {
+    "sample_id" : "reverse-010",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 6581,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ ]
+  }, {
+    "sample_id" : "reverse-011",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4151,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "static_analyzer",
+      "status" : "ok",
+      "reason" : "No static rule violations detected in the diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-012",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5624,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analyzer",
+      "status" : "ok",
+      "reason" : "No static rule violations detected in the diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-013",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 11419,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 3,
+    "tool_calls_failed" : 2,
+    "tool_statuses" : [ {
+      "tool" : "getGitDiff",
+      "status" : "ok",
+      "reason" : "Diff was manually provided and reviewed."
+    }, {
+      "tool" : "checkRules",
+      "status" : "skipped",
+      "reason" : "Manual diff review, no automated rule checking was performed."
+    }, {
+      "tool" : "searchCode",
+      "status" : "skipped",
+      "reason" : "No need to search for identifiers as the diff was small and focused."
+    } ]
+  }, {
+    "sample_id" : "reverse-014",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 9121,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analyzer",
+      "status" : "ok",
+      "reason" : "No static code analysis issues detected in the provided diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-015",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 10176,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analysis",
+      "status" : "ok",
+      "reason" : "No static rule violations detected in the provided diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-016",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5913,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analyzer",
+      "status" : "ok",
+      "reason" : "No static rule violations detected in the provided diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-017",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4704,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 0,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ ]
+  }, {
+    "sample_id" : "reverse-018",
+    "true_positives" : 0,
+    "false_positives" : 2,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 8574,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "static_code_analysis",
+      "status" : "ok",
+      "reason" : "No static rule violations detected in the provided diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-019",
+    "true_positives" : 0,
+    "false_positives" : 2,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 10511,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "static_code_analysis",
+      "status" : "ok",
+      "reason" : "No static rule violations detected in the provided diff."
+    } ]
+  }, {
+    "sample_id" : "reverse-020",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 6333,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "Static Code Analyzer",
+      "status" : "skipped",
+      "reason" : "Manual review was performed instead of automated tooling."
+    } ]
+  } ]
+}
