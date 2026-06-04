@@ -3,6 +3,7 @@ package dev.langchain4j.example.codereview.agents.pipeline;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.example.codereview.analyzer.Violation;
 import dev.langchain4j.example.codereview.infra.DiffParser;
@@ -17,6 +18,7 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -25,6 +27,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LlmReviewerTest {
@@ -79,5 +82,30 @@ class LlmReviewerTest {
 
         assertThat(draft.citationCandidates()).hasSize(1);
         assertThat(draft.citationCandidates().get(0).id()).isEqualTo("sql#x");
+    }
+
+    @Test
+    void prompt_contains_explicit_severity_calibration_criteria() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.chat(any(ChatRequest.class)))
+                .thenReturn(ChatResponse.builder()
+                        .aiMessage(AiMessage.from("""
+                                {"summary":"ok","findings":[],"tool_status":[]}"""))
+                        .build());
+
+        LlmReviewer reviewer = new LlmReviewer(model, q -> List.of(), new CitationTracker(),
+                new JsonRepair(model, new ObjectMapper()));
+
+        reviewer.review(new ReviewContext("diff", List.of(), Map.of(), Path.of("/tmp")),
+                new ToolFindings(List.of(), List.of()));
+
+        ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(model).chat(captor.capture());
+        String prompt = ((UserMessage) captor.getValue().messages().get(0)).singleText();
+
+        assertThat(prompt).contains("Severity calibration");
+        assertThat(prompt).contains("CRITICAL");
+        assertThat(prompt).contains("WARNING");
+        assertThat(prompt).contains("SUGGESTION");
     }
 }
