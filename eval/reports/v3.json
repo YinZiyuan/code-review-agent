@@ -1,0 +1,2582 @@
+{
+  "version" : "v3",
+  "commit" : "745c4f72451fa5c13ed1c311f8678dc5f21b44ff",
+  "tag" : null,
+  "timestamp" : "2026-06-04T17:17:58.308453Z",
+  "config" : {
+    "judge_model" : "moonshot-v1-8k",
+    "runs_per_sample" : 3,
+    "pipeline" : "w3-pipeline",
+    "suite" : "release"
+  },
+  "allowed_inputs" : [ "diff.patch", "source-before/" ],
+  "metrics" : {
+    "recall" : 0.7027027027027026,
+    "precision" : 0.6190476190476191,
+    "fp_rate" : 0.38095238095238093,
+    "severity_accuracy" : 0.500919540229885,
+    "avg_latency_ms" : 4891.516666666666,
+    "avg_input_tokens" : 0.0,
+    "avg_output_tokens" : 0.0,
+    "tool_success_rate" : 1.0
+  },
+  "per_sample" : [ {
+    "sample_id" : "reverse-001#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5361,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-002#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4266,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-003#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5221,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-004#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 6140,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-005#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 6845,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-006#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4302,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-007#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4724,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-008#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4979,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-009#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5785,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-010#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 7334,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-011#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4480,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-012#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4632,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-013#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4983,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-014#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4536,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-015#run1",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 7240,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-016#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4575,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-017#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3678,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-018#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4859,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-019#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5691,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-020#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4714,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-021#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5641,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-022#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4216,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-023#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5067,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-024#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5542,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-025#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5114,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-026#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5283,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-027#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5291,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-028#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4077,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-029#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4355,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-030#run1",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 7895,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-001#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5540,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-002#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4665,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-003#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4531,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-004#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4620,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-005#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5518,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-006#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5072,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-007#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4350,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-008#run1",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5552,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-009#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5639,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-010#run1",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4546,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-001#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5663,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-002#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3716,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-003#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4992,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-004#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 6459,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-005#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4266,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-006#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4143,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-007#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4118,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-008#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4855,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-009#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5098,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-010#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5163,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-011#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4236,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-012#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4163,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-013#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5117,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-014#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4056,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-015#run2",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 6327,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-016#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5937,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-017#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3500,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-018#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4959,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-019#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5008,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-020#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5452,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-021#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 6417,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-022#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4820,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-023#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4821,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-024#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4535,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-025#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3992,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-026#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4202,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-027#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4764,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-028#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4286,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-029#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4420,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-030#run2",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 6884,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-001#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4543,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-002#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 3747,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-003#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4114,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-004#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4785,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-005#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4625,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-006#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4204,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-007#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5248,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-008#run2",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5452,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-009#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4314,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-010#run2",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5179,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-001#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4761,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-002#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4455,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-003#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4954,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-004#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5091,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-005#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4621,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-006#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4042,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-007#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4314,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-008#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4711,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-009#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4697,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-010#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5012,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-011#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4447,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-012#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4223,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-013#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5138,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-014#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4377,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-015#run3",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 7169,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-016#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5195,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-017#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 3988,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-018#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4494,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-019#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4980,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-020#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5218,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-021#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4605,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-022#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4024,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-023#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4512,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-024#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5013,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-025#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4518,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-026#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4215,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-027#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5142,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-028#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4154,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-029#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3893,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-030#run3",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 6917,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-001#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4462,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-002#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 3851,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-003#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4283,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-004#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4195,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-005#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4657,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-006#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5221,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-007#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4808,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-008#run3",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4826,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-009#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4270,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "synthetic-010#run3",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4090,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 1,
+    "tool_calls_failed" : 0,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "state" : "RAN",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "state" : "SKIPPED_EXPECTED",
+      "reason" : "not buildable or not installed"
+    } ]
+  } ],
+  "per_run_metrics" : [ {
+    "recall" : 0.7837837837837838,
+    "precision" : 0.6904761904761905,
+    "fp_rate" : 0.30952380952380953,
+    "severity_accuracy" : 0.4827586206896552,
+    "avg_latency_ms" : 5171.475,
+    "avg_input_tokens" : 0.0,
+    "avg_output_tokens" : 0.0,
+    "tool_success_rate" : 1.0
+  }, {
+    "recall" : 0.6756756756756757,
+    "precision" : 0.5952380952380952,
+    "fp_rate" : 0.40476190476190477,
+    "severity_accuracy" : 0.52,
+    "avg_latency_ms" : 4814.5,
+    "avg_input_tokens" : 0.0,
+    "avg_output_tokens" : 0.0,
+    "tool_success_rate" : 1.0
+  }, {
+    "recall" : 0.6486486486486487,
+    "precision" : 0.5714285714285714,
+    "fp_rate" : 0.42857142857142855,
+    "severity_accuracy" : 0.5,
+    "avg_latency_ms" : 4688.575,
+    "avg_input_tokens" : 0.0,
+    "avg_output_tokens" : 0.0,
+    "tool_success_rate" : 1.0
+  } ],
+  "metrics_std_dev" : {
+    "recall" : 0.058385051337007735,
+    "precision" : 0.051434449987363975,
+    "fp_rate" : 0.051434449987363955,
+    "severity_accuracy" : 0.01521762681695206,
+    "avg_latency_ms" : 204.52673453338315,
+    "avg_input_tokens" : 0.0,
+    "avg_output_tokens" : 0.0,
+    "tool_success_rate" : 0.0
+  }
+}
