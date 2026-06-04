@@ -1,0 +1,12 @@
+diff --git a/ProfileLoader.java b/ProfileLoader.java
+--- a/ProfileLoader.java
++++ b/ProfileLoader.java
+@@ -3,7 +3,7 @@
+         try {
+             return fetch(id);
+         } catch (RemoteException e) {
+-            throw new IllegalStateException("profile fetch failed for " + id, e);
++            return null;
+         }
+     }
+ }

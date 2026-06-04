@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-025",
+      "file": "PaymentServiceTest.java",
+      "line": 7,
+      "line_range": [6, 7],
+      "category": "TEST",
+      "subcategory": "missing_assertion",
+      "severity": "WARNING",
+      "description": "The test no longer asserts that negative amounts are rejected; it can pass or fail for the wrong reason and loses the intended behavior check.",
+      "must_detect": true,
+      "alternative_descriptions": ["assertion removed", "test does not verify exception"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style test hard sample."
+}

@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-026",
+      "file": "TokenServiceTest.java",
+      "line": 5,
+      "line_range": [5, 6],
+      "category": "TEST",
+      "subcategory": "disabled_test",
+      "severity": "WARNING",
+      "description": "The regression test is disabled instead of fixing the flake, so token expiry behavior is no longer covered in CI.",
+      "must_detect": true,
+      "alternative_descriptions": ["@Disabled hides test failure", "test coverage removed"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style test medium sample."
+}

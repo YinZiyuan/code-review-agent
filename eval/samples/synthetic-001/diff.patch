@@ -1,0 +1,10 @@
+diff --git a/NameFormatter.java b/NameFormatter.java
+--- a/NameFormatter.java
++++ b/NameFormatter.java
+@@ -1,5 +1,5 @@
+ public class NameFormatter {
+     public String display(String first, String last) {
+-        return first.trim() + " " + last.trim();
++        return (first.trim() + " " + last.trim()).strip();
+     }
+ }

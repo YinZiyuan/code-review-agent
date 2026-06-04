@@ -1,0 +1,21 @@
+diff --git a/TokenController.java b/TokenController.java
+--- a/TokenController.java
++++ b/TokenController.java
+@@ -1,5 +1,5 @@
+ public class TokenController {
+     public Response token(Request request, TokenService tokens) {
+-        return Response.ok(tokens.issue(request.userId()));
++        return Response.ok(tokens.issue(request.userId(), request.getParameter("ttl")));
+     }
+ }
+diff --git a/TokenService.java b/TokenService.java
+--- a/TokenService.java
++++ b/TokenService.java
+@@ -1,5 +1,5 @@
+ public class TokenService {
+-    public String issue(String userId) {
+-        return sign(userId, 15);
++    public String issue(String userId, String ttlMinutes) {
++        return sign(userId, Integer.parseInt(ttlMinutes));
+     }
+ }

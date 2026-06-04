@@ -1,0 +1,10 @@
+{
+  "id": "synthetic-004",
+  "source_type": "synthetic_edge",
+  "source_url": "local://synthetic-004",
+  "language": "java",
+  "category": "security",
+  "difficulty": "medium",
+  "diff_size_lines": 12,
+  "collected_at": "2026-06-05"
+}

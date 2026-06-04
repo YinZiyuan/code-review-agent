@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-S009",
+      "file": "JobScheduler.java",
+      "line": 6,
+      "line_range": [5, 6],
+      "category": "CONCURRENCY",
+      "subcategory": "captured_mutable_loop_state",
+      "severity": "WARNING",
+      "description": "Submitted tasks capture a mutable current variable that is reassigned in the loop, so tasks can run the wrong job.",
+      "must_detect": true,
+      "alternative_descriptions": ["lambda captures mutable loop variable", "tasks share reassigned current"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Synthetic line/capture tricky concurrency sample."
+}

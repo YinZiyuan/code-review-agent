@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-S007",
+      "file": "ReportWriter.java",
+      "line": 3,
+      "line_range": [3, 5],
+      "category": "STABILITY",
+      "subcategory": "silent_skip",
+      "severity": "WARNING",
+      "description": "A null report body now silently returns without writing or surfacing an error, which can hide failed report generation.",
+      "must_detect": true,
+      "alternative_descriptions": ["silent return on null", "swallows invalid body"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Synthetic line-number tricky sample with blank added lines after the issue."
+}

@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-023",
+      "file": "InvoiceExporter.java",
+      "line": 6,
+      "line_range": [5, 7],
+      "category": "PERFORMANCE",
+      "subcategory": "n_plus_one_query",
+      "severity": "WARNING",
+      "description": "The stream now performs a repository lookup for every invoice, creating an N+1 query pattern for large exports.",
+      "must_detect": true,
+      "alternative_descriptions": ["database call inside loop", "per invoice customer lookup"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style performance hard sample."
+}

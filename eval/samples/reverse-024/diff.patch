@@ -1,0 +1,14 @@
+diff --git a/EmailFilter.java b/EmailFilter.java
+--- a/EmailFilter.java
++++ b/EmailFilter.java
+@@ -1,9 +1,7 @@
+ import java.util.regex.Pattern;
+ 
+ public class EmailFilter {
+-    private static final Pattern WORK_EMAIL = Pattern.compile(".+@example\\.com");
+-
+     public boolean isWorkEmail(String email) {
+-        return WORK_EMAIL.matcher(email).matches();
++        return Pattern.compile(".+@example\\.com").matcher(email).matches();
+     }
+ }

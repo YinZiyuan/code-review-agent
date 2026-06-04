@@ -1,0 +1,14 @@
+diff --git a/JobScheduler.java b/JobScheduler.java
+--- a/JobScheduler.java
++++ b/JobScheduler.java
+@@ -1,7 +1,9 @@
+ public class JobScheduler {
+     public void schedule(List<Job> jobs) {
++        Job current = null;
+         for (Job job : jobs) {
+-            executor.submit(() -> run(job));
++            current = job;
++            executor.submit(() -> run(current));
+         }
+     }
+ }

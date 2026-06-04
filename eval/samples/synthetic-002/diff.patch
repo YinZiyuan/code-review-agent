@@ -1,0 +1,11 @@
+diff --git a/OrderSummary.java b/OrderSummary.java
+--- a/OrderSummary.java
++++ b/OrderSummary.java
+@@ -1,5 +1,6 @@
+ public class OrderSummary {
+     public String label(Order order) {
+-        return order.id() + ":" + order.status();
++        String prefix = order.id() + ":";
++        return prefix + order.status();
+     }
+ }

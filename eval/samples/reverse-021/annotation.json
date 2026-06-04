@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-021",
+      "file": "SingletonRegistry.java",
+      "line": 5,
+      "line_range": [5, 6],
+      "category": "CONCURRENCY",
+      "subcategory": "unsafe_lazy_initialization",
+      "severity": "CRITICAL",
+      "description": "Lazy singleton initialization is no longer synchronized or volatile, so concurrent callers can create multiple clients and observe partially published state.",
+      "must_detect": true,
+      "alternative_descriptions": ["double checked locking removed", "unsafe publication of client"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style concurrency hard sample."
+}

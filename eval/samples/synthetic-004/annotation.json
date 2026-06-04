@@ -1,0 +1,23 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-S004",
+      "file": "SearchController.java",
+      "line": 4,
+      "line_range": [4, 4],
+      "category": "SECURITY",
+      "subcategory": "sql_injection",
+      "severity": "CRITICAL",
+      "description": "The SQL query concatenates the user-controlled term into the statement instead of using the existing parameter binding.",
+      "must_detect": true,
+      "alternative_descriptions": ["SQL injection", "user input concatenated into query"]
+    }
+  ],
+  "should_not_report": [
+    {
+      "pattern": "label",
+      "reason": "The label string on line 3 sanitizes a newline and is not the vulnerability."
+    }
+  ],
+  "notes": "Synthetic near-miss: one harmless similar change plus one true SQL injection."
+}

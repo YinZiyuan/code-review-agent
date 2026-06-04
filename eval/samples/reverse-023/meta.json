@@ -1,0 +1,10 @@
+{
+  "id": "reverse-023",
+  "source_type": "reverse_style",
+  "source_url": "local://reverse-023",
+  "language": "java",
+  "category": "performance",
+  "difficulty": "hard",
+  "diff_size_lines": 14,
+  "collected_at": "2026-06-05"
+}

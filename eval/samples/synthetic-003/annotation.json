@@ -1,0 +1,10 @@
+{
+  "expected_issues": [],
+  "should_not_report": [
+    {
+      "pattern": "status.replace",
+      "reason": "The query still uses a parameter placeholder; sanitized text is only placed in a SQL comment."
+    }
+  ],
+  "notes": "Synthetic true-negative near SQL-injection-looking diff."
+}

@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-030",
+      "file": "AvatarCache.java",
+      "line": 5,
+      "line_range": [5, 8],
+      "category": "PERFORMANCE",
+      "subcategory": "unbounded_cache",
+      "severity": "WARNING",
+      "description": "Replacing the bounded cache with a plain HashMap removes eviction and can grow without bound as user avatars accumulate.",
+      "must_detect": true,
+      "alternative_descriptions": ["unbounded memory growth", "cache has no maximum size"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style performance hard sample."
+}

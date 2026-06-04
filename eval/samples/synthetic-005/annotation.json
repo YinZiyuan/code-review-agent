@@ -1,0 +1,23 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-S005",
+      "file": "AccountMapper.java",
+      "line": 4,
+      "line_range": [4, 4],
+      "category": "STABILITY",
+      "subcategory": "npe",
+      "severity": "WARNING",
+      "description": "The new trim() call can throw when owner().displayName() is null; the nearby id null guard does not protect displayName.",
+      "must_detect": true,
+      "alternative_descriptions": ["displayName null dereference", "trim on nullable value"]
+    }
+  ],
+  "should_not_report": [
+    {
+      "pattern": "account.id",
+      "reason": "The id label null guard on line 3 is safe and should not be reported."
+    }
+  ],
+  "notes": "Synthetic near-miss for null-safety boundary."
+}
