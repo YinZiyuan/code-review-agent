@@ -23,7 +23,8 @@
 | 新增 20 样本怎么造 | **全合成 / 反向构造**（10 reverse + 10 合成边界） | 完全可控、快、隔离干净；如实标注「自构样本」局限 |
 | v4-stretch 多 Agent | **先交付 v3，多 Agent 看余量** | 沿用 W3 风险表退路；不把交付押在新架构上 |
 | 交付物 | README 重写 + 架构图 + 评测报告/曲线 + demo 脚本 + commit 整理 | 全要；录屏由 agent 出脚本、user 真录 |
-| 旧 20 样本报告 | **覆盖 + git tag 留痕** | 只留 40 样本版，历史锁在 tag 里，更干净 |
+| 旧 20 样本报告 | **成功复现到 40 → 覆盖 `vN.json`；复现不了 → 单列 `*-20sample-historical.json`** | strict 40 与历史值分档存，曲线不混用；历史也锁在 git tag |
+| release runs | **v3/v3.1-tuned ×3，基线 v0/v1/v2 ×1**（runner 先补重复跑能力） | 方差只在决战版上花预算 |
 | 结构 | **单一 W4 spec，内部分 4 阶段** | 同构 W3（一 spec 装 W3a/W3b），叙事连贯 |
 
 ## Non-Goals（YAGNI）
@@ -68,7 +69,8 @@ eval/samples/<id>/
 ```
 
 - ExpectedIssue 用固定枚举：severity `CRITICAL|WARNING|SUGGESTION`、category `SECURITY|PERFORMANCE|STABILITY|CONCURRENCY|TEST|STYLE|OTHER`。
-- 隔离不变量：agent 只经 `Sample.load` 读 agent 可见字段，见 [eval/samples/README.md](../../../eval/samples/README.md)。
+- 隔离不变量：`Sample.load` 为评测自身会加载 ground truth（`annotation.json`）和完整 `meta.json`，但 **`EvaluationRunner` 传给 `agent.review` 的只能是 `diff.patch` + `source-before/`**——隔离边界在「runner→agent」这一步，不在 `Sample.load`。见 [eval/samples/README.md](../../../eval/samples/README.md)。
+- **隔离边界测试**：新增/保留一个测试断言 `EvaluationRunner` 调 `agent.review` 时不透传 `annotation`/`source-after`/`meta` 的禁止字段（category/difficulty/notes），守住边界不被未来改动破坏。
 
 ## 验收
 
@@ -85,11 +87,18 @@ eval/samples/<id>/
 
 把 40 样本固化为 **release suite**，在同一套样本上 honest 复现 v0/v1/v2/v3，产出 apples-to-apples 的提升曲线——项目的「成绩单」。
 
-## release suite 定义
+## 前置任务：runner 支持重复跑 + 多 run 聚合（Finding 1）
 
-- 40 样本 × `runs_per_sample`（目标 ×3，用于看稳定性 / 方差）。
+**现状**：[EvaluationRunner](../../../src/main/java/dev/langchain4j/example/codereview/eval/EvaluationRunner.java) 每个样本只 `evaluateOne` 一次；`runs_per_sample` 当前**仅写进 config block，并不真的重复执行**。直接出 ×3 报告等于「声称可复现却没测」。
+
+**改法**：Phase 2 第一步实现重复跑——每个样本跑 `runs` 次，按 run 聚合（指标取均值 + 记录 min/max 或标准差，per-sample 里保留每 run 结果），report 里体现「N runs」的真实数据。需单测覆盖「runs=1 与旧行为等价」「runs=N 聚合正确」。
+
+## release suite 定义（runs 策略，Q1）
+
+- **决战版 v3 与 v3.1-tuned：40 样本 × 3 runs**，用于看稳定性 / 方差。
+- **历史基线 v0 / v1 / v2：40 样本 × 1 run**（只需提供趋势锚点，不在它们上面花 ×3 预算）。
+- report 的 config block 记录 `suite=release` / `pipeline` label / **该报告实际 runs 数**，保证「图里的数字是几次跑出来的」可追溯。
 - 目标总耗时 < 90 分钟，单样本 hard timeout 180s（沿用总设计 §）。
-- report 的 config block 记录 suite=release / pipeline label / runs 数，保证可复现可比较。
 
 ## Honest 复现策略（关键纪律，沿用 W3）
 
@@ -100,20 +109,29 @@ eval/samples/<id>/
    - v1 = `4f7469f`（SpotBugs + CodeSearch，无 hybrid）；
    - v2 = pipeline 重构前的 hybrid + rerank commit（`w2-hybrid-rerank` 路径，落 tag 前确认具体 commit）；
    - v3 = 当前 pipeline（`w3-pipeline`）。
-2. **独立 worktree 复现**：每个版本在 `/tmp` 的独立 git worktree 里 checkout 对应 tag、单独 `mvn package` build jar、对 40 样本跑 release suite，产物 copy 回主树 `eval/reports/`。主树不被污染。
+2. **独立 worktree 复现**：每个版本在 `/tmp` 的独立 git worktree 里 checkout 对应 tag、单独 `mvn package` build jar、对 40 样本跑评测，产物 copy 回主树 `eval/reports/`。主树不被污染。
 3. **接收红线**：每个版本报告**校验无 `review error`**——有则不出报告（沿用 W3 红线，不许带病出数）。
-4. 旧版本 commit 早于 `--suite release` 的，显式 `env -u DEBUG` + 手动指定 40 样本目录。
+4. 旧版本 commit 早于 `--suite release` / 重复跑能力的，用旧 jar 对 40 样本目录跑 ×1（显式 `env -u DEBUG` + 手动指定样本目录），report 里 runs=1。
+
+## 两档结果：strict 40 vs fallback 历史（Finding 2 + Q2）
+
+复现是 best-effort，可能某个旧版本（尤其 v1/v2）在 40 样本上 build/跑不通。两档分开存、**绝不在曲线里混用**：
+
+- **strict 40-sample（apples-to-apples）**：成功在 40 样本上跑出的版本 → 写 `eval/reports/v0..v3.json`（覆盖旧 20 样本版，历史锁在 git tag）。曲线图**只用**这一档。
+- **fallback 历史**：某版本 40 样本复现不了 → 保留其 20 样本结果为 `eval/reports/<vN>-20sample-historical.json`，**带显式 label 标明「20 样本历史值，不可与 40 样本直接比较」**；只作上下文出现在表格脚注，不进曲线。
 
 ## 产出
 
-- `eval/reports/v0..v3.json` 全部刷新为 **40 样本 release 版本**，旧 20 样本版被覆盖（历史锁在 git tag）。
-- v0→v3 的 recall / precision / fp_rate / latency 数据（曲线图在 Phase 4 画）。
+- `eval/reports/v0..v3.json`：成功复现的版本刷新为 40 样本版（v0 ×1、v1 ×1、v2 ×1、v3 ×3）。
+- 复现不了的版本：`<vN>-20sample-historical.json` + 表格脚注说明。
+- v0→v3 的 recall / precision / fp_rate / latency 数据（曲线图在 Phase 4 画，仅用 strict 40 档）。
 
 ## 验收
 
-- 四个版本均在同一 40 样本 release suite 上跑完、无 `review error`。
-- 每份 report config block 标明 suite=release、pipeline label、runs 数。
-- 四版本指标对比表更新（替换 W3 notes 的 20 样本表），并记录方差/稳定性观察。
+- v3 在 40 样本 × 3 runs 上跑完、无 `review error`，report 含方差/稳定性观察。
+- v0/v1/v2 要么有 40 样本 ×1 report，要么明确降级为 `*-20sample-historical.json` 并在表里标注原因——**两者必居其一，不伪造**。
+- 每份 report config block 标明 suite、pipeline label、实际 runs 数、样本数。
+- 指标对比表更新（替换 W3 notes 的 20 样本表），strict 40 与历史值分区呈现、互不混用。
 
 ---
 
@@ -130,13 +148,18 @@ eval/samples/<id>/
 - **校准位置（按优先级试）**：
   1. `LlmReviewer.SYSTEM` prompt 层：给 severity 明确判定标准（CRITICAL/WARNING/SUGGESTION 各自的判据），减少模型自由发挥。
   2. `Summarizer` 后处理层：对特定 source（如 SpotBugs 高危规则）的 severity 做确定性归一化 / 钳制。
-- **验收**：`severity_accuracy` 在 40 样本上不低于 v2，且 **precision / recall 不回退**（校准不能以伤主指标为代价）。
+- **验收（基准随 v2 可用性而定）**：
+  - 若 **v2-40** 存在（v2 成功在 40 样本上复现）→ `severity_accuracy(v3.1-40) >= severity_accuracy(v2-40)`，apples-to-apples。
+  - 若 **v2-40 不存在**（仅 `v2-20sample-historical`）→ 基准改为 `severity_accuracy(v3.1-40) >= severity_accuracy(v3-40)`（同 40 样本档内提升），v2-20 仅作历史上下文引用，**不作为 40 样本的达标线**。
+  - 两种情况下都附加硬约束：**precision / recall 相对 v3-40 不回退**（校准不能以伤主指标为代价）。
 
 ## 调优项 2 · tool_success_rate 语义澄清
 
 - **问题**：该指标把「SpotBugs 在不可编译样本上的预期 skip」与「analyzer 真失败」混为一谈，指标会误导。
-- **改法**：`ToolStatus` 区分状态枚举——`RAN` / `SKIPPED_EXPECTED`（如样本不可编译的预期跳过）/ `FAILED`（analyzer 真异常）。`Metrics` 计算 `tool_success_rate` 时把 `SKIPPED_EXPECTED` 排除出分母（或单列），而非记为失败。
-- **验收**：报告里 tool 状态可区分预期 skip 与真失败；`tool_success_rate` 反映 analyzer 真实可靠性。需要单测覆盖三种状态的归类。
+- **现状**：[ToolFindingsProducer](../../../src/main/java/dev/langchain4j/example/codereview/agents/pipeline/ToolFindingsProducer.java) 当前用字符串 `"ok"` / `"skipped"`。
+- **改法**：`ToolStatus` 改用状态枚举——`RAN` / `SKIPPED_EXPECTED`（如样本不可编译的预期跳过）/ `FAILED`（analyzer 真异常）。`Metrics.toolSuccessRate` 把 `SKIPPED_EXPECTED` 排除出分母（或单列），而非记为失败。
+- **向后兼容（与 Finding 5 / Phase 4 联动）**：旧报告（含 worktree 里跑出的旧版本）仍是 `ok`/`skipped` 字符串词表。**枚举迁移不回填旧报告**；兼容性在读取侧解决——见 Phase 4 交付物 3 的归一化要求。
+- **验收**：报告里 tool 状态可区分预期 skip 与真失败；`tool_success_rate` 反映 analyzer 真实可靠性。单测覆盖三态归类 + 旧字符串词表的读取归一化。
 
 ## 调优项 3 · 数据驱动的余量调优（仅当 release 暴露）
 
@@ -177,7 +200,9 @@ eval/samples/<id>/
 
 - 从 `eval/reports/*.json` 生成 v0→v3.1-tuned 的提升曲线（recall / precision / fp_rate / latency）。
 - **实现方式**：写一个轻量脚本（读 report JSON → 出 Markdown 表 + 图）。图优先 Mermaid（无需额外依赖、README 可渲染）；若 Mermaid 表达力不足，退而生成静态 SVG/PNG 落 `docs/`。脚本可复现，避免手抄数字。
-- 报告含每版本的关键 config（pipeline label、suite、runs），保证「图里的数字怎么来的」可追溯。
+- 报告含每版本的关键 config（pipeline label、suite、runs、样本数），保证「图里的数字怎么来的」可追溯。
+- **状态词表归一化（Finding 5）**：报告生成器读 `eval/reports/*.json` 时，旧版本是 `ok`/`skipped` 字符串、新版本是 `RAN`/`SKIPPED_EXPECTED`/`FAILED` 枚举。生成器要么**只依赖 aggregate metrics**（`tool_success_rate` 等已算好的数）不碰原始 status 词表，要么在读取时把两套词表归一到统一表示。绝不假设所有报告同词表。
+- **只用 strict 40 档画曲线**：曲线/对比图只取 40 样本版报告，`*-20sample-historical.json` 仅在表格脚注作历史上下文，不进图（呼应 Phase 2 两档分离）。
 
 ## 交付物 4 · demo 脚本 + commit history 整理
 
@@ -197,11 +222,13 @@ eval/samples/<id>/
 # 整体验收门槛
 
 ```text
-mvn test                         全绿
-mvn -q clean package             成功
+mvn test                              全绿（含重复跑聚合、隔离边界、ToolStatus 三态单测）
+mvn -q clean package                  成功
 40 样本目录齐全 + annotation 合法
-release suite v0..v3 + v3.1-tuned  无 review error
-severity_accuracy(v3.1) >= v2 且主指标不回退
+v3 / v3.1-tuned 在 40 样本 ×3 上无 review error
+v0/v1/v2 各有 40 样本 ×1 report 或明确降级为 *-20sample-historical.json
+severity_accuracy(v3.1-40) >= 基准(v2-40 若有，否则 v3-40)，且 precision/recall 不回退
+曲线只用 strict 40 档，历史值仅作脚注
 README 命令全部验证可跑
 ```
 
@@ -209,7 +236,7 @@ README 命令全部验证可跑
 
 | 风险 | 退路 |
 | --- | --- |
-| 旧版本（v1/v2）worktree 复现踩坑（依赖 / build 失败） | 优先保证 v3 / v3.1-tuned 在 40 样本上的数；v1/v2 复现不了就在报告里标注「20 样本历史值」并说明原因，不伪造 |
+| 旧版本（v1/v2）worktree 复现踩坑（依赖 / build 失败） | 优先保证 v3 / v3.1-tuned 在 40 样本上的数；v1/v2 复现不了就降级为 `*-20sample-historical.json`（带「不可与 40 样本比较」label），只作脚注、不进曲线，不伪造 |
 | 40×3 release 跑太久 / 频繁超时 | 先 ×1 跑通拿趋势，×3 仅对最终版本；hard timeout + per-sample 重试兜底 |
 | severity 校准伤主指标 | 校准是「不回退主指标」的硬约束；伤了就回退该改动，severity 作为已知 caveat 记录 |
 | 合成样本被质疑偷看答案 / 偏乐观 | 严格隔离输入 + 诚实声明；真实 PR 样本列后续路线 |
