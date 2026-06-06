@@ -85,7 +85,7 @@ class LlmReviewerTest {
     }
 
     @Test
-    void prompt_constrains_categories_without_changing_finding_policy() {
+    void prompt_keeps_v3_finding_policy_without_tuning_rules() {
         ChatModel model = mock(ChatModel.class);
         when(model.chat(any(ChatRequest.class)))
                 .thenReturn(ChatResponse.builder()
@@ -103,7 +103,7 @@ class LlmReviewerTest {
         verify(model).chat(captor.capture());
         String prompt = ((UserMessage) captor.getValue().messages().get(0)).singleText();
 
-        assertThat(prompt).contains("Use only the category enum values listed in the JSON schema");
+        assertThat(prompt).doesNotContain("Use only the category enum values listed in the JSON schema");
         assertThat(prompt).doesNotContain("Severity calibration");
         assertThat(prompt).doesNotContain("return an empty findings array");
     }

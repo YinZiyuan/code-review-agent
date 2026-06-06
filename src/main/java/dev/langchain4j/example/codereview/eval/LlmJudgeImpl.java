@@ -32,7 +32,6 @@ public class LlmJudgeImpl implements LlmJudge {
 
                 Agent finding:
                   Description: %s
-                  Severity: %s
 
                 Do these describe the SAME underlying problem? Answer with JSON only:
                 {"match": true|false, "confidence": 0.0-1.0, "reason": "..."}
@@ -40,8 +39,7 @@ public class LlmJudgeImpl implements LlmJudge {
                 expected.description(),
                 expected.category(),
                 String.join("; ", expected.alternativeDescriptions() == null ? List.of() : expected.alternativeDescriptions()),
-                agent.description(),
-                agent.severity()
+                agent.description()
         );
 
         String raw = chatModel.chat(prompt);

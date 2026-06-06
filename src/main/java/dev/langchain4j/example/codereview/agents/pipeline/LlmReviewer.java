@@ -53,8 +53,6 @@ public class LlmReviewer {
 
             Rules:
             - Line numbers refer to the NEW file (post-change).
-            - Use only the category enum values listed in the JSON schema. Never output
-              ad-hoc categories such as COMPILER_ERROR, BUILD, TOOL, or UNKNOWN.
             - You MUST only put citations in 'citations[]' whose 'id' appears in the candidates
               list below. Do NOT invent citation IDs. Empty 'citations[]' is allowed.
             - Echo tool findings only when you agree with them; if you echo, set 'source' to
