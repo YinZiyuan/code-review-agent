@@ -53,6 +53,35 @@ class RegexAnalyzerTest {
     }
 
     @Test
+    void detectsDisabledTest() {
+        List<Violation> v = analyzer.analyze(List.of(fileWith("@Disabled(\"flaky on CI\")")));
+        assertThat(v).extracting(Violation::rule).contains("disabled-test");
+    }
+
+    @Test
+    void detectsSecretWrittenToLogs() {
+        List<Violation> v = analyzer.analyze(List.of(fileWith(
+                "audit(\"login user=\" + userId + \" token=\" + token);")));
+        assertThat(v).extracting(Violation::rule).contains("secret-logging");
+    }
+
+    @Test
+    void detectsUserControlledTokenTtl() {
+        List<Violation> v = analyzer.analyze(List.of(fileWith(
+                "return tokens.issue(request.userId(), request.getParameter(\"ttl\"));")));
+        assertThat(v).extracting(Violation::rule).contains("user-controlled-token-ttl");
+    }
+
+    @Test
+    void detectsSilentReturnAfterNullGuard() {
+        List<Violation> v = analyzer.analyze(List.of(fileWith(
+                "if (body == null) {",
+                "    return;",
+                "}")));
+        assertThat(v).extracting(Violation::rule).contains("silent-null-return");
+    }
+
+    @Test
     void noViolationsForCleanLine() {
         List<Violation> v = analyzer.analyze(List.of(fileWith("int x = 1;")));
         assertThat(v).isEmpty();

@@ -38,6 +38,16 @@ public class RegexAnalyzer implements StaticAnalyzer {
             new Rule("unresolved-todo", Severity.WARNING,
                     Pattern.compile(".*(TODO|FIXME).*"),
                     "Unresolved TODO/FIXME — track in an issue or resolve before merging"),
+            new Rule("disabled-test", Severity.WARNING,
+                    Pattern.compile(".*@Disabled(?:\\s*\\(.*\\))?.*"),
+                    "Disabled test removes regression coverage from normal test runs"),
+            new Rule("secret-logging", Severity.CRITICAL,
+                    Pattern.compile(".*\\b(log|audit|debug|info|warn|error)\\s*\\(.*\\b(password|secret|token|apiKey|api_key)\\b.*"),
+                    "Do not write credentials or secrets to logs"),
+            new Rule("user-controlled-token-ttl", Severity.CRITICAL,
+                    Pattern.compile(".*getParameter\\s*\\(\\s*\"(?:ttl|ttlMinutes|expiry|expiresIn)\"\\s*\\).*",
+                            Pattern.CASE_INSENSITIVE),
+                    "Do not let request parameters directly control token lifetime"),
             new Rule("manual-null-check", Severity.SUGGESTION,
                     Pattern.compile(".*(==\\s*null|!=\\s*null).*"),
                     "Consider Optional or Objects.requireNonNull() instead of manual null checks")
@@ -58,7 +68,26 @@ public class RegexAnalyzer implements StaticAnalyzer {
                     }
                 }
             }
+            addSilentNullReturns(file, out);
         }
         return out;
+    }
+
+    private void addSilentNullReturns(DiffParser.FileDiff file, List<Violation> out) {
+        List<DiffParser.AddedLine> lines = file.addedLines();
+        for (int i = 0; i < lines.size(); i++) {
+            DiffParser.AddedLine guard = lines.get(i);
+            if (!guard.content().matches(".*\\bif\\s*\\(.*==\\s*null.*")) {
+                continue;
+            }
+            for (int j = i + 1; j < Math.min(lines.size(), i + 5); j++) {
+                if (lines.get(j).content().trim().equals("return;")) {
+                    out.add(new Violation(Severity.WARNING, file.path(), guard.lineNumber(),
+                            "silent-null-return",
+                            "Do not silently skip work when required input is null"));
+                    break;
+                }
+            }
+        }
     }
 }

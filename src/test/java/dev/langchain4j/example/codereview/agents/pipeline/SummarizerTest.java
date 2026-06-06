@@ -35,6 +35,20 @@ class SummarizerTest {
     }
 
     @Test
+    void same_category_findings_at_same_location_are_deduplicated_even_with_different_titles() {
+        ReviewFinding a = new ReviewFinding("F-001", "Foo.java", 10, null, Severity.WARNING,
+                Category.STABILITY, "Null return", "desc a", "fix", "e", List.of(), "llm_reviewer");
+        ReviewFinding b = new ReviewFinding("F-002", "Foo.java", 11, null, Severity.WARNING,
+                Category.STABILITY, "Silent failure", "desc b", "fix", "e", List.of(), "llm_reviewer");
+
+        ReviewResult out = summarizer.summarize(
+                new ReviewResult("s", List.of(a, b), List.of()),
+                new ToolFindings(List.of(), List.of()), List.of());
+
+        assertThat(out.findings()).hasSize(1);
+    }
+
+    @Test
     void unreported_critical_violation_is_backfilled_as_finding() {
         ReviewResult draft = new ReviewResult("s", List.of(), List.of());
         Violation v = new Violation(Severity.CRITICAL, "Foo.java", 42,

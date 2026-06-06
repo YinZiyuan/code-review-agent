@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 @Component
@@ -121,9 +120,7 @@ public class Summarizer {
     private String bucketKey(ReviewFinding finding) {
         String file = finding.file() == null ? "" : finding.file();
         int lineBucket = finding.line() == null ? -1 : finding.line() / 5;
-        String title = finding.title() == null ? "" : finding.title().toLowerCase(Locale.ROOT);
-        String titleHead = title.length() > 30 ? title.substring(0, 30) : title;
-        return file + "|" + lineBucket + "|" + titleHead;
+        return file + "|" + lineBucket + "|" + finding.category();
     }
 
     private List<ReviewFinding> sort(List<ReviewFinding> findings) {
