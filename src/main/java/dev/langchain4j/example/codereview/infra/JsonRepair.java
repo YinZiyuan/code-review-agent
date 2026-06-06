@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.infra;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import dev.langchain4j.data.message.UserMessage;
@@ -24,8 +25,10 @@ public class JsonRepair {
 
     public JsonRepair(ChatModel model, ObjectMapper mapper) {
         this.model = model;
-        this.mapper = mapper;
+        this.mapper = mapper.copy()
+                .enable(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE);
         this.snakeCaseMapper = mapper.copy()
+                .enable(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE)
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     }
 

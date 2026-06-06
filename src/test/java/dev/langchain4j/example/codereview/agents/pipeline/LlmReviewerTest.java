@@ -85,7 +85,7 @@ class LlmReviewerTest {
     }
 
     @Test
-    void prompt_contains_explicit_severity_calibration_criteria() {
+    void prompt_constrains_categories_without_changing_finding_policy() {
         ChatModel model = mock(ChatModel.class);
         when(model.chat(any(ChatRequest.class)))
                 .thenReturn(ChatResponse.builder()
@@ -103,11 +103,8 @@ class LlmReviewerTest {
         verify(model).chat(captor.capture());
         String prompt = ((UserMessage) captor.getValue().messages().get(0)).singleText();
 
-        assertThat(prompt).contains("Severity calibration");
-        assertThat(prompt).contains("CRITICAL");
-        assertThat(prompt).contains("WARNING");
-        assertThat(prompt).contains("SUGGESTION");
         assertThat(prompt).contains("Use only the category enum values listed in the JSON schema");
-        assertThat(prompt).contains("return an empty findings array");
+        assertThat(prompt).doesNotContain("Severity calibration");
+        assertThat(prompt).doesNotContain("return an empty findings array");
     }
 }

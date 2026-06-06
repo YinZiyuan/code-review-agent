@@ -77,7 +77,7 @@ class SummarizerTest {
 
     @Test
     void findings_sorted_by_severity_then_file_then_line() {
-        ReviewFinding low = mk("F-1", "Aaa.java", 1, Severity.SUGGESTION, "a", List.of());
+        ReviewFinding low = finding("F-1", "Aaa.java", 1, Category.STYLE, Severity.SUGGESTION);
         ReviewFinding hi = mk("F-2", "Zzz.java", 99, Severity.CRITICAL, "z", List.of());
         ReviewResult out = summarizer.summarize(
                 new ReviewResult("s", List.of(low, hi), List.of()),
@@ -85,6 +85,43 @@ class SummarizerTest {
 
         assertThat(out.findings().get(0).severity()).isEqualTo(Severity.CRITICAL);
         assertThat(out.findings().get(1).severity()).isEqualTo(Severity.SUGGESTION);
+    }
+
+    @Test
+    void calibrates_actionable_finding_severity_by_category_without_changing_findings() {
+        ReviewFinding security = finding("F-1", "Security.java", 10, Category.SECURITY, Severity.WARNING);
+        ReviewFinding stability = finding("F-2", "Stability.java", 20, Category.STABILITY, Severity.CRITICAL);
+        ReviewFinding style = finding("F-3", "Style.java", 30, Category.STYLE, Severity.SUGGESTION);
+
+        ReviewResult out = summarizer.summarize(
+                new ReviewResult("s", List.of(security, stability, style), List.of()),
+                new ToolFindings(List.of(), List.of()), List.of());
+
+        assertThat(out.findings()).extracting(ReviewFinding::id)
+                .containsExactlyInAnyOrder("F-1", "F-2", "F-3");
+        assertThat(out.findings()).filteredOn(f -> f.id().equals("F-1"))
+                .extracting(ReviewFinding::severity).containsExactly(Severity.CRITICAL);
+        assertThat(out.findings()).filteredOn(f -> f.id().equals("F-2"))
+                .extracting(ReviewFinding::severity).containsExactly(Severity.WARNING);
+        assertThat(out.findings()).filteredOn(f -> f.id().equals("F-3"))
+                .extracting(ReviewFinding::severity).containsExactly(Severity.SUGGESTION);
+    }
+
+    @Test
+    void missing_category_preserves_model_severity() {
+        ReviewFinding uncategorized = finding("F-1", "Foo.java", 10, null, Severity.SUGGESTION);
+
+        ReviewResult out = summarizer.summarize(
+                new ReviewResult("s", List.of(uncategorized), List.of()),
+                new ToolFindings(List.of(), List.of()), List.of());
+
+        assertThat(out.findings()).singleElement()
+                .extracting(ReviewFinding::severity).isEqualTo(Severity.SUGGESTION);
+    }
+
+    private ReviewFinding finding(String id, String file, int line, Category category, Severity severity) {
+        return new ReviewFinding(id, file, line, null, severity, category,
+                "title", "description", "fix", "evidence", List.of(), "llm_reviewer");
     }
 
     private ReviewFinding mk(String id, String file, int line, Severity sev,

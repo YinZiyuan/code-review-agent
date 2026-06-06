@@ -3,6 +3,8 @@ package dev.langchain4j.example.codereview.infra;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.example.codereview.model.Category;
+import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -86,5 +88,22 @@ class JsonRepairTest {
         String repairPrompt = ((UserMessage) request.getValue().messages().get(0)).singleText();
         assertThat(repairPrompt).contains(malformed);
         assertThat(repairPrompt).doesNotContain("{type}");
+    }
+
+    @Test
+    void unknown_finding_category_is_normalized_to_other_without_repair_llm() {
+        ChatModel model = mock(ChatModel.class);
+        JsonRepair repair = new JsonRepair(model, mapper);
+        String raw = """
+                {"summary":"x","findings":[{"id":"F-1","file":"A.java","line":1,
+                "severity":"WARNING","category":"COMPILER_ERROR","title":"x",
+                "description":"x","suggestion":"x","evidence":"x","citations":[],
+                "source":"llm_reviewer"}],"tool_status":[]}
+                """;
+
+        ReviewResult result = repair.parseOrRepair(raw, ReviewResult.class);
+
+        assertThat(result.findings().get(0).category()).isEqualTo(Category.OTHER);
+        verifyNoInteractions(model);
     }
 }

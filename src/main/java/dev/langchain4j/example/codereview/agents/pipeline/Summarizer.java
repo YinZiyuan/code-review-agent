@@ -38,11 +38,32 @@ public class Summarizer {
         }
 
         List<ReviewFinding> deduped = dedup(base);
-        List<ReviewFinding> withCitations = citationInjector.inject(deduped, citationCandidates);
+        List<ReviewFinding> calibrated = deduped.stream()
+                .map(this::calibrateSeverity)
+                .toList();
+        List<ReviewFinding> withCitations = citationInjector.inject(calibrated, citationCandidates);
         return new ReviewResult(
                 draft.summary() == null ? "" : draft.summary(),
                 sort(withCitations),
                 tools.statuses());
+    }
+
+    private ReviewFinding calibrateSeverity(ReviewFinding finding) {
+        if (finding.category() == null || finding.severity() == null) {
+            return finding;
+        }
+        Severity calibrated = switch (finding.category()) {
+            case SECURITY -> Severity.CRITICAL;
+            case PERFORMANCE, STABILITY, CONCURRENCY, TEST -> Severity.WARNING;
+            case STYLE, OTHER -> finding.severity();
+        };
+        if (calibrated == finding.severity()) {
+            return finding;
+        }
+        return new ReviewFinding(
+                finding.id(), finding.file(), finding.line(), finding.lineRange(),
+                calibrated, finding.category(), finding.title(), finding.description(),
+                finding.suggestion(), finding.evidence(), finding.citations(), finding.source());
     }
 
     private boolean covered(List<ReviewFinding> findings, Violation violation) {

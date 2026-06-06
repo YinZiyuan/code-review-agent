@@ -55,21 +55,10 @@ public class LlmReviewer {
             - Line numbers refer to the NEW file (post-change).
             - Use only the category enum values listed in the JSON schema. Never output
               ad-hoc categories such as COMPILER_ERROR, BUILD, TOOL, or UNKNOWN.
-            - If the diff has no concrete review issue, return an empty findings array.
-              Do not report compiler/tool setup problems unless they are introduced by the diff.
             - You MUST only put citations in 'citations[]' whose 'id' appears in the candidates
               list below. Do NOT invent citation IDs. Empty 'citations[]' is allowed.
             - Echo tool findings only when you agree with them; if you echo, set 'source' to
               the analyzer name (e.g. 'regex', 'spotbugs').
-            - Severity calibration:
-              * CRITICAL = exploitable security issue, data corruption/loss, crash, unsafe
-                concurrency publication, or test change that can create false green releases.
-              * WARNING = correctness, stability, concurrency, or performance risk that is
-                real but conditional, bounded, recoverable, or not directly exploitable.
-              * SUGGESTION = maintainability, style, readability, minor efficiency, or best
-                practice improvement without a concrete failure mode in this diff.
-              Do not upgrade to CRITICAL only because a change is undesirable; reserve it for
-              high-impact failure modes.
             - Leave 'tool_status' as []; the pipeline will fill it.
             - Output a single JSON object - no prose, no markdown fences.
             """;
