@@ -15,14 +15,16 @@ Accepted strict release result:
 | Version | Samples x Runs | Recall | Precision | FP rate | Severity acc. | Tool success |
 | --- | --- | --- | --- | --- | --- | --- |
 | v3 / w3-pipeline | 40 x 3 | 70.3% | 61.9% | 38.1% | 50.1% | 100.0% |
+| v3.1-tuned / w4-tuned | 40 x 3 | 75.7% | 67.7% | 32.3% | 77.3% | 100.0% |
 
-`v3.1-tuned` is not accepted. Severity calibration improved severity accuracy in one run, but recall and precision regressed. A looser prompt variant produced an invalid `COMPILER_ERROR` category, failing the no-review-error redline.
+`v3.1-tuned` is accepted. It passed the no-review-error redline and improved every quality metric over `v3`; recall and precision also had lower run-to-run standard deviation.
 
 ## Design Lessons
 
 - Evaluation claims need executable backing. `runs_per_sample` as config text was not enough; the runner now actually repeats and records variance.
 - Tool reliability metrics need semantic states. A skipped analyzer because a synthetic sample lacks dependencies is not the same thing as an analyzer crash.
-- Prompt tuning can improve a secondary metric while damaging primary metrics. W4 keeps the calibration attempt documented, but does not let it redefine success.
+- Prompt-only severity tuning improved a secondary metric while damaging primary metrics. Deterministic category-based calibration plus general high-confidence static rules improved severity accuracy without trading away recall and precision.
+- Issue matching should answer whether two findings describe the same defect independently of severity; severity correctness is scored separately.
 - Synthetic evals are useful for regression pressure, but they are not a substitute for real PR distributions.
 
 ## Interview Notes

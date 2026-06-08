@@ -2,7 +2,7 @@
 
 Code Review Agent is a LangChain4j-based Java CLI that reviews git diffs with a deterministic pipeline: parse the diff, collect static findings and local context, ask one bounded LLM reviewer, then deduplicate and format structured findings with citations.
 
-The current accepted release is **v3 / w3-pipeline**. W4 expanded evaluation to a 40-sample release suite, added repeated-run reporting, clarified tool status semantics, and documented an attempted severity calibration that improved severity accuracy but regressed recall and precision, so it is not accepted as the release result.
+The current accepted release is **v3.1-tuned / w4-tuned**. W4 expanded evaluation to a 40-sample release suite, added repeated-run reporting, clarified tool status semantics, and improved recall, precision, and severity accuracy with deterministic severity calibration and high-confidence static finding backfill.
 
 ## Architecture
 
@@ -60,8 +60,8 @@ Run the accepted release evaluation:
 
 ```bash
 env -u DEBUG java -jar target/code-review-agent-1.0.0.jar eval \
-  --version v3 \
-  --pipeline w3-pipeline \
+  --version v3.1-tuned \
+  --pipeline w4-tuned \
   --suite release \
   --runs 3
 ```
@@ -70,11 +70,12 @@ Sample format and isolation rules are in [`eval/samples/README.md`](eval/samples
 
 ## Evaluation
 
-The strict W4 release suite has 40 synthetic / reverse-style samples. `v3` was run as 40 samples x 3 runs with no review errors.
+The strict W4 release suite has 40 synthetic / reverse-style samples. Both accepted reports were run as 40 samples x 3 runs with no review errors.
 
 | Version | Samples | Runs | Recall | Precision | FP rate | Severity acc. | Latency | Tool success |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | v3 / w3-pipeline | 40 | 3 | 70.3% | 61.9% | 38.1% | 50.1% | 4.89s | 100.0% |
+| v3.1-tuned / w4-tuned | 40 | 3 | 75.7% | 67.7% | 32.3% | 77.3% | 5.78s | 100.0% |
 
 Historical v0/v1/v2 reports are preserved separately because strict 40-sample reruns hit review-error redlines on older code. They are useful context, but are not plotted against the 40-sample release number.
 
@@ -96,5 +97,5 @@ Use [`docs/demo-script.md`](docs/demo-script.md) for a reproducible build, revie
 ## Roadmap
 
 - Add real public PR samples and separate them from synthetic release fixtures.
-- Revisit severity calibration without trading away recall and precision.
+- Expand high-confidence static rules only when they generalize beyond benchmark fixtures.
 - Explore a later multi-reviewer `v4-stretch` only after the evaluation baseline is stable on real data.

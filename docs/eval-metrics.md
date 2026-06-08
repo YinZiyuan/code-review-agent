@@ -8,6 +8,7 @@ Strict release charts include only reports with at least 40 samples. Historical 
 
 | Version | Report | Samples | Runs | Suite | Pipeline | Recall | Precision | FP rate | Severity acc. | Latency | Tool success |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v3.1-tuned | v3.1-tuned.json | 40 | 3 | release | w4-tuned | 75.7% | 67.7% | 32.3% | 77.3% | 5.78s | 100.0% |
 | v3 | v3.json | 40 | 3 | release | w3-pipeline | 70.3% | 61.9% | 38.1% | 50.1% | 4.89s | 100.0% |
 
 ![Release metrics](eval-metrics.svg)
@@ -31,4 +32,4 @@ Strict release charts include only reports with at least 40 samples. Historical 
 
 ## W4 tuning note
 
-`v3.1-tuned` was attempted with severity calibration. One variant passed the no-review-error redline and improved severity accuracy, but recall and precision regressed versus `v3`; a looser variant recovered none of that stability and produced a `COMPILER_ERROR` category parse failure. No `v3.1-tuned` report is accepted or plotted.
+`v3.1-tuned` is the accepted W4 result. Deterministic category-based severity calibration and high-confidence static finding backfill improved recall, precision, false-positive rate, and severity accuracy versus `v3`, while passing the no-review-error redline across 40 samples x 3 runs.

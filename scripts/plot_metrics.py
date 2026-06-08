@@ -176,7 +176,7 @@ def render_markdown(reports: list[dict], svg_path: Path, out: Path) -> None:
         "",
         "## W4 tuning note",
         "",
-        "`v3.1-tuned` was attempted with severity calibration. One variant passed the no-review-error redline and improved severity accuracy, but recall and precision regressed versus `v3`; a looser variant recovered none of that stability and produced a `COMPILER_ERROR` category parse failure. No `v3.1-tuned` report is accepted or plotted.",
+        "`v3.1-tuned` is the accepted W4 result. Deterministic category-based severity calibration and high-confidence static finding backfill improved recall, precision, false-positive rate, and severity accuracy versus `v3`, while passing the no-review-error redline across 40 samples x 3 runs.",
         "",
     ]
     out.write_text("\n".join(lines))
