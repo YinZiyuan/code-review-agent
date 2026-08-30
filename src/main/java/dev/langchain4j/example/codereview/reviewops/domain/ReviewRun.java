@@ -120,6 +120,15 @@ public final class ReviewRun {
 
         Map<FindingFingerprint, ReviewFinding> findingsByFingerprint = findings.stream()
                 .collect(Collectors.toMap(ReviewFinding::fingerprint, Function.identity()));
+        Set<FindingFingerprint> inlineFingerprints = findings.stream()
+                .filter(finding -> finding.publicationDecision().orElseThrow().tier()
+                        == PublicationTier.INLINE_COMMENT)
+                .map(ReviewFinding::fingerprint)
+                .collect(Collectors.toSet());
+        if (!inlineFingerprints.equals(suppliedCommentReferences.keySet())) {
+            throw new IllegalArgumentException(
+                    "comment references must cover exactly all inline findings");
+        }
         suppliedCommentReferences.forEach((fingerprint, reference) -> {
             ReviewFinding finding = findingsByFingerprint.get(fingerprint);
             if (finding == null || finding.publicationDecision().isEmpty()
@@ -158,6 +167,9 @@ public final class ReviewRun {
         if (state != ReviewRunState.REQUESTED && state != ReviewRunState.RUNNING
                 && state != ReviewRunState.COMPLETED && state != ReviewRunState.PUBLISHING) {
             throw new IllegalStateException("cannot supersede " + state);
+        }
+        if (state == ReviewRunState.RUNNING) {
+            currentAttempt().cancel(supersededAt);
         }
         state = ReviewRunState.SUPERSEDED;
         finishedAt = supersededAt;

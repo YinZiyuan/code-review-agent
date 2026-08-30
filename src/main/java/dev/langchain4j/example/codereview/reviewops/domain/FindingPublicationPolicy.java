@@ -51,7 +51,10 @@ public final class FindingPublicationPolicy {
             return false;
         }
         String source = finding.evidence().source();
-        return isDeterministicSource(source) || !finding.evidence().citations().isEmpty();
+        if (isDeterministicSource(source)) {
+            return true;
+        }
+        return source.equals("llm_reviewer") && !finding.evidence().citations().isEmpty();
     }
 
     private static boolean isDeterministicSource(String source) {

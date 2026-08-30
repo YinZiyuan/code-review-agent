@@ -38,10 +38,14 @@ public final class FindingFeedback {
             return;
         }
         ObservedReaction reaction = observation.get();
-        if (Objects.equals(reactionId, reaction.reactionId()) && state == reaction.classification()) {
+        if (Objects.equals(reactionId, reaction.reactionId())) {
+            if (state != reaction.classification()) {
+                throw new IllegalArgumentException(
+                        "current reaction identity cannot change classification");
+            }
             return;
         }
-        apply(reaction.classification(), reaction.reactionId(), observedAt);
+        apply(reaction.classification(), reaction.reactionId(), reaction.createdAt());
     }
 
     private void apply(FeedbackState next, Long nextReactionId, Instant changedAt) {

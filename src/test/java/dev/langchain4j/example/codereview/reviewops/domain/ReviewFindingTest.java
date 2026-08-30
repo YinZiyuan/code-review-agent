@@ -20,9 +20,13 @@ class ReviewFindingTest {
                 "null dereference", "description", "suggestion");
         FindingEvidence evidence = new FindingEvidence("  MAY BE NULL ", List.of(), "llm_reviewer");
 
-        FindingFingerprint first = factory.create(new CodeLocation("./src\\Foo.java", 10, true), contentA, evidence);
-        FindingFingerprint second = factory.create(new CodeLocation("src/Foo.java", 99, true), contentB, evidence);
+        CodeLocation firstLocation = new CodeLocation("./src\\\\Foo.java", 10, true);
+        CodeLocation secondLocation = new CodeLocation("src/Foo.java", 99, true);
+        FindingFingerprint first = factory.create(firstLocation, contentA, evidence);
+        FindingFingerprint second = factory.create(secondLocation, contentB, evidence);
 
+        assertThat(firstLocation.file()).isEqualTo("src/Foo.java");
+        assertThat(secondLocation.file()).isEqualTo("src/Foo.java");
         assertThat(first).isEqualTo(second);
     }
 

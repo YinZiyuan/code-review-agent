@@ -5,6 +5,7 @@ import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 @AnalyzeClasses(
@@ -13,15 +14,18 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 class ReviewOperationsArchitectureTest {
 
     @ArchTest
-    static final ArchRule domain_has_no_framework_or_mechanism_dependencies = noClasses()
+    static final ArchRule domain_depends_only_on_jdk_and_its_own_package = classes()
             .that().resideInAPackage("..reviewops.domain..")
-            .should().dependOnClassesThat().resideInAnyPackage(
-                    "org.springframework..",
-                    "dev.langchain4j.model..",
-                    "dev.langchain4j.service..",
-                    "dev.langchain4j.data..",
-                    "dev.langchain4j.rag..",
-                    "dev.langchain4j.store..",
-                    "..reviewops.application..",
-                    "..reviewops.infrastructure..");
+            .should().onlyDependOnClassesThat().resideInAnyPackage(
+                    "java.lang..",
+                    "java.nio.charset..",
+                    "java.security..",
+                    "java.time..",
+                    "java.util..",
+                    "..reviewops.domain..");
+
+    @ArchTest
+    static final ArchRule production_review_operations_does_not_depend_on_evaluation = noClasses()
+            .that().resideInAPackage("..reviewops..")
+            .should().dependOnClassesThat().resideInAPackage("..eval..");
 }

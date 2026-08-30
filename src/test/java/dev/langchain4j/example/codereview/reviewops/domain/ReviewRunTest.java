@@ -119,19 +119,62 @@ class ReviewRunTest {
 
     @Test
     void confirmedInlineCommentsAreRecordedAgainstTheirFindings() {
+        ReviewRun run = completedWithTwoFindings();
+        FindingFingerprint firstFingerprint = run.findings().get(0).fingerprint();
+        FindingFingerprint secondFingerprint = run.findings().get(1).fingerprint();
+        PublicationReference firstReference = new PublicationReference("REVIEW_COMMENT", "comment-1");
+        PublicationReference secondReference = new PublicationReference("REVIEW_COMMENT", "comment-2");
+        run.acceptPublicationDecisions(Map.of(
+                firstFingerprint, new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1"),
+                secondFingerprint, new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+
+        run.confirmPublication("check-1", Map.of(
+                firstFingerprint, firstReference,
+                secondFingerprint, secondReference), T0.plusSeconds(3));
+
+        assertThat(run.findings().get(0).publicationReference()).contains(firstReference);
+        assertThat(run.findings().get(1).publicationReference()).contains(secondReference);
+        assertThat(run.commentReferences()).containsExactlyInAnyOrderEntriesOf(Map.of(
+                firstFingerprint, firstReference,
+                secondFingerprint, secondReference));
+        assertThatThrownBy(() -> run.commentReferences().put(firstFingerprint, firstReference))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void emptyInlineCommentCoverageLeavesPublicationUnchanged() {
         ReviewRun run = completed();
         FindingFingerprint fingerprint = run.findings().get(0).fingerprint();
-        PublicationReference reference = new PublicationReference("REVIEW_COMMENT", "comment-1");
         run.acceptPublicationDecisions(Map.of(
                 fingerprint, new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
         run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
 
-        run.confirmPublication("check-1", Map.of(fingerprint, reference), T0.plusSeconds(3));
+        assertThatThrownBy(() -> run.confirmPublication("check-1", Map.of(), T0.plusSeconds(3)))
+                .isInstanceOf(IllegalArgumentException.class);
 
-        assertThat(run.findings().get(0).publicationReference()).contains(reference);
-        assertThat(run.commentReferences()).containsExactly(Map.entry(fingerprint, reference));
-        assertThatThrownBy(() -> run.commentReferences().put(fingerprint, reference))
-                .isInstanceOf(UnsupportedOperationException.class);
+        assertUnconfirmedPublication(run);
+        assertThat(run.findings().get(0).publicationReference()).isEmpty();
+    }
+
+    @Test
+    void partialInlineCommentCoverageLeavesEveryFindingUnchanged() {
+        ReviewRun run = completedWithTwoFindings();
+        ReviewFinding first = run.findings().get(0);
+        ReviewFinding second = run.findings().get(1);
+        run.acceptPublicationDecisions(Map.of(
+                first.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1"),
+                second.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+
+        assertThatThrownBy(() -> run.confirmPublication("check-1", Map.of(
+                first.fingerprint(), new PublicationReference("REVIEW_COMMENT", "comment-1")),
+                T0.plusSeconds(3)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertUnconfirmedPublication(run);
+        assertThat(first.publicationReference()).isEmpty();
+        assertThat(second.publicationReference()).isEmpty();
     }
 
     @Test
@@ -148,12 +191,55 @@ class ReviewRunTest {
     }
 
     @Test
+    void supersedingRunningReviewCancelsAttemptWithoutFabricatedExecutionEvidence() {
+        ReviewRun run = requested(3);
+        ReviewAttempt attempt = run.startAttempt(T0);
+
+        run.supersede(new AuthoritativeRevision("new-sha"), T0.plusSeconds(1));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThat(run.finishedAt()).contains(T0.plusSeconds(1));
+        assertThat(run.findings()).isEmpty();
+        assertThat(attempt.state()).isEqualTo(ReviewAttemptState.CANCELLED);
+        assertThat(attempt.endedAt()).contains(T0.plusSeconds(1));
+        assertThat(attempt.measurements()).isEmpty();
+        assertThat(attempt.failure()).isEmpty();
+        assertThatThrownBy(() -> run.startAttempt(T0.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> run.completeReview(
+                List.of(ReviewFindingTest.finding("regex", List.of())), METRICS, T0.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> run.authorizePublication(
+                new AuthoritativeRevision("sha"), T0.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void invalidRunningSupersessionTimeLeavesRunAndAttemptUnchanged() {
+        ReviewRun run = requested(3);
+        ReviewAttempt attempt = run.startAttempt(T0);
+
+        assertThatThrownBy(() -> run.supersede(
+                new AuthoritativeRevision("new-sha"), T0.minusSeconds(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.RUNNING);
+        assertThat(run.finishedAt()).isEmpty();
+        assertThat(attempt.state()).isEqualTo(ReviewAttemptState.STARTED);
+        assertThat(attempt.endedAt()).isEmpty();
+        assertThat(attempt.measurements()).isEmpty();
+        assertThat(attempt.failure()).isEmpty();
+    }
+
+    @Test
     void childCommandsAreNotPublicOutsideTheDomainBoundary() throws NoSuchMethodException {
         assertThat(Modifier.isPublic(ReviewAttempt.class.getDeclaredMethod(
                 "succeed", ExecutionMeasurements.class, Instant.class).getModifiers())).isFalse();
         assertThat(Modifier.isPublic(ReviewAttempt.class.getDeclaredMethod(
                 "failTransient", ReviewFailure.class, ExecutionMeasurements.class, Instant.class)
                 .getModifiers())).isFalse();
+        assertThat(Modifier.isPublic(ReviewAttempt.class.getDeclaredMethod(
+                "cancel", Instant.class).getModifiers())).isFalse();
         assertThat(Modifier.isPublic(ReviewFinding.class.getDeclaredMethod(
                 "acceptPublicationDecision", PublicationDecision.class).getModifiers())).isFalse();
         assertThat(Modifier.isPublic(ReviewFinding.class.getDeclaredMethod(
@@ -297,5 +383,12 @@ class ReviewRunTest {
 
     private static ReviewFailure transientFailure() {
         return new ReviewFailure("timeout", FailureClass.TRANSIENT, "timed out");
+    }
+
+    private static void assertUnconfirmedPublication(ReviewRun run) {
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(run.commentReferences()).isEmpty();
+        assertThat(run.checkRunExternalId()).isEmpty();
+        assertThat(run.finishedAt()).isEmpty();
     }
 }

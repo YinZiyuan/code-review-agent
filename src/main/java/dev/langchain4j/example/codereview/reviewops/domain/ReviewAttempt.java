@@ -36,16 +36,36 @@ public final class ReviewAttempt {
         finish(ReviewAttemptState.TERMINAL_FAILURE, measurements, failure, endedAt);
     }
 
+    void cancel(Instant endedAt) {
+        requireStarted();
+        java.util.Objects.requireNonNull(endedAt, "endedAt");
+        requireValidChronology(endedAt);
+        this.endedAt = endedAt;
+        this.state = ReviewAttemptState.CANCELLED;
+    }
+
     private void finish(ReviewAttemptState next, ExecutionMeasurements measurements,
                         ReviewFailure failure, Instant endedAt) {
-        if (state != ReviewAttemptState.STARTED) throw new IllegalStateException("attempt is terminal");
+        requireStarted();
         java.util.Objects.requireNonNull(measurements, "measurements");
         java.util.Objects.requireNonNull(endedAt, "endedAt");
-        if (endedAt.isBefore(startedAt)) throw new IllegalArgumentException("endedAt precedes startedAt");
+        requireValidChronology(endedAt);
         this.measurements = measurements;
         this.endedAt = endedAt;
         this.failure = failure;
         this.state = next;
+    }
+
+    private void requireStarted() {
+        if (state != ReviewAttemptState.STARTED) {
+            throw new IllegalStateException("attempt is terminal");
+        }
+    }
+
+    private void requireValidChronology(Instant endedAt) {
+        if (endedAt.isBefore(startedAt)) {
+            throw new IllegalArgumentException("endedAt precedes startedAt");
+        }
     }
 
     private static void requireFailureClass(ReviewFailure failure, FailureClass expected) {
