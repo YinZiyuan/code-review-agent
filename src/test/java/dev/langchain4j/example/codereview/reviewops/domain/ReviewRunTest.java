@@ -1,0 +1,166 @@
+package dev.langchain4j.example.codereview.reviewops.domain;
+
+import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class ReviewRunTest {
+    private static final Instant T0 = Instant.parse("2026-08-30T00:00:00Z");
+    private static final ExecutionMeasurements METRICS =
+            new ExecutionMeasurements(10, 1, 1, Map.of());
+
+    @Test
+    void transientFailureReturnsToRequestedUntilAttemptsExhausted() {
+        ReviewRun run = requested(2);
+        run.startAttempt(T0);
+        run.recordTransientAttemptFailure(transientFailure(), METRICS, T0.plusSeconds(1));
+        assertThat(run.state()).isEqualTo(ReviewRunState.REQUESTED);
+
+        run.startAttempt(T0.plusSeconds(2));
+        run.recordTransientAttemptFailure(transientFailure(), METRICS, T0.plusSeconds(3));
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.attempts()).hasSize(2);
+    }
+
+    @Test
+    void completingReviewFreezesFindingsAndRecordsOneEvent() {
+        ReviewRun run = requested(3);
+        run.startAttempt(T0);
+        ReviewFinding finding = ReviewFindingTest.finding("regex", List.of());
+        run.completeReview(List.of(finding), METRICS, T0.plusSeconds(1));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.COMPLETED);
+        assertThat(run.findings()).containsExactly(finding);
+        assertThat(run.drainEvents()).containsExactly(
+                new ReviewRunCompleted(run.id(), T0.plusSeconds(1)));
+        assertThat(run.drainEvents()).isEmpty();
+        assertThatThrownBy(() -> run.completeReview(List.of(), METRICS, T0.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void staleAuthoritativeRevisionSupersedesCompletedRun() {
+        ReviewRun run = completed();
+        run.authorizePublication(new AuthoritativeRevision("new-sha"), T0.plusSeconds(2));
+        assertThat(run.state()).isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThatThrownBy(() -> run.confirmPublication("check-1", Map.of(), T0.plusSeconds(3)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void currentRevisionCanPublishAfterEveryFindingHasDecision() {
+        ReviewRun run = completed();
+        Map<FindingFingerprint, PublicationDecision> decisions = Map.of(
+                run.findings().get(0).fingerprint(),
+                new PublicationDecision(PublicationTier.CHECK_SUMMARY, "publish-v1"));
+        run.acceptPublicationDecisions(decisions);
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+        run.confirmPublication("check-1", Map.of(), T0.plusSeconds(3));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHED);
+        assertThat(run.checkRunExternalId()).contains("check-1");
+    }
+
+    @Test
+    void decisionsMustCoverExactlyTheCompletedFindings() {
+        ReviewRun run = completed();
+        assertThatThrownBy(() -> run.acceptPublicationDecisions(Map.of()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void terminalAttemptFailureEndsReviewWithFinalFailure() {
+        ReviewRun run = requested(3);
+        ReviewFailure failure = new ReviewFailure("bad_diff", FailureClass.TERMINAL, "invalid patch");
+        run.startAttempt(T0);
+
+        run.recordTerminalAttemptFailure(failure, METRICS, T0.plusSeconds(1));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(failure);
+        assertThat(run.finishedAt()).contains(T0.plusSeconds(1));
+    }
+
+    @Test
+    void terminalPublicationFailureEndsAuthorizedPublication() {
+        ReviewRun run = completed();
+        run.acceptPublicationDecisions(Map.of(
+                run.findings().get(0).fingerprint(),
+                new PublicationDecision(PublicationTier.CHECK_SUMMARY, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+        ReviewFailure failure = new ReviewFailure("github", FailureClass.TERMINAL, "GitHub rejected check");
+
+        run.recordPublicationFailure(failure, T0.plusSeconds(3));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(failure);
+        assertThat(run.finishedAt()).contains(T0.plusSeconds(3));
+    }
+
+    @Test
+    void publicationCommentReferencesMustBelongToInlineFindings() {
+        ReviewRun run = completed();
+        FindingFingerprint fingerprint = run.findings().get(0).fingerprint();
+        run.acceptPublicationDecisions(Map.of(
+                fingerprint, new PublicationDecision(PublicationTier.CHECK_SUMMARY, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+
+        assertThatThrownBy(() -> run.confirmPublication("check-1", Map.of(
+                fingerprint, new PublicationReference("REVIEW_COMMENT", "comment-1")), T0.plusSeconds(3)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void confirmedInlineCommentsAreRecordedAgainstTheirFindings() {
+        ReviewRun run = completed();
+        FindingFingerprint fingerprint = run.findings().get(0).fingerprint();
+        PublicationReference reference = new PublicationReference("REVIEW_COMMENT", "comment-1");
+        run.acceptPublicationDecisions(Map.of(
+                fingerprint, new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+
+        run.confirmPublication("check-1", Map.of(fingerprint, reference), T0.plusSeconds(3));
+
+        assertThat(run.findings().get(0).publicationReference()).contains(reference);
+        assertThat(run.commentReferences()).containsExactly(Map.entry(fingerprint, reference));
+        assertThatThrownBy(() -> run.commentReferences().put(fingerprint, reference))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void supersedeRejectsMatchingRevisionAndTerminalState() {
+        ReviewRun run = requested(3);
+
+        assertThatThrownBy(() -> run.supersede(new AuthoritativeRevision("sha"), T0.plusSeconds(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        run.supersede(new AuthoritativeRevision("new-sha"), T0.plusSeconds(1));
+        assertThat(run.state()).isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThatThrownBy(() -> run.supersede(new AuthoritativeRevision("another-sha"), T0.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    private static ReviewRun requested(int maxAttempts) {
+        return ReviewRun.request(ReviewRunId.newId(),
+                new PullRequestRevision(1, 2, 3, "sha"),
+                new ReviewConfigurationSnapshot("pipeline", "model", "publish-v1", maxAttempts), T0);
+    }
+
+    private static ReviewRun completed() {
+        ReviewRun run = requested(3);
+        run.startAttempt(T0);
+        run.completeReview(List.of(ReviewFindingTest.finding("regex", List.of())),
+                METRICS, T0.plusSeconds(1));
+        run.drainEvents();
+        return run;
+    }
+
+    private static ReviewFailure transientFailure() {
+        return new ReviewFailure("timeout", FailureClass.TRANSIENT, "timed out");
+    }
+}
