@@ -18,20 +18,20 @@ public final class ReviewAttempt {
         this.state = ReviewAttemptState.STARTED;
     }
 
-    public static ReviewAttempt start(int attemptNumber, Instant startedAt) {
+    static ReviewAttempt start(int attemptNumber, Instant startedAt) {
         return new ReviewAttempt(attemptNumber, startedAt);
     }
 
-    public void succeed(ExecutionMeasurements measurements, Instant endedAt) {
+    void succeed(ExecutionMeasurements measurements, Instant endedAt) {
         finish(ReviewAttemptState.SUCCEEDED, measurements, null, endedAt);
     }
 
-    public void failTransient(ReviewFailure failure, ExecutionMeasurements measurements, Instant endedAt) {
+    void failTransient(ReviewFailure failure, ExecutionMeasurements measurements, Instant endedAt) {
         requireFailureClass(failure, FailureClass.TRANSIENT);
         finish(ReviewAttemptState.TRANSIENT_FAILURE, measurements, failure, endedAt);
     }
 
-    public void failTerminal(ReviewFailure failure, ExecutionMeasurements measurements, Instant endedAt) {
+    void failTerminal(ReviewFailure failure, ExecutionMeasurements measurements, Instant endedAt) {
         requireFailureClass(failure, FailureClass.TERMINAL);
         finish(ReviewAttemptState.TERMINAL_FAILURE, measurements, failure, endedAt);
     }

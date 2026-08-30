@@ -73,15 +73,8 @@ public final class ReviewRun {
     public void completeReview(List<ReviewFinding> completedFindings,
                                ExecutionMeasurements measurements, Instant completedAt) {
         requireState(ReviewRunState.RUNNING);
+        Map<FindingFingerprint, ReviewFinding> unique = uniqueFindings(completedFindings);
         currentAttempt().succeed(measurements, completedAt);
-        Map<FindingFingerprint, ReviewFinding> unique = Objects.requireNonNull(completedFindings,
-                        "completedFindings").stream()
-                .collect(Collectors.toMap(
-                        ReviewFinding::fingerprint, Function.identity(),
-                        (left, right) -> {
-                            throw new IllegalArgumentException("duplicate fingerprint");
-                        },
-                        LinkedHashMap::new));
         findings = List.copyOf(unique.values());
         state = ReviewRunState.COMPLETED;
         events.add(new ReviewRunCompleted(id, completedAt));
@@ -96,6 +89,7 @@ public final class ReviewRun {
         if (!expected.equals(decisions.keySet())) {
             throw new IllegalArgumentException("decisions must cover exactly all findings");
         }
+        findings.forEach(finding -> validatePublicationDecision(decisions.get(finding.fingerprint()), finding));
         findings.forEach(finding -> finding.acceptPublicationDecision(decisions.get(finding.fingerprint())));
     }
 
@@ -149,9 +143,10 @@ public final class ReviewRun {
     public void recordPublicationFailure(ReviewFailure failure, Instant failedAt) {
         requireState(ReviewRunState.PUBLISHING);
         requireTerminalFailure(failure);
+        Objects.requireNonNull(failedAt, "failedAt");
         finalFailure = failure;
         state = ReviewRunState.FAILED;
-        finishedAt = Objects.requireNonNull(failedAt, "failedAt");
+        finishedAt = failedAt;
     }
 
     public void supersede(AuthoritativeRevision currentRevision, Instant supersededAt) {
@@ -190,6 +185,27 @@ public final class ReviewRun {
 
     private ReviewAttempt currentAttempt() {
         return attempts.get(attempts.size() - 1);
+    }
+
+    private static Map<FindingFingerprint, ReviewFinding> uniqueFindings(
+            List<ReviewFinding> completedFindings) {
+        return Objects.requireNonNull(completedFindings, "completedFindings").stream()
+                .collect(Collectors.toMap(
+                        ReviewFinding::fingerprint, Function.identity(),
+                        (left, right) -> {
+                            throw new IllegalArgumentException("duplicate fingerprint");
+                        },
+                        LinkedHashMap::new));
+    }
+
+    private void validatePublicationDecision(PublicationDecision decision, ReviewFinding finding) {
+        Objects.requireNonNull(decision, "decision");
+        if (!configuration.policyVersion().equals(decision.policyVersion())) {
+            throw new IllegalArgumentException("decision policyVersion must match configuration policyVersion");
+        }
+        if (finding.publicationDecision().isPresent()) {
+            throw new IllegalStateException("decision already assigned");
+        }
     }
 
     private void requireState(ReviewRunState expected) {

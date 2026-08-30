@@ -19,12 +19,12 @@ public final class ReviewFinding {
         this.evidence = Objects.requireNonNull(evidence, "evidence");
     }
 
-    public void acceptPublicationDecision(PublicationDecision decision) {
+    void acceptPublicationDecision(PublicationDecision decision) {
         if (publicationDecision != null) throw new IllegalStateException("decision already assigned");
         publicationDecision = Objects.requireNonNull(decision, "decision");
     }
 
-    public void recordPublicationReference(PublicationReference reference) {
+    void recordPublicationReference(PublicationReference reference) {
         if (publicationDecision == null || publicationDecision.tier() != PublicationTier.INLINE_COMMENT) {
             throw new IllegalStateException("only an inline finding may record a comment reference");
         }
