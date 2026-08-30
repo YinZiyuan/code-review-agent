@@ -36,10 +36,38 @@ class ReviewAttemptTest {
     }
 
     @Test
+    void chronologyRejectedSuccessLeavesAttemptUnchanged() {
+        ReviewAttempt attempt = ReviewAttempt.start(1, START);
+
+        assertThatThrownBy(() -> attempt.succeed(METRICS, START.minusSeconds(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertUnfinished(attempt);
+    }
+
+    @Test
+    void chronologyRejectedFailureLeavesAttemptUnchanged() {
+        ReviewAttempt attempt = ReviewAttempt.start(1, START);
+        ReviewFailure failure = new ReviewFailure("timeout", FailureClass.TRANSIENT, "timed out");
+
+        assertThatThrownBy(() -> attempt.failTransient(failure, METRICS, START.minusSeconds(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertUnfinished(attempt);
+    }
+
+    @Test
     void measurementsAreDefensivelyCopied() {
         ExecutionMeasurements measurements =
                 new ExecutionMeasurements(1, 2, 3, new java.util.HashMap<>(Map.of("regex", "RAN")));
         assertThatThrownBy(() -> measurements.toolStates().put("spotbugs", "FAILED"))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    private static void assertUnfinished(ReviewAttempt attempt) {
+        assertThat(attempt.state()).isEqualTo(ReviewAttemptState.STARTED);
+        assertThat(attempt.endedAt()).isEmpty();
+        assertThat(attempt.measurements()).isEmpty();
+        assertThat(attempt.failure()).isEmpty();
     }
 }

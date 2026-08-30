@@ -190,6 +190,24 @@ class ReviewRunTest {
     }
 
     @Test
+    void chronologyRejectedCompletionLeavesRunAndAttemptUnchanged() {
+        ReviewRun run = requested(3);
+        ReviewAttempt attempt = run.startAttempt(T0);
+
+        assertThatThrownBy(() -> run.completeReview(List.of(ReviewFindingTest.finding("regex", List.of())),
+                METRICS, T0.minusSeconds(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.RUNNING);
+        assertThat(attempt.state()).isEqualTo(ReviewAttemptState.STARTED);
+        assertThat(attempt.endedAt()).isEmpty();
+        assertThat(attempt.measurements()).isEmpty();
+        assertThat(attempt.failure()).isEmpty();
+        assertThat(run.findings()).isEmpty();
+        assertThat(run.drainEvents()).isEmpty();
+    }
+
+    @Test
     void nullPublicationDecisionLeavesAllFindingsUnchanged() {
         ReviewRun run = completedWithTwoFindings();
         ReviewFinding first = run.findings().get(0);

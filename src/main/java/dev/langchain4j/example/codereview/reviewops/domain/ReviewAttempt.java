@@ -39,9 +39,11 @@ public final class ReviewAttempt {
     private void finish(ReviewAttemptState next, ExecutionMeasurements measurements,
                         ReviewFailure failure, Instant endedAt) {
         if (state != ReviewAttemptState.STARTED) throw new IllegalStateException("attempt is terminal");
-        this.measurements = java.util.Objects.requireNonNull(measurements, "measurements");
-        this.endedAt = java.util.Objects.requireNonNull(endedAt, "endedAt");
+        java.util.Objects.requireNonNull(measurements, "measurements");
+        java.util.Objects.requireNonNull(endedAt, "endedAt");
         if (endedAt.isBefore(startedAt)) throw new IllegalArgumentException("endedAt precedes startedAt");
+        this.measurements = measurements;
+        this.endedAt = endedAt;
         this.failure = failure;
         this.state = next;
     }
