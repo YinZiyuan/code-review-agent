@@ -1,0 +1,30 @@
+package dev.langchain4j.example.codereview.reviewops.application.jobs;
+
+import java.time.Instant;
+import java.util.Objects;
+import java.util.UUID;
+
+public record LeasedJob(
+        UUID id,
+        String jobType,
+        UUID payloadReference,
+        int attemptCount,
+        int maxAttempts,
+        Instant leaseExpiresAt) {
+
+    public LeasedJob {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(jobType, "jobType");
+        if (jobType.isBlank()) {
+            throw new IllegalArgumentException("jobType must not be blank");
+        }
+        Objects.requireNonNull(payloadReference, "payloadReference");
+        if (attemptCount <= 0) {
+            throw new IllegalArgumentException("attemptCount must be positive");
+        }
+        if (maxAttempts <= 0) {
+            throw new IllegalArgumentException("maxAttempts must be positive");
+        }
+        Objects.requireNonNull(leaseExpiresAt, "leaseExpiresAt");
+    }
+}

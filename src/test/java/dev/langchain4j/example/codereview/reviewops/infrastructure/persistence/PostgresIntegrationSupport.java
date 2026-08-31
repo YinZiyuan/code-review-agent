@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
-abstract class PostgresIntegrationSupport {
+public abstract class PostgresIntegrationSupport {
 
     private static final String DOCKER_API_VERSION_PROPERTY = "api.version";
     private static final int TESTCONTAINERS_DEFAULT_DOCKER_API_MINOR_VERSION = 32;
