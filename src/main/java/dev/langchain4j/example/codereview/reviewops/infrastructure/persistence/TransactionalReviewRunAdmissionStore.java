@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunAdmissionStore;
+import dev.langchain4j.example.codereview.reviewops.application.ReviewRunJobMismatchException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxEvent;
@@ -36,6 +37,10 @@ public final class TransactionalReviewRunAdmissionStore implements ReviewRunAdmi
                       List<OutboxEvent> outboxEvents) {
         Objects.requireNonNull(reviewRun, "reviewRun");
         Objects.requireNonNull(executionJob, "executionJob");
+        if (!reviewRun.id().value().equals(executionJob.payloadReference())) {
+            throw new ReviewRunJobMismatchException(
+                    reviewRun.id(), executionJob.payloadReference());
+        }
         List<OutboxEvent> immutableEvents = List.copyOf(
                 Objects.requireNonNull(outboxEvents, "outboxEvents"));
 

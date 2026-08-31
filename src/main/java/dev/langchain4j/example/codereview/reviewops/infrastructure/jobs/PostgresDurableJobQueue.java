@@ -1,5 +1,6 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.jobs;
 
+import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobIntentConflictException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
@@ -52,14 +53,19 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         Objects.requireNonNull(request, "request");
         UUID proposedId = UUID.randomUUID();
         Instant createdAt = clock.instant();
-        return jdbcTemplate.queryForObject("""
+        List<UUID> ids = jdbcTemplate.query("""
                         INSERT INTO durable_jobs (
                             id, job_type, payload_reference, state, attempt_count, max_attempts,
-                            next_attempt_at, lease_owner, lease_expires_at, last_failure_class,
+                            next_attempt_at, initial_next_attempt_at,
+                            lease_owner, lease_expires_at, last_failure_class,
                             idempotency_key, created_at, updated_at)
-                        VALUES (?, ?, ?, 'READY', 0, ?, ?, NULL, NULL, NULL, ?, ?, ?)
+                        VALUES (?, ?, ?, 'READY', 0, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
                         ON CONFLICT (idempotency_key)
                         DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
+                        WHERE durable_jobs.job_type = EXCLUDED.job_type
+                          AND durable_jobs.payload_reference = EXCLUDED.payload_reference
+                          AND durable_jobs.max_attempts = EXCLUDED.max_attempts
+                          AND durable_jobs.initial_next_attempt_at = EXCLUDED.initial_next_attempt_at
                         RETURNING id
                         """,
                 (resultSet, rowNumber) -> resultSet.getObject("id", UUID.class),
@@ -68,9 +74,14 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                 request.payloadReference(),
                 request.maxAttempts(),
                 timestamp(request.nextAttemptAt()),
+                timestamp(request.nextAttemptAt()),
                 request.idempotencyKey(),
                 timestamp(createdAt),
                 timestamp(createdAt));
+        if (ids.isEmpty()) {
+            throw new DurableJobIntentConflictException(request.idempotencyKey());
+        }
+        return ids.get(0);
     }
 
     @Override

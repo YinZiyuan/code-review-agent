@@ -1,11 +1,13 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.jobs;
 
+import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobIntentConflictException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresIntegrationSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
@@ -60,11 +62,11 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 3,
                 DUE_AT);
         DurableJobRequest duplicate = request(
-                "SUPERSEDE_REVIEW",
+                "REVIEW_EXECUTION",
                 "delivery-duplicate",
-                UUID.fromString("00000000-0000-0000-0000-000000000002"),
-                7,
-                DUE_AT.plusSeconds(60));
+                UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                3,
+                DUE_AT);
 
         UUID originalId = queue.enqueue(original);
         UUID duplicateId = queue.enqueue(duplicate);
@@ -79,6 +81,85 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("payload_reference", original.payloadReference())
                 .containsEntry("max_attempts", 3);
         assertThat(((Timestamp) stored.get("next_attempt_at")).toInstant()).isEqualTo(DUE_AT);
+    }
+
+    @Test
+    void duplicateIdempotencyKeyRejectsEveryDifferentImmutableIntentField() {
+        String idempotencyKey = "conflicting-intent";
+        UUID originalPayload = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        DurableJobRequest original = request(
+                "REVIEW_EXECUTION", idempotencyKey, originalPayload, 3, DUE_AT);
+        UUID originalId = queue.enqueue(original);
+        List<DurableJobRequest> conflicts = List.of(
+                request("SUPERSEDE_REVIEW", idempotencyKey, originalPayload, 3, DUE_AT),
+                request("REVIEW_EXECUTION", idempotencyKey,
+                        UUID.fromString("00000000-0000-0000-0000-000000000003"), 3, DUE_AT),
+                request("REVIEW_EXECUTION", idempotencyKey, originalPayload, 4, DUE_AT),
+                request("REVIEW_EXECUTION", idempotencyKey, originalPayload, 3, DUE_AT.plusSeconds(1)));
+
+        for (DurableJobRequest conflict : conflicts) {
+            assertThatThrownBy(() -> queue.enqueue(conflict))
+                    .isInstanceOfSatisfying(DurableJobIntentConflictException.class, failure ->
+                            assertThat(failure.idempotencyKey()).isEqualTo(idempotencyKey));
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM durable_jobs", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap("""
+                        SELECT id, job_type, payload_reference, max_attempts, next_attempt_at
+                        FROM durable_jobs WHERE idempotency_key = ?
+                        """, idempotencyKey))
+                .containsEntry("id", originalId)
+                .containsEntry("job_type", original.jobType())
+                .containsEntry("payload_reference", original.payloadReference())
+                .containsEntry("max_attempts", original.maxAttempts());
+    }
+
+    @Test
+    void identicalEnqueueIntentRemainsIdempotentAfterRetrySchedulingChanges() {
+        UUID payloadReference = UUID.fromString("00000000-0000-0000-0000-000000000005");
+        DurableJobRequest original = request(
+                "REVIEW_EXECUTION", "retry-stable-intent", payloadReference, 3, DUE_AT);
+        UUID originalId = queue.enqueue(original);
+        LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        queue.recordFailure(
+                originalId,
+                "worker-a",
+                lease.attemptCount(),
+                FailureClass.TRANSIENT,
+                LEASED_AT.plusSeconds(30),
+                LEASED_AT.plusSeconds(1));
+
+        UUID repeatedId = queue.enqueue(original);
+
+        assertThat(repeatedId).isEqualTo(originalId);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM durable_jobs", Integer.class)).isEqualTo(1);
+        assertThat(((Timestamp) jobRow(originalId).get("next_attempt_at")).toInstant())
+                .isEqualTo(LEASED_AT.plusSeconds(30));
+    }
+
+    @Test
+    void unrelatedDatabaseConstraintFailureIsNotTranslatedToIntentConflict() {
+        jdbcTemplate.execute("""
+                ALTER TABLE durable_jobs
+                ADD CONSTRAINT test_job_type_rejection CHECK (job_type <> 'REJECTED_BY_TEST')
+                """);
+        try {
+            assertThatThrownBy(() -> queue.enqueue(request(
+                    "REJECTED_BY_TEST",
+                    "unrelated-constraint",
+                    UUID.fromString("00000000-0000-0000-0000-000000000004"),
+                    3,
+                    DUE_AT)))
+                    .isInstanceOf(DataIntegrityViolationException.class)
+                    .isNotInstanceOf(DurableJobIntentConflictException.class);
+        } finally {
+            jdbcTemplate.execute("""
+                    ALTER TABLE durable_jobs
+                    DROP CONSTRAINT test_job_type_rejection
+                    """);
+        }
     }
 
     @Test

@@ -1,9 +1,11 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -12,8 +14,11 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
+import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -66,6 +71,59 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     @Test
     void rerunningFlywayOnTheMigratedDatabaseExecutesNoMigrations() {
         assertThat(flyway.migrate().migrationsExecuted).isZero();
+    }
+
+    @Test
+    void v2BackfillsAndRequiresTheInitialDurableJobSchedule() throws Exception {
+        String schema = "job_intent_backfill_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try (var connection = DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setSchema(schema);
+            SingleConnectionDataSource isolatedDataSource =
+                    new SingleConnectionDataSource(connection, true);
+            Flyway v1 = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .target("1")
+                    .load();
+            v1.migrate();
+            JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
+            UUID jobId = UUID.randomUUID();
+            Instant originalSchedule = Instant.parse("2026-08-31T02:05:00Z");
+            isolated.update("""
+                            INSERT INTO durable_jobs (
+                                id, job_type, payload_reference, state, attempt_count, max_attempts,
+                                next_attempt_at, idempotency_key, created_at, updated_at)
+                            VALUES (?, 'REVIEW_EXECUTION', ?, 'READY', 0, 3, ?, 'legacy-job', ?, ?)
+                            """,
+                    jobId,
+                    UUID.randomUUID(),
+                    Timestamp.from(originalSchedule),
+                    Timestamp.from(originalSchedule.minusSeconds(1)),
+                    Timestamp.from(originalSchedule.minusSeconds(1)));
+
+            Flyway latest = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .load();
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+
+            assertThat(isolated.queryForObject("""
+                            SELECT initial_next_attempt_at
+                            FROM durable_jobs WHERE id = ?
+                            """, Timestamp.class, jobId).toInstant()).isEqualTo(originalSchedule);
+            assertThat(isolated.queryForObject("""
+                            SELECT is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = ? AND table_name = 'durable_jobs'
+                              AND column_name = 'initial_next_attempt_at'
+                            """, String.class, schema)).isEqualTo("NO");
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
     }
 
     @Test

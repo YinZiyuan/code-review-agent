@@ -8,6 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -62,7 +63,7 @@ public final class JdbcOutboxStore implements OutboxStore {
                         SET published_at = ?
                         WHERE event_id = ? AND published_at IS NULL
                         """,
-                timestamp(publishedAt), eventId);
+                timestamp(publishedAt.truncatedTo(ChronoUnit.MICROS)), eventId);
     }
 
     private static OutboxEvent mapEvent(ResultSet resultSet, int rowNumber) throws SQLException {

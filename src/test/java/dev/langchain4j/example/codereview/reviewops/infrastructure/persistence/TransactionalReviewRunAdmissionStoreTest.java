@@ -2,6 +2,8 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunAdmissionStore;
+import dev.langchain4j.example.codereview.reviewops.application.ReviewRunJobMismatchException;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobIntentConflictException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
@@ -18,14 +20,21 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.Connection;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -79,6 +88,25 @@ class TransactionalReviewRunAdmissionStoreTest extends PostgresIntegrationSuppor
                 .containsEntry("payload_reference", run.id().value())
                 .containsEntry("idempotency_key", "review-run:original");
         assertThat(outbox.loadUnpublished(10)).containsExactly(event);
+    }
+
+    @Test
+    void mismatchedExecutionPayloadIsRejectedBeforeAnyAdmissionWrite() {
+        ReviewRun run = requestedRun(ORIGINAL_RUN_ID);
+        UUID wrongPayloadReference = DUPLICATE_RUN_ID;
+        DurableJobRequest mismatchedJob = new DurableJobRequest(
+                "REVIEW_EXECUTION", wrongPayloadReference, 3, REQUESTED_AT, "review-run:mismatch");
+
+        assertThatThrownBy(() -> admission(jobs, outbox).admit(
+                run,
+                mismatchedJob,
+                List.of(requestedEvent(FIRST_EVENT_ID, run.id(), REQUESTED_AT))))
+                .isInstanceOfSatisfying(ReviewRunJobMismatchException.class, failure -> {
+                    assertThat(failure.reviewRunId()).isEqualTo(run.id());
+                    assertThat(failure.payloadReference()).isEqualTo(wrongPayloadReference);
+                });
+
+        assertTableCounts(0, 0, 0);
     }
 
     @Test
@@ -170,6 +198,35 @@ class TransactionalReviewRunAdmissionStoreTest extends PostgresIntegrationSuppor
     }
 
     @Test
+    void differentBusinessIdentityReusingAJobKeyRollsBackItsRunAndOutbox() {
+        ReviewRun original = requestedRun(ORIGINAL_RUN_ID);
+        admission(jobs, outbox).admit(
+                original,
+                executionJob(original.id(), "review-run:shared-key"),
+                List.of(requestedEvent(FIRST_EVENT_ID, original.id(), REQUESTED_AT)));
+        ReviewRun distinctIdentity = requestedRun(DUPLICATE_RUN_ID, 304, "other-head-sha");
+
+        assertThatThrownBy(() -> admission(jobs, outbox).admit(
+                distinctIdentity,
+                executionJob(distinctIdentity.id(), "review-run:shared-key"),
+                List.of(requestedEvent(
+                        SECOND_EVENT_ID, distinctIdentity.id(), REQUESTED_AT.plusSeconds(1)))))
+                .isInstanceOfSatisfying(DurableJobIntentConflictException.class, failure ->
+                        assertThat(failure.idempotencyKey()).isEqualTo("review-run:shared-key"));
+
+        assertTableCounts(1, 1, 1);
+        assertThat(reviewRuns.find(original.id())).isPresent();
+        assertThat(reviewRuns.find(distinctIdentity.id())).isEmpty();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT payload_reference FROM durable_jobs WHERE idempotency_key = ?",
+                UUID.class,
+                "review-run:shared-key")).isEqualTo(original.id().value());
+        assertThat(outbox.loadUnpublished(10))
+                .extracting(OutboxEvent::aggregateId)
+                .containsExactly(original.id().value());
+    }
+
+    @Test
     void unpublishedEventsUseStableOccurrenceAndIdentityOrderAndPublicationDoesNotDeleteFacts() {
         UUID earlierHighId = UUID.fromString("00000000-0000-0000-0000-000000000302");
         UUID earlierLowId = UUID.fromString("00000000-0000-0000-0000-000000000301");
@@ -195,15 +252,126 @@ class TransactionalReviewRunAdmissionStoreTest extends PostgresIntegrationSuppor
                 earlierLowId).toInstant()).isEqualTo(PUBLISHED_AT);
     }
 
+    @Test
+    void concurrentAtLeastOncePollersShareAStableEventIdentityAndPublicationAckIsIdempotent()
+            throws Exception {
+        ReviewRunId aggregateId = new ReviewRunId(ORIGINAL_RUN_ID);
+        OutboxEvent event = requestedEvent(FIRST_EVENT_ID, aggregateId, REQUESTED_AT);
+        outbox.append(event);
+
+        try (Connection firstConnection = dataSource.getConnection();
+             Connection secondConnection = dataSource.getConnection()) {
+            JdbcOutboxStore firstPoller = outboxUsing(firstConnection);
+            JdbcOutboxStore secondPoller = outboxUsing(secondConnection);
+            CyclicBarrier simultaneousPoll = new CyclicBarrier(2);
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            try {
+                Future<List<OutboxEvent>> first = executor.submit(() -> {
+                    simultaneousPoll.await(5, TimeUnit.SECONDS);
+                    return firstPoller.loadUnpublished(1);
+                });
+                Future<List<OutboxEvent>> second = executor.submit(() -> {
+                    simultaneousPoll.await(5, TimeUnit.SECONDS);
+                    return secondPoller.loadUnpublished(1);
+                });
+
+                assertThat(first.get(5, TimeUnit.SECONDS)).containsExactly(event);
+                assertThat(second.get(5, TimeUnit.SECONDS)).containsExactly(event);
+
+                firstPoller.markPublished(event.eventId(), PUBLISHED_AT);
+                assertThat(firstPoller.loadUnpublished(1)).isEmpty();
+                assertThat(secondPoller.loadUnpublished(1)).isEmpty();
+
+                secondPoller.markPublished(event.eventId(), PUBLISHED_AT.plusSeconds(1));
+                assertThat(jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM outbox_events WHERE event_id = ?",
+                        Integer.class,
+                        event.eventId())).isEqualTo(1);
+                assertThat(jdbcTemplate.queryForObject(
+                        "SELECT published_at FROM outbox_events WHERE event_id = ?",
+                        java.sql.Timestamp.class,
+                        event.eventId()).toInstant()).isEqualTo(PUBLISHED_AT);
+            } finally {
+                executor.shutdownNow();
+                assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
+    @Test
+    void outboxEventCanonicalizesJsonRecursivelyAndRejectsInvalidJsonAtItsBoundary() {
+        ReviewRunId aggregateId = new ReviewRunId(ORIGINAL_RUN_ID);
+        OutboxEvent canonical = new OutboxEvent(
+                FIRST_EVENT_ID,
+                "ReviewRun",
+                aggregateId.value(),
+                "ReviewRunRequested",
+                " { \"z\" : 3, \"nested\" : { \"b\" : 2, \"a\" : 1 }, "
+                        + "\"array\" : [ { \"d\" : 4, \"c\" : 3 }, 2, 1 ] } ",
+                REQUESTED_AT);
+
+        assertThat(canonical.payload()).isEqualTo(
+                "{\"array\":[{\"c\":3,\"d\":4},2,1],\"nested\":{\"a\":1,\"b\":2},\"z\":3}");
+        outbox.append(canonical);
+        assertThat(outbox.loadUnpublished(1)).containsExactly(canonical);
+
+        assertThatThrownBy(() -> new OutboxEvent(
+                SECOND_EVENT_ID,
+                "ReviewRun",
+                aggregateId.value(),
+                "ReviewRunRequested",
+                "{\"broken\":",
+                REQUESTED_AT))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("payload must be valid JSON");
+    }
+
+    @Test
+    void nanosecondEventTimesNormalizeToPostgresMicrosForRoundTripOrderingAndPublication() {
+        ReviewRunId aggregateId = new ReviewRunId(ORIGINAL_RUN_ID);
+        Instant firstRawOccurrence = Instant.parse("2026-08-31T03:00:00.123456789Z");
+        Instant secondRawOccurrence = Instant.parse("2026-08-31T03:00:00.123456999Z");
+        Instant expectedOccurrence = Instant.parse("2026-08-31T03:00:00.123456Z");
+        UUID highId = UUID.fromString("00000000-0000-0000-0000-000000000402");
+        UUID lowId = UUID.fromString("00000000-0000-0000-0000-000000000401");
+        OutboxEvent high = requestedEvent(highId, aggregateId, firstRawOccurrence);
+        OutboxEvent low = requestedEvent(lowId, aggregateId, secondRawOccurrence);
+        outbox.append(high);
+        outbox.append(low);
+
+        assertThat(high.occurredAt()).isEqualTo(expectedOccurrence);
+        assertThat(low.occurredAt()).isEqualTo(expectedOccurrence);
+        assertThat(outbox.loadUnpublished(2)).containsExactly(low, high);
+
+        Instant rawPublishedAt = Instant.parse("2026-08-31T03:10:00.987654321Z");
+        Instant expectedPublishedAt = Instant.parse("2026-08-31T03:10:00.987654Z");
+        outbox.markPublished(lowId, rawPublishedAt);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT published_at FROM outbox_events WHERE event_id = ?",
+                java.sql.Timestamp.class,
+                lowId).toInstant()).isEqualTo(expectedPublishedAt);
+        assertThat(outbox.loadUnpublished(2)).containsExactly(high);
+    }
+
     private ReviewRunAdmissionStore admission(DurableJobQueue jobQueue, OutboxStore outboxStore) {
         return new TransactionalReviewRunAdmissionStore(
                 reviewRuns, jobQueue, outboxStore, transactions);
     }
 
+    private static JdbcOutboxStore outboxUsing(Connection connection) {
+        return new JdbcOutboxStore(new JdbcTemplate(
+                new SingleConnectionDataSource(connection, true)));
+    }
+
     private static ReviewRun requestedRun(UUID id) {
+        return requestedRun(id, 303, "admitted-head-sha");
+    }
+
+    private static ReviewRun requestedRun(UUID id, int pullRequestNumber, String headSha) {
         return ReviewRun.request(
                 new ReviewRunId(id),
-                new PullRequestRevision(101, 202, 303, "admitted-head-sha"),
+                new PullRequestRevision(101, 202, pullRequestNumber, headSha),
                 new ReviewConfigurationSnapshot(
                         "pipeline-v3", "configuration-v7", "kimi-k2", "policy-v5", 3),
                 REQUESTED_AT);

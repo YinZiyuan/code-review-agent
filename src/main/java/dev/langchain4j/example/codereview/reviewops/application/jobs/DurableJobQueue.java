@@ -9,6 +9,15 @@ import java.util.UUID;
 
 public interface DurableJobQueue {
 
+    /**
+     * Enqueues one immutable job intent.
+     *
+     * <p>Reusing an idempotency key returns the original job only when {@code jobType},
+     * {@code payloadReference}, {@code maxAttempts}, and the PostgreSQL-persisted initial
+     * {@code nextAttemptAt} are equal. A different value in any of those fields raises
+     * {@link DurableJobIntentConflictException}. Queue state, attempt count, lease facts, failure
+     * facts, and audit timestamps are mutable lifecycle state and are not part of the intent.</p>
+     */
     UUID enqueue(DurableJobRequest request);
 
     List<LeasedJob> leaseDue(String owner, Instant now, Duration leaseDuration, int limit);
