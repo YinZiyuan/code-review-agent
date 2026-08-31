@@ -1,8 +1,8 @@
-# W4 Sample Distribution
+# W4 样本分布
 
-## Baseline: 20 reverse samples
+## 基线：20 个 reverse 样本
 
-| Category | Difficulty | Count |
+| 类别 | 难度 | 数量 |
 | --- | --- | --- |
 | concurrency | hard | 1 |
 | concurrency | medium | 3 |
@@ -15,17 +15,17 @@
 | test | easy | 2 |
 | test | medium | 1 |
 
-## W4 target
+## W4 扩充目标
 
-The existing set has reasonable category spread but only one hard sample. W4 additions should:
+现有样本的类别覆盖尚可，但只有一个 hard 样本。W4 新增样本需要：
 
-- Add hard cases across concurrency, performance, stability, and security.
-- Add more test-category cases, including at least one hard test-design failure.
-- Add synthetic true-negative and near-miss samples to pressure precision, not only recall.
+- 补充 concurrency、performance、stability 和 security 的 hard 场景。
+- 增加 test 类别，其中至少包含一个较难的测试设计缺陷。
+- 加入 synthetic true negative 和 near miss，不只对 recall 施压，也要检验 precision。
 
-## Final: 40 release samples
+## 最终结果：40 个 release 样本
 
-| Category | Difficulty | Count |
+| 类别 | 难度 | 数量 |
 | --- | --- | --- |
 | concurrency | hard | 4 |
 | concurrency | medium | 4 |
@@ -43,8 +43,10 @@ The existing set has reasonable category spread but only one hard sample. W4 add
 | test | hard | 2 |
 | test | medium | 2 |
 
-The added set includes 10 reverse-style defect-introducing samples and 10 synthetic edge cases:
+新增集合由 10 个 reverse-style 缺陷引入样本和 10 个 synthetic 边界样本组成：
 
-- True negatives: `synthetic-001..003`
-- Near misses: `synthetic-004..006`
-- Line/cross-file tricky cases: `synthetic-007..010`
+- True negative：`synthetic-001..003`
+- Near miss：`synthetic-004..006`
+- 行号、跨文件等复杂场景：`synthetic-007..010`
+
+> 这份分布用于项目内部回归与版本比较。样本全部为手工构造，不代表真实 PR 的自然缺陷分布。

@@ -714,9 +714,9 @@ refactor(tools): RuleCheckerTool uses DiffParser (real line numbers) + StaticAna
    String json = Files.readString(file, UTF_8);
    ```
 
-   - `Files.createDirectories` vs `Files.createDirectory`：后者要求父目录存在 + 当前目录不存在，前者递归创建且幂等 —— **永远用 createDirectories**
+   - `Files.createDirectories` vs `Files.createDirectory`：后者要求父目录存在且当前目录不存在，适合“目录已存在就是错误”的场景；前者递归创建且幂等，更适合缓存目录初始化
    - 全量 write 没有原子保证：写一半进程被杀会留下半截 JSON，下次 `fromJson` 解析失败抛异常。**生产应该写 tmpfile + Files.move(ATOMIC_MOVE)**；W1 不做（启动失败时手删 cache 即可）
-   - 显式 `StandardCharsets.UTF_8`：JSON 里没非 ASCII 字符也加上，**养成习惯**（Windows JVM 默认 GBK）
+   - 显式 `StandardCharsets.UTF_8`：即使 JSON 当前没有非 ASCII 字符也应明确编码，避免依赖不同操作系统和 JDK 版本的默认字符集
 
 5. **`sanitize(key)` —— 防止 key 注入文件系统**
 
@@ -764,7 +764,7 @@ refactor(tools): RuleCheckerTool uses DiffParser (real line numbers) + StaticAna
 
 **Q2**：你的 cache `sanitize(key)` 用白名单替换非法字符 —— 这是不是 over-engineering？
 
-- **A**：**不是**。这是文件路径处理的标准防御。具体威胁：①**目录穿越**：用户 key 包含 `../../etc/passwd`，不 sanitize 直接 `cacheDir.resolve(key)` 就跳出 cacheDir 写到任意路径——`Path.resolve` 不会拦截 `..`。②**文件系统非法字符**：Windows 不允许 `<>:|?*`，Mac/Linux 允许但下次读会失败。③**键映射歧义**：`"foo/bar"` 和 `"foo_bar"` 可能映射到同一文件，cache 混乱。白名单（只保留 alphanumeric + `._-`）覆盖所有威胁，比黑名单**只能想到我已知的攻击向量**更安全。**性能成本**：一次 regex replace，O(n) on key length，几乎为零。**反例**：Snyk 早年统计过，文件路径相关的 CVE 里 60%+ 是 path traversal —— 这是真威胁，不是 over-engineering。
+- **A**：**不是**。这是文件路径处理的标准防御。具体威胁：①**目录穿越**：用户 key 包含足够多的 `../` 时，不 sanitize 直接 `cacheDir.resolve(key)` 可能跳出 cacheDir；`Path.resolve` 只拼接路径，不会自动阻止目录穿越。②**文件系统兼容性**：不同平台对文件名字符的限制不同。③**键映射歧义**：`"foo/bar"` 和 `"foo_bar"` 可能映射到同一文件，cache 混乱。白名单（只保留 alphanumeric + `._-`）比依赖一组不完整的危险字符黑名单更容易审计。**性能成本**：一次 regex replace，O(n) on key length，几乎为零。
 
 **Q3**：你写的 `Files.writeString` 不是原子的，如果 JVM 中途崩了 cache 会损坏。生产里你会怎么改？
 

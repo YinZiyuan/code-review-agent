@@ -695,6 +695,8 @@ KnowledgeBaseIndexer chunks=52      PASS
 - `eval/reports/v2-rag-hybrid.json` 未提交。
 - 原因不是代码没编过，而是正式 eval 运行发现 debug 环境污染、模型输出解析失败、Moonshot 超时，需要清理后重跑。
 
+> **后续状态（W3 回顾）**：以上是 W2 结束时的真实状态。W3 加入 `JsonRepair`、清理 `DEBUG` 并调整超时后，已经补跑并提交 v1/v2 的 20 样本历史报告；它们仍不能与 W4 的 strict 40 样本 release 报告直接横向比较。
+
 ### W3 前最该补的三件事
 
 1. **JSON 稳定性**
