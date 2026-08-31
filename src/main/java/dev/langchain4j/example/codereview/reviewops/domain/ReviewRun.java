@@ -39,6 +39,32 @@ public final class ReviewRun {
         return new ReviewRun(id, revision, configuration, requestedAt);
     }
 
+    public static ReviewRun reconstitute(ReviewRunId id, PullRequestRevision revision,
+                                         ReviewConfigurationSnapshot configuration, Instant requestedAt,
+                                         ReviewRunState state, List<ReviewAttempt> attempts,
+                                         List<ReviewFinding> findings, ReviewFailure finalFailure,
+                                         Instant finishedAt, String checkRunExternalId) {
+        Objects.requireNonNull(state, "state");
+        List<ReviewAttempt> restoredAttempts = List.copyOf(Objects.requireNonNull(attempts, "attempts"));
+        List<ReviewFinding> restoredFindings = List.copyOf(Objects.requireNonNull(findings, "findings"));
+        Map<FindingFingerprint, ReviewFinding> uniqueFindings = uniqueFindings(restoredFindings);
+        validateAttemptSequence(restoredAttempts, Objects.requireNonNull(configuration, "configuration"));
+        validateFindingPublication(restoredFindings, configuration);
+        validateReconstitutedState(state, restoredAttempts, restoredFindings, finalFailure,
+                finishedAt, checkRunExternalId, configuration);
+
+        ReviewRun reviewRun = new ReviewRun(id, revision, configuration, requestedAt);
+        reviewRun.attempts.addAll(restoredAttempts);
+        reviewRun.findings = List.copyOf(uniqueFindings.values());
+        restoredFindings.forEach(finding -> finding.publicationReference().ifPresent(reference ->
+                reviewRun.commentReferences.put(finding.fingerprint(), reference)));
+        reviewRun.state = state;
+        reviewRun.finalFailure = finalFailure;
+        reviewRun.finishedAt = finishedAt;
+        reviewRun.checkRunExternalId = checkRunExternalId;
+        return reviewRun;
+    }
+
     public ReviewAttempt startAttempt(Instant startedAt) {
         requireState(ReviewRunState.REQUESTED);
         ReviewAttempt attempt = ReviewAttempt.start(attempts.size() + 1, startedAt);
@@ -218,6 +244,131 @@ public final class ReviewRun {
         if (finding.publicationDecision().isPresent()) {
             throw new IllegalStateException("decision already assigned");
         }
+    }
+
+    private static void validateAttemptSequence(List<ReviewAttempt> attempts,
+                                                ReviewConfigurationSnapshot configuration) {
+        if (attempts.size() > configuration.maxReviewAttempts()) {
+            throw new IllegalArgumentException("attempt count exceeds configuration maximum");
+        }
+        for (int index = 0; index < attempts.size(); index++) {
+            ReviewAttempt attempt = attempts.get(index);
+            if (attempt.attemptNumber() != index + 1) {
+                throw new IllegalArgumentException("attempt numbers must be consecutive");
+            }
+        }
+    }
+
+    private static void validateFindingPublication(List<ReviewFinding> findings,
+                                                   ReviewConfigurationSnapshot configuration) {
+        findings.forEach(finding -> finding.publicationDecision().ifPresent(decision -> {
+            if (!configuration.policyVersion().equals(decision.policyVersion())) {
+                throw new IllegalArgumentException(
+                        "decision policyVersion must match configuration policyVersion");
+            }
+        }));
+    }
+
+    private static void validateReconstitutedState(ReviewRunState state, List<ReviewAttempt> attempts,
+                                                   List<ReviewFinding> findings, ReviewFailure finalFailure,
+                                                   Instant finishedAt, String checkRunExternalId,
+                                                   ReviewConfigurationSnapshot configuration) {
+        boolean hasFinishedAt = finishedAt != null;
+        boolean hasExternalId = checkRunExternalId != null;
+        boolean hasFinalFailure = finalFailure != null;
+        boolean allFindingsHaveDecisions = findings.stream()
+                .allMatch(finding -> finding.publicationDecision().isPresent());
+        boolean noFindingsHaveDecisions = findings.stream()
+                .noneMatch(finding -> finding.publicationDecision().isPresent());
+        boolean allInlineFindingsHaveReferences = findings.stream()
+                .filter(finding -> finding.publicationDecision()
+                        .map(decision -> decision.tier() == PublicationTier.INLINE_COMMENT)
+                        .orElse(false))
+                .allMatch(finding -> finding.publicationReference().isPresent());
+        boolean noFindingsHaveReferences = findings.stream()
+                .noneMatch(finding -> finding.publicationReference().isPresent());
+        ReviewAttemptState lastAttemptState = attempts.isEmpty()
+                ? null : attempts.get(attempts.size() - 1).state();
+
+        switch (state) {
+            case REQUESTED -> {
+                if ((!attempts.isEmpty() && lastAttemptState != ReviewAttemptState.TRANSIENT_FAILURE)
+                        || attempts.size() >= configuration.maxReviewAttempts() || !findings.isEmpty()
+                        || hasFinalFailure || hasFinishedAt || hasExternalId) {
+                    throw new IllegalArgumentException("requested review has invalid persisted state");
+                }
+            }
+            case RUNNING -> {
+                if (lastAttemptState != ReviewAttemptState.STARTED || !findings.isEmpty()
+                        || hasFinalFailure || hasFinishedAt || hasExternalId) {
+                    throw new IllegalArgumentException("running review must end with a started attempt");
+                }
+            }
+            case COMPLETED -> {
+                if (lastAttemptState != ReviewAttemptState.SUCCEEDED
+                        || (!noFindingsHaveDecisions && !allFindingsHaveDecisions)
+                        || !noFindingsHaveReferences || hasFinalFailure || hasFinishedAt || hasExternalId) {
+                    throw new IllegalArgumentException("completed review has invalid persisted state");
+                }
+            }
+            case PUBLISHING -> {
+                if (lastAttemptState != ReviewAttemptState.SUCCEEDED || !allFindingsHaveDecisions
+                        || !noFindingsHaveReferences || hasFinalFailure || hasFinishedAt || hasExternalId) {
+                    throw new IllegalArgumentException("publishing review has invalid persisted state");
+                }
+            }
+            case PUBLISHED -> {
+                if (lastAttemptState != ReviewAttemptState.SUCCEEDED || !allFindingsHaveDecisions
+                        || !allInlineFindingsHaveReferences || hasFinalFailure || !hasFinishedAt
+                        || checkRunExternalId == null || checkRunExternalId.isBlank()) {
+                    throw new IllegalArgumentException("published review has invalid persisted state");
+                }
+            }
+            case FAILED -> {
+                if (finalFailure == null || finalFailure.classification() != FailureClass.TERMINAL
+                        || !hasFinishedAt || hasExternalId
+                        || !isValidFailedAttemptState(lastAttemptState, attempts.size(),
+                        configuration.maxReviewAttempts(), findings, allFindingsHaveDecisions,
+                        noFindingsHaveReferences)) {
+                    throw new IllegalArgumentException("failed review has invalid persisted state");
+                }
+            }
+            case SUPERSEDED -> {
+                if (!hasFinishedAt || hasFinalFailure || hasExternalId
+                        || !isValidSupersededAttemptState(lastAttemptState, findings,
+                        noFindingsHaveDecisions, allFindingsHaveDecisions, noFindingsHaveReferences)) {
+                    throw new IllegalArgumentException("superseded review has invalid persisted state");
+                }
+            }
+        }
+    }
+
+    private static boolean isValidFailedAttemptState(ReviewAttemptState lastAttemptState, int attemptCount,
+                                                     int maxReviewAttempts,
+                                                     List<ReviewFinding> findings,
+                                                     boolean allFindingsHaveDecisions,
+                                                     boolean noFindingsHaveReferences) {
+        if (lastAttemptState == ReviewAttemptState.TERMINAL_FAILURE) {
+            return findings.isEmpty();
+        }
+        if (lastAttemptState == ReviewAttemptState.TRANSIENT_FAILURE) {
+            return attemptCount == maxReviewAttempts && findings.isEmpty();
+        }
+        return lastAttemptState == ReviewAttemptState.SUCCEEDED && allFindingsHaveDecisions
+                && noFindingsHaveReferences;
+    }
+
+    private static boolean isValidSupersededAttemptState(ReviewAttemptState lastAttemptState,
+                                                         List<ReviewFinding> findings,
+                                                         boolean noFindingsHaveDecisions,
+                                                         boolean allFindingsHaveDecisions,
+                                                         boolean noFindingsHaveReferences) {
+        if (lastAttemptState == null || lastAttemptState == ReviewAttemptState.CANCELLED) {
+            return findings.isEmpty();
+        }
+        return lastAttemptState == ReviewAttemptState.SUCCEEDED
+                && (noFindingsHaveDecisions || allFindingsHaveDecisions)
+                && noFindingsHaveReferences;
     }
 
     private void requireState(ReviewRunState expected) {

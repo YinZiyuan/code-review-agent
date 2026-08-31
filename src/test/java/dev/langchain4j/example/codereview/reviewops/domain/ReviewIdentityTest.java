@@ -25,11 +25,14 @@ class ReviewIdentityTest {
     @Test
     void configurationRequiresTwoRetriesAsThreeTotalAttempts() {
         ReviewConfigurationSnapshot snapshot =
-                new ReviewConfigurationSnapshot("w4-tuned", "moonshot-v1-8k", "publish-v1", 3);
+                new ReviewConfigurationSnapshot(
+                        "w4-tuned", "config-2026-08-31", "moonshot-v1-8k", "publish-v1", 3);
 
+        assertThat(snapshot.configurationVersion()).isEqualTo("config-2026-08-31");
         assertThat(snapshot.maxReviewAttempts()).isEqualTo(3);
         assertThatThrownBy(() ->
-                new ReviewConfigurationSnapshot("w4-tuned", "moonshot-v1-8k", "publish-v1", 0))
+                new ReviewConfigurationSnapshot(
+                        "w4-tuned", "config-2026-08-31", "moonshot-v1-8k", "publish-v1", 0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

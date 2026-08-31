@@ -1,9 +1,14 @@
 package dev.langchain4j.example.codereview.reviewops.domain;
 
 public record ReviewConfigurationSnapshot(
-        String pipelineVersion, String modelName, String policyVersion, int maxReviewAttempts) {
+        String pipelineVersion,
+        String configurationVersion,
+        String modelName,
+        String policyVersion,
+        int maxReviewAttempts) {
     public ReviewConfigurationSnapshot {
         requireText(pipelineVersion, "pipelineVersion");
+        requireText(configurationVersion, "configurationVersion");
         requireText(modelName, "modelName");
         requireText(policyVersion, "policyVersion");
         if (maxReviewAttempts < 1) {

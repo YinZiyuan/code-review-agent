@@ -343,7 +343,8 @@ class ReviewRunTest {
     private static ReviewRun requested(int maxAttempts) {
         return ReviewRun.request(ReviewRunId.newId(),
                 new PullRequestRevision(1, 2, 3, "sha"),
-                new ReviewConfigurationSnapshot("pipeline", "model", "publish-v1", maxAttempts), T0);
+                new ReviewConfigurationSnapshot(
+                        "pipeline", "configuration-v1", "model", "publish-v1", maxAttempts), T0);
     }
 
     private static ReviewRun completed() {
