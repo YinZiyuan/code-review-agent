@@ -13,9 +13,9 @@ public interface DurableJobQueue {
 
     List<LeasedJob> leaseDue(String owner, Instant now, Duration leaseDuration, int limit);
 
-    void markSucceeded(UUID jobId, String owner, Instant now);
+    void markSucceeded(UUID jobId, String owner, int expectedAttempt, Instant now);
 
-    void recordFailure(UUID jobId, String owner, FailureClass failureClass,
+    void recordFailure(UUID jobId, String owner, int expectedAttempt, FailureClass failureClass,
                        Instant nextAttemptAt, Instant now);
 
     int recoverExpiredLeases(Instant now);

@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -24,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -125,24 +127,24 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
 
         try (Connection firstConnection = dataSource.getConnection();
              Connection secondConnection = dataSource.getConnection()) {
-            PostgresDurableJobQueue firstWorker = queueUsing(
+            QueueWorker firstWorker = workerUsing(
                     new SingleConnectionDataSource(firstConnection, true),
                     Clock.fixed(CREATED_AT, ZoneOffset.UTC));
-            PostgresDurableJobQueue secondWorker = queueUsing(
+            QueueWorker secondWorker = workerUsing(
                     new SingleConnectionDataSource(secondConnection, true),
                     Clock.fixed(CREATED_AT, ZoneOffset.UTC));
-            CountDownLatch start = new CountDownLatch(1);
+            CyclicBarrier leaseBarrier = new CyclicBarrier(2);
+            CountDownLatch leasesAcquired = new CountDownLatch(2);
+            CountDownLatch releaseTransactions = new CountDownLatch(1);
             ExecutorService executor = Executors.newFixedThreadPool(2);
             try {
-                Future<List<LeasedJob>> firstLease = executor.submit(() -> {
-                    start.await(5, TimeUnit.SECONDS);
-                    return firstWorker.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 4);
-                });
-                Future<List<LeasedJob>> secondLease = executor.submit(() -> {
-                    start.await(5, TimeUnit.SECONDS);
-                    return secondWorker.leaseDue("worker-b", LEASED_AT, LEASE_DURATION, 4);
-                });
-                start.countDown();
+                Future<List<LeasedJob>> firstLease = executor.submit(() -> leaseWhileHoldingOuterTransaction(
+                        firstWorker, "worker-a", leaseBarrier, leasesAcquired, releaseTransactions));
+                Future<List<LeasedJob>> secondLease = executor.submit(() -> leaseWhileHoldingOuterTransaction(
+                        secondWorker, "worker-b", leaseBarrier, leasesAcquired, releaseTransactions));
+
+                assertThat(leasesAcquired.await(5, TimeUnit.SECONDS)).isTrue();
+                releaseTransactions.countDown();
 
                 Set<UUID> firstIds = ids(firstLease.get(10, TimeUnit.SECONDS));
                 Set<UUID> secondIds = ids(secondLease.get(10, TimeUnit.SECONDS));
@@ -152,7 +154,9 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 allIds.addAll(secondIds);
                 assertThat(allIds).hasSize(6);
             } finally {
+                releaseTransactions.countDown();
                 executor.shutdownNow();
+                assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
             }
         }
     }
@@ -214,14 +218,16 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 UUID.fromString("00000000-0000-0000-0000-000000000020"),
                 3,
                 DUE_AT));
-        queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
+        LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
 
-        assertThatThrownBy(() -> queue.markSucceeded(jobId, "worker-b", LEASED_AT.plusSeconds(1)))
+        assertThatThrownBy(() -> queue.markSucceeded(
+                jobId, "worker-b", lease.attemptCount(), LEASED_AT.plusSeconds(1)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(jobId.toString());
         assertThatThrownBy(() -> queue.recordFailure(
                 jobId,
                 "worker-b",
+                lease.attemptCount(),
                 FailureClass.TRANSIENT,
                 LEASED_AT.plusSeconds(30),
                 LEASED_AT.plusSeconds(1)))
@@ -231,7 +237,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("state", "LEASED")
                 .containsEntry("lease_owner", "worker-a");
 
-        queue.markSucceeded(jobId, "worker-a", LEASED_AT.plusSeconds(2));
+        queue.markSucceeded(jobId, "worker-a", lease.attemptCount(), LEASED_AT.plusSeconds(2));
 
         assertThat(jobRow(jobId))
                 .containsEntry("state", "SUCCEEDED")
@@ -247,10 +253,11 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 UUID.fromString("00000000-0000-0000-0000-000000000021"),
                 2,
                 DUE_AT));
-        queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
+        LeasedJob firstLease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
         Instant retryAt = LEASED_AT.plusSeconds(30);
 
-        queue.recordFailure(jobId, "worker-a", FailureClass.TRANSIENT, retryAt, LEASED_AT.plusSeconds(1));
+        queue.recordFailure(jobId, "worker-a", firstLease.attemptCount(), FailureClass.TRANSIENT,
+                retryAt, LEASED_AT.plusSeconds(1));
 
         assertThat(jobRow(jobId))
                 .containsEntry("state", "READY")
@@ -260,8 +267,8 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("lease_expires_at", null);
         assertThat(((Timestamp) jobRow(jobId).get("next_attempt_at")).toInstant()).isEqualTo(retryAt);
 
-        queue.leaseDue("worker-b", retryAt, LEASE_DURATION, 1);
-        queue.recordFailure(jobId, "worker-b", FailureClass.TRANSIENT,
+        LeasedJob secondLease = queue.leaseDue("worker-b", retryAt, LEASE_DURATION, 1).get(0);
+        queue.recordFailure(jobId, "worker-b", secondLease.attemptCount(), FailureClass.TRANSIENT,
                 retryAt.plusSeconds(30), retryAt.plusSeconds(1));
 
         assertThat(jobRow(jobId))
@@ -280,9 +287,9 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 UUID.fromString("00000000-0000-0000-0000-000000000022"),
                 5,
                 DUE_AT));
-        queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
+        LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
 
-        queue.recordFailure(jobId, "worker-a", FailureClass.TERMINAL,
+        queue.recordFailure(jobId, "worker-a", lease.attemptCount(), FailureClass.TERMINAL,
                 LEASED_AT.plusSeconds(30), LEASED_AT.plusSeconds(1));
 
         assertThat(jobRow(jobId))
@@ -291,6 +298,109 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("last_failure_class", "TERMINAL")
                 .containsEntry("lease_owner", null)
                 .containsEntry("lease_expires_at", null);
+    }
+
+    @Test
+    void expiredLeaseCannotBeCompletedByItsFormerOwner() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "expired-completion",
+                UUID.fromString("00000000-0000-0000-0000-000000000029"),
+                3,
+                DUE_AT));
+        LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+
+        assertThatThrownBy(() -> queue.markSucceeded(
+                jobId, "worker-a", lease.attemptCount(), lease.leaseExpiresAt()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(jobId.toString());
+        assertThat(jobRow(jobId))
+                .containsEntry("state", "LEASED")
+                .containsEntry("attempt_count", lease.attemptCount());
+    }
+
+    @Test
+    void expiredLeaseCannotRecordFailureForItsFormerOwner() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "expired-failure",
+                UUID.fromString("00000000-0000-0000-0000-000000000030"),
+                3,
+                DUE_AT));
+        LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+
+        assertThatThrownBy(() -> queue.recordFailure(
+                jobId,
+                "worker-a",
+                lease.attemptCount(),
+                FailureClass.TRANSIENT,
+                lease.leaseExpiresAt().plusSeconds(30),
+                lease.leaseExpiresAt()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(jobId.toString());
+        assertThat(jobRow(jobId))
+                .containsEntry("state", "LEASED")
+                .containsEntry("attempt_count", lease.attemptCount());
+    }
+
+    @Test
+    void sameOwnerCannotCompleteAReLeasedJobWithThePreviousAttemptToken() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "stale-completion-token",
+                UUID.fromString("00000000-0000-0000-0000-000000000031"),
+                3,
+                DUE_AT));
+        LeasedJob firstLease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        queue.recoverExpiredLeases(firstLease.leaseExpiresAt());
+        LeasedJob secondLease = queue.leaseDue(
+                "worker-a", firstLease.leaseExpiresAt(), LEASE_DURATION, 1).get(0);
+        Instant completedAt = firstLease.leaseExpiresAt().plusSeconds(1);
+
+        assertThatThrownBy(() -> queue.markSucceeded(
+                jobId, "worker-a", firstLease.attemptCount(), completedAt))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(jobId.toString());
+
+        queue.markSucceeded(jobId, "worker-a", secondLease.attemptCount(), completedAt);
+
+        assertThat(jobRow(jobId))
+                .containsEntry("state", "SUCCEEDED")
+                .containsEntry("attempt_count", secondLease.attemptCount());
+    }
+
+    @Test
+    void sameOwnerCannotFailAReLeasedJobWithThePreviousAttemptToken() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "stale-failure-token",
+                UUID.fromString("00000000-0000-0000-0000-000000000032"),
+                3,
+                DUE_AT));
+        LeasedJob firstLease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        queue.recoverExpiredLeases(firstLease.leaseExpiresAt());
+        LeasedJob secondLease = queue.leaseDue(
+                "worker-a", firstLease.leaseExpiresAt(), LEASE_DURATION, 1).get(0);
+        Instant failedAt = firstLease.leaseExpiresAt().plusSeconds(1);
+        Instant retryAt = failedAt.plusSeconds(30);
+
+        assertThatThrownBy(() -> queue.recordFailure(
+                jobId,
+                "worker-a",
+                firstLease.attemptCount(),
+                FailureClass.TRANSIENT,
+                retryAt,
+                failedAt))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(jobId.toString());
+
+        queue.recordFailure(jobId, "worker-a", secondLease.attemptCount(), FailureClass.TRANSIENT,
+                retryAt, failedAt);
+
+        assertThat(jobRow(jobId))
+                .containsEntry("state", "READY")
+                .containsEntry("attempt_count", secondLease.attemptCount())
+                .containsEntry("last_failure_class", "TRANSIENT");
     }
 
     @Test
@@ -312,6 +422,46 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("lease_owner", null)
                 .containsEntry("lease_expires_at", null);
         assertThat(queue.recoverExpiredLeases(LEASED_AT.plus(LEASE_DURATION))).isZero();
+    }
+
+    @Test
+    void expiredLeaseAtTheAttemptLimitBecomesDeadAndCannotBeLeasedAgain() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "expired-attempt-limit",
+                UUID.fromString("00000000-0000-0000-0000-000000000027"),
+                1,
+                DUE_AT));
+        queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
+        Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
+
+        int recovered = queue.recoverExpiredLeases(expiredAt);
+
+        assertThat(recovered).isEqualTo(1);
+        assertThat(jobRow(jobId))
+                .containsEntry("state", "DEAD")
+                .containsEntry("attempt_count", 1)
+                .containsEntry("lease_owner", null)
+                .containsEntry("lease_expires_at", null);
+        assertThat(queue.leaseDue("worker-b", expiredAt, LEASE_DURATION, 1)).isEmpty();
+    }
+
+    @Test
+    void doesNotLeaseAReadyJobWhoseAttemptBudgetIsAlreadyExhausted() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "defensive-attempt-limit",
+                UUID.fromString("00000000-0000-0000-0000-000000000028"),
+                1,
+                DUE_AT));
+        jdbcTemplate.update(
+                "UPDATE durable_jobs SET attempt_count = max_attempts WHERE id = ?",
+                jobId);
+
+        assertThat(queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1)).isEmpty();
+        assertThat(jobRow(jobId))
+                .containsEntry("state", "READY")
+                .containsEntry("attempt_count", 1);
     }
 
     @Test
@@ -375,6 +525,53 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 clock);
     }
 
+    private QueueWorker workerUsing(javax.sql.DataSource queueDataSource, Clock clock) {
+        JdbcTemplate template = new JdbcTemplate(queueDataSource);
+        TransactionTemplate transactions = new TransactionTemplate(
+                new DataSourceTransactionManager(queueDataSource));
+        return new QueueWorker(new PostgresDurableJobQueue(template, transactions, clock), transactions);
+    }
+
+    private List<LeasedJob> leaseWhileHoldingOuterTransaction(
+            QueueWorker worker,
+            String owner,
+            CyclicBarrier leaseBarrier,
+            CountDownLatch leasesAcquired,
+            CountDownLatch releaseTransactions) {
+        List<LeasedJob> leased = worker.transactions().execute(status -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            await(leaseBarrier);
+            List<LeasedJob> jobs = worker.queue().leaseDue(owner, LEASED_AT, LEASE_DURATION, 4);
+            leasesAcquired.countDown();
+            await(releaseTransactions);
+            return jobs;
+        });
+        assertThat(leased).isNotNull();
+        return leased;
+    }
+
+    private void await(CyclicBarrier barrier) {
+        try {
+            barrier.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while waiting for lease barrier", exception);
+        } catch (Exception exception) {
+            throw new IllegalStateException("lease barrier failed", exception);
+        }
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("timed out waiting for transaction release");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while waiting for transaction release", exception);
+        }
+    }
+
     private Map<String, Object> jobRow(UUID jobId) {
         return jdbcTemplate.queryForMap("""
                 SELECT state, attempt_count, lease_owner, lease_expires_at,
@@ -388,5 +585,8 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
         Set<UUID> ids = new HashSet<>();
         jobs.forEach(job -> ids.add(job.id()));
         return ids;
+    }
+
+    private record QueueWorker(PostgresDurableJobQueue queue, TransactionTemplate transactions) {
     }
 }

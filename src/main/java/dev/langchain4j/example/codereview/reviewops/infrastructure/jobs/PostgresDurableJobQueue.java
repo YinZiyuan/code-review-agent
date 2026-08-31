@@ -24,6 +24,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                 SELECT id
                 FROM durable_jobs
                 WHERE state = 'READY' AND next_attempt_at <= ?
+                  AND attempt_count < max_attempts
                 ORDER BY next_attempt_at, created_at, id
                 FOR UPDATE SKIP LOCKED
                 LIMIT ?
@@ -97,7 +98,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     }
 
     @Override
-    public void markSucceeded(UUID jobId, String owner, Instant now) {
+    public void markSucceeded(UUID jobId, String owner, int expectedAttempt, Instant now) {
         Objects.requireNonNull(jobId, "jobId");
         owner = requireNonBlank(owner, "owner");
         Objects.requireNonNull(now, "now");
@@ -105,13 +106,14 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                         UPDATE durable_jobs
                         SET state = 'SUCCEEDED', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+                          AND attempt_count = ? AND lease_expires_at > ?
                         """,
-                timestamp(now), jobId, owner);
-        requireOwnedLease(updated, jobId, owner);
+                timestamp(now), jobId, owner, expectedAttempt, timestamp(now));
+        requireCurrentLease(updated, jobId, owner, expectedAttempt);
     }
 
     @Override
-    public void recordFailure(UUID jobId, String owner, FailureClass failureClass,
+    public void recordFailure(UUID jobId, String owner, int expectedAttempt, FailureClass failureClass,
                               Instant nextAttemptAt, Instant now) {
         Objects.requireNonNull(jobId, "jobId");
         owner = requireNonBlank(owner, "owner");
@@ -130,14 +132,17 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                             last_failure_class = ?,
                             updated_at = ?
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+                          AND attempt_count = ? AND lease_expires_at > ?
                         """,
                 failureClass.name(),
                 timestamp(nextAttemptAt),
                 failureClass.name(),
                 timestamp(now),
                 jobId,
-                owner);
-        requireOwnedLease(updated, jobId, owner);
+                owner,
+                expectedAttempt,
+                timestamp(now));
+        requireCurrentLease(updated, jobId, owner, expectedAttempt);
     }
 
     @Override
@@ -145,7 +150,13 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         Objects.requireNonNull(now, "now");
         return jdbcTemplate.update("""
                         UPDATE durable_jobs
-                        SET state = 'READY', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+                        SET state = CASE
+                                WHEN attempt_count >= max_attempts THEN 'DEAD'
+                                ELSE 'READY'
+                            END,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            updated_at = ?
                         WHERE state = 'LEASED' AND lease_expires_at <= ?
                         """,
                 timestamp(now), timestamp(now));
@@ -161,9 +172,11 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                 resultSet.getTimestamp("lease_expires_at").toInstant());
     }
 
-    private static void requireOwnedLease(int updated, UUID jobId, String owner) {
+    private static void requireCurrentLease(int updated, UUID jobId, String owner, int expectedAttempt) {
         if (updated == 0) {
-            throw new IllegalStateException("Job " + jobId + " is not leased by owner " + owner);
+            throw new IllegalStateException(
+                    "Job " + jobId + " has no current lease for owner " + owner
+                            + " at attempt " + expectedAttempt);
         }
     }
 
