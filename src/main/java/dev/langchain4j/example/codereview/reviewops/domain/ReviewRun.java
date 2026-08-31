@@ -256,6 +256,9 @@ public final class ReviewRun {
             if (attempt.attemptNumber() != index + 1) {
                 throw new IllegalArgumentException("attempt numbers must be consecutive");
             }
+            if (index < attempts.size() - 1 && attempt.state() != ReviewAttemptState.TRANSIENT_FAILURE) {
+                throw new IllegalArgumentException("earlier attempts must be transient failures");
+            }
         }
     }
 

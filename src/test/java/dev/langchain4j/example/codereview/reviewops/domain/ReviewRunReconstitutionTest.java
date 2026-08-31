@@ -72,6 +72,19 @@ class ReviewRunReconstitutionTest {
     }
 
     @Test
+    void rejectsRunningReviewWhenEarlierAttemptIsStillStarted() {
+        ReviewAttempt firstAttempt = ReviewAttempt.reconstitute(
+                1, REQUESTED_AT, ReviewAttemptState.STARTED, null, null, null);
+        ReviewAttempt secondAttempt = ReviewAttempt.reconstitute(
+                2, REQUESTED_AT.plusSeconds(1), ReviewAttemptState.STARTED, null, null, null);
+
+        assertThatThrownBy(() -> ReviewRun.reconstitute(
+                ReviewRunId.newId(), new PullRequestRevision(17, 29, 41, "head-sha"), configuration(),
+                REQUESTED_AT, ReviewRunState.RUNNING, List.of(firstAttempt, secondAttempt), List.of(),
+                null, null, null)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void rejectsPublishedReviewWithoutFinishedAt() {
         ReviewAttempt successfulAttempt = ReviewAttempt.reconstitute(
                 1, REQUESTED_AT, ReviewAttemptState.SUCCEEDED, COMPLETED_AT, MEASUREMENTS, null);
