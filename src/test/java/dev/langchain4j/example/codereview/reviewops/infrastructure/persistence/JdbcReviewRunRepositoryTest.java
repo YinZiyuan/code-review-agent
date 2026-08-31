@@ -28,14 +28,23 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.sql.DataSource;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -178,6 +187,53 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void findNeverReturnsAMixedVersionWhenAnUpdateRunsAfterTheRootSelect() throws Exception {
+        ReviewRun running = runningRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000010")));
+        repository.insert(running);
+        ReviewRun writerCopy = repository.find(running.id()).orElseThrow().reviewRun();
+        writerCopy.completeReview(findings(), successfulMeasurements(), COMPLETED_AT);
+        writerCopy.acceptPublicationDecisions(publicationDecisions());
+
+        CountDownLatch rootSelected = new CountDownLatch(1);
+        CountDownLatch continueChildReads = new CountDownLatch(1);
+        JdbcReviewRunRepository pausingReader = new JdbcReviewRunRepository(
+                new RootPausingJdbcTemplate(dataSource, rootSelected, continueChildReads),
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+                new JsonColumnCodec(new ObjectMapper()));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Outcome<ReviewRunRepository.StoredReviewRun>> reader = executor.submit(
+                    () -> capture(() -> pausingReader.find(running.id()).orElseThrow()));
+            assertThat(rootSelected.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<Outcome<Long>> writer = executor.submit(() -> capture(() ->
+                    transactionTemplate.execute(status -> {
+                        jdbcTemplate.execute("SET LOCAL lock_timeout = '500ms'");
+                        return repository.update(writerCopy, 0);
+                    })));
+            Outcome<Long> writerOutcome = writer.get(5, TimeUnit.SECONDS);
+            continueChildReads.countDown();
+            Outcome<ReviewRunRepository.StoredReviewRun> readerOutcome = reader.get(5, TimeUnit.SECONDS);
+
+            assertThat(readerOutcome.failure()).isNull();
+            assertThat(readerOutcome.value().version()).isZero();
+            assertThat(readerOutcome.value().reviewRun().state()).isEqualTo(ReviewRunState.RUNNING);
+            assertThat(readerOutcome.value().reviewRun().findings()).isEmpty();
+            assertThat(writerOutcome.value()).isNull();
+            assertThat(writerOutcome.failure()).isInstanceOf(DataAccessException.class);
+
+            assertThat(repository.update(writerCopy, 0)).isEqualTo(1);
+            assertThat(repository.find(running.id()).orElseThrow().reviewRun().state())
+                    .isEqualTo(ReviewRunState.COMPLETED);
+        } finally {
+            continueChildReads.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
     void joinsAnExistingRequiredTransaction() {
         ReviewRun requested = requestedRun(new ReviewRunId(
                 UUID.fromString("00000000-0000-0000-0000-000000000009")));
@@ -197,6 +253,112 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
         assertThatThrownBy(() -> codec.decodeToolStates("not-json"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasCauseInstanceOf(JsonProcessingException.class);
+    }
+
+    @Test
+    void jsonCodecRejectsLiteralNullAndNonObjectToolStates() {
+        JsonColumnCodec codec = new JsonColumnCodec(new ObjectMapper());
+
+        assertThatThrownBy(() -> codec.decodeToolStates("null"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("tool states");
+        assertThatThrownBy(() -> codec.decodeToolStates("[]"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasCauseInstanceOf(JsonProcessingException.class);
+    }
+
+    @Test
+    void jsonCodecRejectsLiteralNullAndNonArrayCitations() {
+        JsonColumnCodec codec = new JsonColumnCodec(new ObjectMapper());
+
+        assertThatThrownBy(() -> codec.decodeCitations("null"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("citations");
+        assertThatThrownBy(() -> codec.decodeCitations("{}"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasCauseInstanceOf(JsonProcessingException.class);
+    }
+
+    @Test
+    void legacyPartialRootFailureCannotBeSilentlyCollapsed() {
+        ReviewRun requested = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000011")));
+        repository.insert(requested);
+
+        assertLegacyCorruptionFails(
+                requested.id(),
+                "review_runs",
+                "ck_review_runs_failure_group",
+                "UPDATE review_runs SET failure_class = 'TERMINAL' WHERE id = ?",
+                "root failure");
+    }
+
+    @Test
+    void legacyPartialAttemptMeasurementsCannotBecomeZeroOrNullFacts() {
+        ReviewRun running = runningRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000012")));
+        repository.insert(running);
+
+        assertLegacyCorruptionFails(
+                running.id(),
+                "review_attempts",
+                "ck_review_attempts_measurements_group",
+                """
+                        UPDATE review_attempts SET latency_ms = 17
+                        WHERE review_run_id = ? AND attempt_number = 2
+                        """,
+                "attempt measurements");
+    }
+
+    @Test
+    void legacyPartialAttemptFailureCannotBeSilentlyCollapsed() {
+        ReviewRun running = runningRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000013")));
+        repository.insert(running);
+
+        assertLegacyCorruptionFails(
+                running.id(),
+                "review_attempts",
+                "ck_review_attempts_failure_group",
+                """
+                        UPDATE review_attempts SET failure_class = 'TRANSIENT'
+                        WHERE review_run_id = ? AND attempt_number = 2
+                        """,
+                "attempt failure");
+    }
+
+    @Test
+    void legacyPartialPublicationDecisionCannotBeSilentlyCollapsed() {
+        ReviewRun completed = completedRunWithoutDecisions(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000014")));
+        repository.insert(completed);
+
+        assertLegacyCorruptionFails(
+                completed.id(),
+                "review_findings",
+                "ck_review_findings_publication_decision_group",
+                """
+                        UPDATE review_findings SET publication_policy_version = 'policy-v5'
+                        WHERE review_run_id = ?
+                        """,
+                "publication decision");
+    }
+
+    @Test
+    void legacyPartialPublicationReferenceCannotBeSilentlyCollapsed() {
+        ReviewRun completed = completedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000015")));
+        repository.insert(completed);
+
+        assertLegacyCorruptionFails(
+                completed.id(),
+                "review_findings",
+                "ck_review_findings_publication_reference_group",
+                """
+                        UPDATE review_findings SET artifact_external_id = 'comment-1'
+                        WHERE review_run_id = ?
+                        """,
+                "publication reference");
     }
 
     private static ReviewRun requestedRun(ReviewRunId id) {
@@ -219,9 +381,14 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
     }
 
     private static ReviewRun completedRun(ReviewRunId id) {
+        ReviewRun run = completedRunWithoutDecisions(id);
+        run.acceptPublicationDecisions(publicationDecisions());
+        return run;
+    }
+
+    private static ReviewRun completedRunWithoutDecisions(ReviewRunId id) {
         ReviewRun run = runningRun(id);
         run.completeReview(findings(), successfulMeasurements(), COMPLETED_AT);
-        run.acceptPublicationDecisions(publicationDecisions());
         run.drainEvents();
         return run;
     }
@@ -274,5 +441,62 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
         assertThat(actual.finalFailure()).isEqualTo(expected.finalFailure());
         assertThat(actual.finishedAt()).isEqualTo(expected.finishedAt());
         assertThat(actual.drainEvents()).isEmpty();
+    }
+
+    private static <T> Outcome<T> capture(Callable<T> operation) {
+        try {
+            return new Outcome<>(operation.call(), null);
+        } catch (Throwable failure) {
+            return new Outcome<>(null, failure);
+        }
+    }
+
+    private record Outcome<T>(T value, Throwable failure) {
+    }
+
+    private void assertLegacyCorruptionFails(ReviewRunId id, String tableName,
+                                             String constraintName, String corruptSql,
+                                             String expectedGroupName) {
+        transactionTemplate.executeWithoutResult(status -> {
+            jdbcTemplate.execute("ALTER TABLE " + tableName
+                    + " DROP CONSTRAINT IF EXISTS " + constraintName);
+            jdbcTemplate.update(corruptSql, id.value());
+
+            assertThatThrownBy(() -> repository.find(id))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining(expectedGroupName);
+
+            status.setRollbackOnly();
+        });
+    }
+
+    private static final class RootPausingJdbcTemplate extends JdbcTemplate {
+
+        private final CountDownLatch rootSelected;
+        private final CountDownLatch continueChildReads;
+
+        private RootPausingJdbcTemplate(DataSource dataSource, CountDownLatch rootSelected,
+                                        CountDownLatch continueChildReads) {
+            super(dataSource);
+            this.rootSelected = rootSelected;
+            this.continueChildReads = continueChildReads;
+        }
+
+        @Override
+        public <T> List<T> query(String sql, RowMapper<T> rowMapper, Object... args) {
+            List<T> rows = super.query(sql, rowMapper, args);
+            if (sql.contains("FROM review_runs")) {
+                rootSelected.countDown();
+                try {
+                    if (!continueChildReads.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("timed out waiting to continue child reads");
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("interrupted while pausing child reads", exception);
+                }
+            }
+            return rows;
+        }
     }
 }

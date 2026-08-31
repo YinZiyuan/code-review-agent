@@ -27,7 +27,7 @@ public final class JsonColumnCodec {
     }
 
     Map<String, String> decodeToolStates(String persistedJson) {
-        return decode(persistedJson, TOOL_STATES_TYPE);
+        return decode(persistedJson, TOOL_STATES_TYPE, "tool states");
     }
 
     String encodeCitations(List<CitationEvidence> citations) {
@@ -35,7 +35,7 @@ public final class JsonColumnCodec {
     }
 
     List<CitationEvidence> decodeCitations(String persistedJson) {
-        return decode(persistedJson, CITATIONS_TYPE);
+        return decode(persistedJson, CITATIONS_TYPE, "citations");
     }
 
     private String encode(Object value) {
@@ -46,10 +46,15 @@ public final class JsonColumnCodec {
         }
     }
 
-    private <T> T decode(String persistedJson, TypeReference<T> type) {
+    private <T> T decode(String persistedJson, TypeReference<T> type, String valueName) {
         try {
-            return objectMapper.readValue(
+            T decoded = objectMapper.readValue(
                     Objects.requireNonNull(persistedJson, "persistedJson"), type);
+            if (decoded == null) {
+                throw new IllegalStateException(
+                        "Persisted " + valueName + " JSON must not be literal null");
+            }
+            return decoded;
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Malformed persisted JSON column", exception);
         }

@@ -49,6 +49,7 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                    failure_code, failure_class, failure_safe_message, finished_at, version
             FROM review_runs
             WHERE id = ?
+            FOR SHARE
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -65,6 +66,12 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
     @Override
     public Optional<StoredReviewRun> find(ReviewRunId id) {
         Objects.requireNonNull(id, "id");
+        return Objects.requireNonNull(
+                transactions.execute(status -> findConsistentSnapshot(id)),
+                "transaction result");
+    }
+
+    private Optional<StoredReviewRun> findConsistentSnapshot(ReviewRunId id) {
         List<PersistedRoot> roots = jdbcTemplate.query(
                 SELECT_ROOT, (resultSet, rowNumber) -> mapRoot(resultSet), id.value());
         if (roots.isEmpty()) {
@@ -238,18 +245,23 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
 
     private ReviewAttempt mapAttempt(ResultSet resultSet) throws SQLException {
         Long latencyMs = nullableLong(resultSet, "latency_ms");
+        Integer inputTokens = nullableInteger(resultSet, "input_tokens");
+        Integer outputTokens = nullableInteger(resultSet, "output_tokens");
+        String toolStates = resultSet.getString("tool_states");
+        requireAllNullOrAllPresent(
+                "attempt measurements", latencyMs, inputTokens, outputTokens, toolStates);
         ExecutionMeasurements measurements = latencyMs == null ? null : new ExecutionMeasurements(
                 latencyMs,
-                resultSet.getInt("input_tokens"),
-                resultSet.getInt("output_tokens"),
-                jsonCodec.decodeToolStates(resultSet.getString("tool_states")));
+                inputTokens,
+                outputTokens,
+                jsonCodec.decodeToolStates(toolStates));
         return ReviewAttempt.reconstitute(
                 resultSet.getInt("attempt_number"),
                 instant(resultSet, "started_at"),
                 ReviewAttemptState.valueOf(resultSet.getString("state")),
                 nullableInstant(resultSet, "ended_at"),
                 measurements,
-                failure(resultSet));
+                failure(resultSet, "attempt failure"));
     }
 
     private List<ReviewFinding> loadFindings(ReviewRunId id) {
@@ -267,12 +279,18 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
 
     private ReviewFinding mapFinding(ResultSet resultSet) throws SQLException {
         String publicationTier = resultSet.getString("publication_tier");
+        String publicationPolicyVersion = resultSet.getString("publication_policy_version");
+        requireAllNullOrAllPresent(
+                "publication decision", publicationTier, publicationPolicyVersion);
         PublicationDecision decision = publicationTier == null ? null : new PublicationDecision(
                 PublicationTier.valueOf(publicationTier),
-                resultSet.getString("publication_policy_version"));
+                publicationPolicyVersion);
         String artifactType = resultSet.getString("artifact_type");
+        String artifactExternalId = resultSet.getString("artifact_external_id");
+        requireAllNullOrAllPresent(
+                "publication reference", artifactType, artifactExternalId);
         PublicationReference reference = artifactType == null ? null : new PublicationReference(
-                artifactType, resultSet.getString("artifact_external_id"));
+                artifactType, artifactExternalId);
         List<CitationEvidence> citations = jsonCodec.decodeCitations(resultSet.getString("citations"));
         return ReviewFinding.reconstitute(
                 new FindingFingerprint(resultSet.getString("fingerprint")),
@@ -309,22 +327,44 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                 instant(resultSet, "requested_at"),
                 ReviewRunState.valueOf(resultSet.getString("state")),
                 resultSet.getString("check_run_external_id"),
-                failure(resultSet),
+                failure(resultSet, "root failure"),
                 nullableInstant(resultSet, "finished_at"),
                 resultSet.getLong("version"));
     }
 
-    private static ReviewFailure failure(ResultSet resultSet) throws SQLException {
+    private static ReviewFailure failure(ResultSet resultSet, String groupName) throws SQLException {
         String failureCode = resultSet.getString("failure_code");
+        String failureClass = resultSet.getString("failure_class");
+        String failureSafeMessage = resultSet.getString("failure_safe_message");
+        requireAllNullOrAllPresent(
+                groupName, failureCode, failureClass, failureSafeMessage);
         return failureCode == null ? null : new ReviewFailure(
                 failureCode,
-                FailureClass.valueOf(resultSet.getString("failure_class")),
-                resultSet.getString("failure_safe_message"));
+                FailureClass.valueOf(failureClass),
+                failureSafeMessage);
     }
 
     private static Long nullableLong(ResultSet resultSet, String column) throws SQLException {
         long value = resultSet.getLong(column);
         return resultSet.wasNull() ? null : value;
+    }
+
+    private static Integer nullableInteger(ResultSet resultSet, String column) throws SQLException {
+        int value = resultSet.getInt(column);
+        return resultSet.wasNull() ? null : value;
+    }
+
+    private static void requireAllNullOrAllPresent(String groupName, Object... values) {
+        int nullValues = 0;
+        for (Object value : values) {
+            if (value == null) {
+                nullValues++;
+            }
+        }
+        if (nullValues != 0 && nullValues != values.length) {
+            throw new IllegalStateException(
+                    "Persisted " + groupName + " must be entirely absent or entirely present");
+        }
     }
 
     private static Instant instant(ResultSet resultSet, String column) throws SQLException {

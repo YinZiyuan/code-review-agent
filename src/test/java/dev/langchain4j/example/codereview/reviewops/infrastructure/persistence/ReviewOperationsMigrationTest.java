@@ -1,6 +1,9 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -15,13 +18,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
+
+    private JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void clearReviewRuns() {
+        jdbcTemplate = new JdbcTemplate(dataSource);
+        jdbcTemplate.execute("TRUNCATE TABLE review_runs CASCADE");
+    }
 
     @Test
     void migratesTheReviewOperationsSchemaWithItsBusinessKeysAndDeliveryIndexes() throws SQLException {
@@ -53,6 +66,225 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     @Test
     void rerunningFlywayOnTheMigratedDatabaseExecutesNoMigrations() {
         assertThat(flyway.migrate().migrationsExecuted).isZero();
+    }
+
+    @Test
+    void rejectsPartialRootFailureThatWouldOtherwiseBeLostOnLoad() {
+        UUID runId = insertRoot();
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE review_runs SET failure_class = 'TERMINAL' WHERE id = ?", runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsPartialAttemptMeasurementsThatWouldOtherwiseBecomeZeroOrNull() {
+        UUID runId = insertRoot();
+        insertStartedAttempt(runId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE review_attempts SET latency_ms = 17 WHERE review_run_id = ?", runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsPartialAttemptFailureThatWouldOtherwiseBeLostOnLoad() {
+        UUID runId = insertRoot();
+        insertStartedAttempt(runId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE review_attempts SET failure_class = 'TRANSIENT' WHERE review_run_id = ?", runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsPartialFindingPublicationDecisionThatWouldOtherwiseBeLostOnLoad() {
+        UUID runId = insertRoot();
+        insertFinding(runId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_findings
+                        SET publication_policy_version = 'policy-v5'
+                        WHERE review_run_id = ?
+                        """, runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsPartialFindingPublicationReferenceThatWouldOtherwiseBeLostOnLoad() {
+        UUID runId = insertRoot();
+        insertFinding(runId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_findings
+                        SET artifact_external_id = 'comment-1'
+                        WHERE review_run_id = ?
+                        """, runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsPublicationReferenceForANonInlineDecision() {
+        UUID runId = insertRoot();
+        insertFinding(runId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_findings
+                        SET publication_tier = 'CHECK_SUMMARY', publication_policy_version = 'policy-v5',
+                            artifact_type = 'REVIEW_COMMENT', artifact_external_id = 'comment-1'
+                        WHERE review_run_id = ?
+                        """, runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsArrayAndJsonNullToolStates() {
+        UUID arrayRunId = insertRoot();
+        UUID nullRunId = insertRoot();
+        insertStartedAttempt(arrayRunId);
+        insertStartedAttempt(nullRunId);
+
+        assertThatThrownBy(() -> setMeasurements(arrayRunId, "[]"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> setMeasurements(nullRunId, "null"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsObjectAndJsonNullCitations() {
+        UUID objectRunId = insertRoot();
+        UUID nullRunId = insertRoot();
+        insertFinding(objectRunId);
+        insertFinding(nullRunId);
+
+        assertThatThrownBy(() -> setCitations(objectRunId, "{}"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> setCitations(nullRunId, "null"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsBlankValuesInsidePresentNullableGroups() {
+        UUID rootFailureRunId = insertRoot();
+        UUID attemptFailureRunId = insertRoot();
+        UUID findingRunId = insertRoot();
+        insertStartedAttempt(attemptFailureRunId);
+        insertFinding(findingRunId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_runs
+                        SET failure_code = '', failure_class = 'TERMINAL', failure_safe_message = 'safe'
+                        WHERE id = ?
+                        """, rootFailureRunId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_attempts
+                        SET failure_code = 'CODE', failure_class = 'TRANSIENT', failure_safe_message = '  '
+                        WHERE review_run_id = ?
+                        """, attemptFailureRunId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_findings
+                        SET publication_tier = 'INLINE_COMMENT', publication_policy_version = ' ',
+                            artifact_type = 'REVIEW_COMMENT', artifact_external_id = ' '
+                        WHERE review_run_id = ?
+                        """, findingRunId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsCompleteRootFailureOutsideTheFailedState() {
+        UUID runId = insertRoot();
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_runs
+                        SET failure_code = 'CODE', failure_class = 'TERMINAL', failure_safe_message = 'safe'
+                        WHERE id = ?
+                        """, runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsCompleteMeasurementsForAStartedAttempt() {
+        UUID runId = insertRoot();
+        insertStartedAttempt(runId);
+
+        assertThatThrownBy(() -> setMeasurements(runId, "{}"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsCompleteFailureForAStartedAttempt() {
+        UUID runId = insertRoot();
+        insertStartedAttempt(runId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_attempts
+                        SET failure_code = 'CODE', failure_class = 'TRANSIENT', failure_safe_message = 'safe'
+                        WHERE review_run_id = ?
+                        """, runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsFailureClassThatDisagreesWithTheAttemptState() {
+        UUID runId = insertRoot();
+        insertStartedAttempt(runId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                        UPDATE review_attempts
+                        SET state = 'TRANSIENT_FAILURE', ended_at = now(),
+                            latency_ms = 17, input_tokens = 2, output_tokens = 3, tool_states = '{}'::jsonb,
+                            failure_code = 'CODE', failure_class = 'TERMINAL', failure_safe_message = 'safe'
+                        WHERE review_run_id = ?
+                        """, runId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private UUID insertRoot() {
+        UUID runId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                        INSERT INTO review_runs (
+                            id, installation_id, repository_id, pull_request_number, head_sha,
+                            pipeline_version, configuration_version, model_name, policy_version,
+                            max_review_attempts, requested_at, state)
+                        VALUES (?, 1, 2, 3, ?, 'pipeline-v3', ?, 'model', 'policy-v5', 3, now(), 'REQUESTED')
+                        """, runId, "head-" + runId, "configuration-" + runId);
+        return runId;
+    }
+
+    private void insertStartedAttempt(UUID runId) {
+        jdbcTemplate.update("""
+                INSERT INTO review_attempts (review_run_id, attempt_number, state, started_at)
+                VALUES (?, 1, 'STARTED', now())
+                """, runId);
+    }
+
+    private void insertFinding(UUID runId) {
+        jdbcTemplate.update("""
+                        INSERT INTO review_findings (
+                            review_run_id, fingerprint, file_path, post_change_line, changed_line,
+                            severity, category, title, description, suggestion, evidence, source)
+                        VALUES (?, ?, 'src/Test.java', 1, true,
+                                'WARNING', 'STABILITY', 'title', 'description', 'suggestion', 'evidence', 'test')
+                        """, runId, "a".repeat(64));
+    }
+
+    private void setMeasurements(UUID runId, String toolStatesJson) {
+        jdbcTemplate.update("""
+                        UPDATE review_attempts
+                        SET latency_ms = 17, input_tokens = 2, output_tokens = 3,
+                            tool_states = CAST(? AS jsonb)
+                        WHERE review_run_id = ?
+                        """, toolStatesJson, runId);
+    }
+
+    private void setCitations(UUID runId, String citationsJson) {
+        jdbcTemplate.update("""
+                        UPDATE review_findings
+                        SET citations = CAST(? AS jsonb)
+                        WHERE review_run_id = ?
+                        """, citationsJson, runId);
     }
 
     private List<String> tableNames() throws SQLException {

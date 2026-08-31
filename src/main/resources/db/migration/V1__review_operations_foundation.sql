@@ -15,6 +15,15 @@ CREATE TABLE review_runs (
     failure_code TEXT,
     failure_class TEXT CHECK (failure_class IN ('TRANSIENT','TERMINAL')),
     failure_safe_message TEXT,
+    CONSTRAINT ck_review_runs_failure_group CHECK (
+        (state <> 'FAILED'
+            AND failure_code IS NULL AND failure_class IS NULL AND failure_safe_message IS NULL)
+        OR
+        (state = 'FAILED'
+            AND failure_code IS NOT NULL AND btrim(failure_code) <> ''
+            AND failure_class = 'TERMINAL'
+            AND failure_safe_message IS NOT NULL AND btrim(failure_safe_message) <> '')
+    ),
     finished_at TIMESTAMPTZ,
     version BIGINT NOT NULL DEFAULT 0 CHECK (version >= 0),
     UNIQUE (installation_id, repository_id, pull_request_number, head_sha, pipeline_version, configuration_version)
@@ -38,9 +47,35 @@ CREATE TABLE review_attempts (
     input_tokens INTEGER CHECK (input_tokens >= 0),
     output_tokens INTEGER CHECK (output_tokens >= 0),
     tool_states JSONB,
+    CONSTRAINT ck_review_attempts_measurements_group CHECK (
+        (state IN ('STARTED','CANCELLED')
+            AND latency_ms IS NULL AND input_tokens IS NULL
+            AND output_tokens IS NULL AND tool_states IS NULL)
+        OR
+        (state IN ('SUCCEEDED','TRANSIENT_FAILURE','TERMINAL_FAILURE')
+            AND latency_ms IS NOT NULL AND input_tokens IS NOT NULL
+            AND output_tokens IS NOT NULL AND tool_states IS NOT NULL)
+    ),
+    CONSTRAINT ck_review_attempts_tool_states_object CHECK (
+        tool_states IS NULL OR jsonb_typeof(tool_states) = 'object'
+    ),
     failure_code TEXT,
     failure_class TEXT CHECK (failure_class IN ('TRANSIENT','TERMINAL')),
     failure_safe_message TEXT,
+    CONSTRAINT ck_review_attempts_failure_group CHECK (
+        (state IN ('STARTED','SUCCEEDED','CANCELLED')
+            AND failure_code IS NULL AND failure_class IS NULL AND failure_safe_message IS NULL)
+        OR
+        (state = 'TRANSIENT_FAILURE'
+            AND failure_code IS NOT NULL AND btrim(failure_code) <> ''
+            AND failure_class = 'TRANSIENT'
+            AND failure_safe_message IS NOT NULL AND btrim(failure_safe_message) <> '')
+        OR
+        (state = 'TERMINAL_FAILURE'
+            AND failure_code IS NOT NULL AND btrim(failure_code) <> ''
+            AND failure_class = 'TERMINAL'
+            AND failure_safe_message IS NOT NULL AND btrim(failure_safe_message) <> '')
+    ),
     PRIMARY KEY (review_run_id, attempt_number)
 );
 
@@ -57,11 +92,25 @@ CREATE TABLE review_findings (
     suggestion TEXT NOT NULL,
     evidence TEXT NOT NULL,
     citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+    CONSTRAINT ck_review_findings_citations_array CHECK (jsonb_typeof(citations) = 'array'),
     source TEXT NOT NULL,
     publication_tier TEXT CHECK (publication_tier IN ('INLINE_COMMENT','CHECK_SUMMARY','RETAIN_ONLY')),
     publication_policy_version TEXT,
+    CONSTRAINT ck_review_findings_publication_decision_group CHECK (
+        (publication_tier IS NULL AND publication_policy_version IS NULL)
+        OR
+        (publication_tier IS NOT NULL AND publication_policy_version IS NOT NULL
+            AND btrim(publication_policy_version) <> '')
+    ),
     artifact_type TEXT,
     artifact_external_id TEXT,
+    CONSTRAINT ck_review_findings_publication_reference_group CHECK (
+        (artifact_type IS NULL AND artifact_external_id IS NULL)
+        OR
+        (artifact_type IS NOT NULL AND btrim(artifact_type) <> ''
+            AND artifact_external_id IS NOT NULL AND btrim(artifact_external_id) <> ''
+            AND publication_tier IS NOT NULL AND publication_tier = 'INLINE_COMMENT')
+    ),
     PRIMARY KEY (review_run_id, fingerprint)
 );
 
