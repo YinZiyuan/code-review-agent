@@ -4,12 +4,19 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -183,6 +190,30 @@ class PostgresIntegrationSupportCompatibilityTest {
         assertThat(process.unboundedWaitCalled).isFalse();
     }
 
+    @Test
+    void noisyDockerApiProbeDrainsOverflowWithoutRetainingItOrLeavingArtifacts() throws IOException {
+        Set<Path> artifactsBefore = temporaryDockerApiArtifacts();
+        NoisyProcess process = new NoisyProcess("1.44" + "x".repeat(2048));
+        long startedAt = System.nanoTime();
+
+        Optional<String> result = PostgresIntegrationSupport.dockerMinimumApiVersion(process);
+
+        assertThat(Duration.ofNanos(System.nanoTime() - startedAt)).isLessThan(Duration.ofSeconds(1));
+        assertThat(result.orElseThrow().getBytes(StandardCharsets.UTF_8)).hasSize(1024);
+        assertThat(process.outputClosed).isTrue();
+        assertThat(Thread.getAllStackTraces().keySet())
+                .noneMatch(thread -> thread.getName().equals("docker-api-version-output-drainer") && thread.isAlive());
+        assertThat(temporaryDockerApiArtifacts()).isEqualTo(artifactsBefore);
+    }
+
+    private static Set<Path> temporaryDockerApiArtifacts() throws IOException {
+        try (Stream<Path> files = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
+            return files
+                    .filter(path -> path.getFileName().toString().startsWith("code-review-agent-docker-api-"))
+                    .collect(Collectors.toSet());
+        }
+    }
+
     private static final class SilentProcess extends Process {
 
         private boolean forcefullyDestroyed;
@@ -238,6 +269,75 @@ class PostgresIntegrationSupportCompatibilityTest {
         @Override
         public boolean isAlive() {
             return !forcefullyDestroyed;
+        }
+    }
+
+    private static final class NoisyProcess extends Process {
+
+        private final CloseTrackingInputStream output;
+        private boolean outputClosed;
+
+        private NoisyProcess(String output) {
+            this.output = new CloseTrackingInputStream(output.getBytes(StandardCharsets.UTF_8), () -> outputClosed = true);
+        }
+
+        @Override
+        public ByteArrayOutputStream getOutputStream() {
+            return new ByteArrayOutputStream();
+        }
+
+        @Override
+        public CloseTrackingInputStream getInputStream() {
+            return output;
+        }
+
+        @Override
+        public ByteArrayInputStream getErrorStream() {
+            return new ByteArrayInputStream(new byte[0]);
+        }
+
+        @Override
+        public int waitFor() {
+            throw new AssertionError("probe must not wait indefinitely");
+        }
+
+        @Override
+        public boolean waitFor(long timeout, TimeUnit unit) {
+            return true;
+        }
+
+        @Override
+        public int exitValue() {
+            return 0;
+        }
+
+        @Override
+        public void destroy() {
+        }
+
+        @Override
+        public Process destroyForcibly() {
+            return this;
+        }
+
+        @Override
+        public boolean isAlive() {
+            return false;
+        }
+    }
+
+    private static final class CloseTrackingInputStream extends ByteArrayInputStream {
+
+        private final Runnable onClose;
+
+        private CloseTrackingInputStream(byte[] bytes, Runnable onClose) {
+            super(bytes);
+            this.onClose = onClose;
+        }
+
+        @Override
+        public void close() {
+            onClose.run();
         }
     }
 }
