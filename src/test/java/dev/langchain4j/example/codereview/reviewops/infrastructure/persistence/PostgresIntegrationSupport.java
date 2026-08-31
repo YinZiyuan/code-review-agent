@@ -109,23 +109,6 @@ abstract class PostgresIntegrationSupport {
         }
     }
 
-    static Optional<String> dockerMinimumApiVersion(Process process, Supplier<Optional<String>> capturedOutput) {
-        try {
-            if (!process.waitFor(10, TimeUnit.SECONDS)) {
-                forcefullyTerminate(process);
-                return Optional.empty();
-            }
-            if (process.exitValue() != 0) {
-                return Optional.empty();
-            }
-            return capturedOutput.get();
-        } catch (InterruptedException exception) {
-            forcefullyTerminate(process);
-            Thread.currentThread().interrupt();
-            return Optional.empty();
-        }
-    }
-
     private static boolean awaitOutputDrainer(Thread reader) {
         try {
             reader.join(OUTPUT_DRAINER_SHUTDOWN_TIMEOUT_MILLIS);

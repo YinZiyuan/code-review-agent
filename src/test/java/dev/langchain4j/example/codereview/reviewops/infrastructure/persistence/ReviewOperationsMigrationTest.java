@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -175,19 +176,21 @@ class PostgresIntegrationSupportCompatibilityTest {
     }
 
     @Test
-    void boundedDockerApiProbeForcefullyTerminatesASilentProcess() {
+    void boundedDockerApiProbeForcefullyTerminatesASilentProcessAndClosesItsOpenStream() {
         SilentProcess process = new SilentProcess();
         long startedAt = System.nanoTime();
 
-        Optional<String> result = PostgresIntegrationSupport.dockerMinimumApiVersion(process, () -> {
-            throw new AssertionError("output must not be read before a successful process exit");
-        });
+        Optional<String> result = PostgresIntegrationSupport.dockerMinimumApiVersion(process);
 
         assertThat(result).isEmpty();
         assertThat(Duration.ofNanos(System.nanoTime() - startedAt)).isLessThan(Duration.ofSeconds(1));
         assertThat(process.forcefullyDestroyed).isTrue();
         assertThat(process.boundedWaitCount).isEqualTo(2);
         assertThat(process.unboundedWaitCalled).isFalse();
+        assertThat(process.outputReadStarted).isTrue();
+        assertThat(process.outputClosed).isTrue();
+        assertThat(Thread.getAllStackTraces().keySet())
+                .noneMatch(thread -> thread.getName().equals("docker-api-version-output-drainer") && thread.isAlive());
     }
 
     @Test
@@ -200,6 +203,7 @@ class PostgresIntegrationSupportCompatibilityTest {
 
         assertThat(Duration.ofNanos(System.nanoTime() - startedAt)).isLessThan(Duration.ofSeconds(1));
         assertThat(result.orElseThrow().getBytes(StandardCharsets.UTF_8)).hasSize(1024);
+        assertThat(process.consumedBytes()).isGreaterThan(1024);
         assertThat(process.outputClosed).isTrue();
         assertThat(Thread.getAllStackTraces().keySet())
                 .noneMatch(thread -> thread.getName().equals("docker-api-version-output-drainer") && thread.isAlive());
@@ -219,6 +223,11 @@ class PostgresIntegrationSupportCompatibilityTest {
         private boolean forcefullyDestroyed;
         private int boundedWaitCount;
         private boolean unboundedWaitCalled;
+        private boolean outputReadStarted;
+        private boolean outputClosed;
+        private final CloseTrackingBlockingInputStream output = new CloseTrackingBlockingInputStream(
+                () -> outputReadStarted = true,
+                () -> outputClosed = true);
 
         @Override
         public ByteArrayOutputStream getOutputStream() {
@@ -226,8 +235,8 @@ class PostgresIntegrationSupportCompatibilityTest {
         }
 
         @Override
-        public ByteArrayInputStream getInputStream() {
-            return new ByteArrayInputStream(new byte[0]);
+        public InputStream getInputStream() {
+            return output;
         }
 
         @Override
@@ -269,6 +278,39 @@ class PostgresIntegrationSupportCompatibilityTest {
         @Override
         public boolean isAlive() {
             return !forcefullyDestroyed;
+        }
+    }
+
+    private static final class CloseTrackingBlockingInputStream extends InputStream {
+
+        private final Runnable onRead;
+        private final Runnable onClose;
+        private boolean closed;
+
+        private CloseTrackingBlockingInputStream(Runnable onRead, Runnable onClose) {
+            this.onRead = onRead;
+            this.onClose = onClose;
+        }
+
+        @Override
+        public synchronized int read() throws IOException {
+            onRead.run();
+            while (!closed) {
+                try {
+                    wait();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("interrupted while waiting for stream closure", exception);
+                }
+            }
+            return -1;
+        }
+
+        @Override
+        public synchronized void close() {
+            closed = true;
+            onClose.run();
+            notifyAll();
         }
     }
 
@@ -324,11 +366,16 @@ class PostgresIntegrationSupportCompatibilityTest {
         public boolean isAlive() {
             return false;
         }
+
+        private int consumedBytes() {
+            return output.consumedBytes();
+        }
     }
 
     private static final class CloseTrackingInputStream extends ByteArrayInputStream {
 
         private final Runnable onClose;
+        private int consumedBytes;
 
         private CloseTrackingInputStream(byte[] bytes, Runnable onClose) {
             super(bytes);
@@ -338,6 +385,19 @@ class PostgresIntegrationSupportCompatibilityTest {
         @Override
         public void close() {
             onClose.run();
+        }
+
+        @Override
+        public synchronized int read(byte[] buffer, int offset, int length) {
+            int bytesRead = super.read(buffer, offset, length);
+            if (bytesRead > 0) {
+                consumedBytes += bytesRead;
+            }
+            return bytesRead;
+        }
+
+        private int consumedBytes() {
+            return consumedBytes;
         }
     }
 }
