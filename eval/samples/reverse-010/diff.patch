@@ -1,0 +1,10 @@
+diff --git a/StatusLabeler.java b/StatusLabeler.java
+--- a/StatusLabeler.java
++++ b/StatusLabeler.java
+@@ -1,6 +1,7 @@
+ public class StatusLabeler {
+     public String label(String status) {
++        if (status == null) return "unknown";
+         return switch (status) {
+             case "OK" -> "ok";
+             default -> status.toLowerCase();

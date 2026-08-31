@@ -1,0 +1,15 @@
+diff --git a/OrderRepository.java b/OrderRepository.java
+--- a/OrderRepository.java
++++ b/OrderRepository.java
+@@ -2,9 +2,7 @@
+ 
+ public class OrderRepository {
+     public void enrich(List<Integer> ids) {
+-        for (Integer id : ids) {
+-            loadCustomer(id);
+-        }
++        loadCustomers(ids);
+     }
+-    private Object loadCustomer(Integer id) { return id; }
++    private Object loadCustomers(List<Integer> ids) { return ids; }
+ }

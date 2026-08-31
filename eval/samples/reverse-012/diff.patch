@@ -1,0 +1,15 @@
+diff --git a/DateFormatter.java b/DateFormatter.java
+--- a/DateFormatter.java
++++ b/DateFormatter.java
+@@ -1,7 +1,8 @@
+-import java.text.SimpleDateFormat;
++import java.time.ZoneId;
++import java.time.format.DateTimeFormatter;
+ import java.util.Date;
+ 
+ public class DateFormatter {
+-    private static final SimpleDateFormat FMT = new SimpleDateFormat("yyyy-MM-dd");
+-    public String format(Date date) { return FMT.format(date); }
++    private static final DateTimeFormatter FMT = DateTimeFormatter.ISO_LOCAL_DATE;
++    public String format(Date date) { return FMT.format(date.toInstant().atZone(ZoneId.systemDefault())); }
+ }

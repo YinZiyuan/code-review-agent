@@ -1,0 +1,25 @@
+diff --git a/SingletonRegistry.java b/SingletonRegistry.java
+--- a/SingletonRegistry.java
++++ b/SingletonRegistry.java
+@@ -1,15 +1,8 @@
+ public class SingletonRegistry {
+-    private volatile Client client;
++    private Client client;
+ 
+     public Client client() {
+-        Client local = client;
+-        if (local == null) {
+-            synchronized (this) {
+-                local = client;
+-                if (local == null) {
+-                    local = new Client();
+-                    client = local;
+-                }
+-            }
++        if (client == null) {
++            client = new Client();
+         }
+-        return local;
++        return client;
+     }
+ }

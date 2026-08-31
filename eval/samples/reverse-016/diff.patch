@@ -1,0 +1,14 @@
+diff --git a/DuplicateDetector.java b/DuplicateDetector.java
+--- a/DuplicateDetector.java
++++ b/DuplicateDetector.java
+@@ -1,8 +1,8 @@
++import java.util.HashSet;
+ import java.util.List;
+ 
+ public class DuplicateDetector {
+     public boolean hasDuplicate(List<String> values) {
+-        for (String a : values) for (String b : values) if (a != b && a.equals(b)) return true;
+-        return false;
++        return values.size() != new HashSet<>(values).size();
+     }
+ }

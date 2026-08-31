@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-S008",
+      "file": "TokenController.java",
+      "line": 3,
+      "line_range": [3, 3],
+      "category": "SECURITY",
+      "subcategory": "user_controlled_token_ttl",
+      "severity": "CRITICAL",
+      "description": "The token lifetime is now controlled by a request parameter, allowing clients to request unexpectedly long-lived tokens.",
+      "must_detect": true,
+      "alternative_descriptions": ["user-controlled ttl", "request parameter controls token expiry"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Synthetic cross-file context sample."
+}

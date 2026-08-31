@@ -1,0 +1,444 @@
+{
+  "version" : "v3-pipeline",
+  "commit" : "82039a1d2d5f2c0b81f248715dc773526190b6ad",
+  "tag" : null,
+  "timestamp" : "2026-05-31T11:52:10.997724Z",
+  "config" : {
+    "judge_model" : "moonshot-v1-8k",
+    "runs_per_sample" : 1,
+    "pipeline" : "w3-pipeline",
+    "suite" : "dev"
+  },
+  "allowed_inputs" : [ "diff.patch", "source-before/" ],
+  "metrics" : {
+    "fp_rate" : 0.3333333333333333,
+    "avg_latency_ms" : 4530.7,
+    "tool_success_rate" : 0.5,
+    "recall" : 0.7,
+    "precision" : 0.6666666666666666,
+    "avg_output_tokens" : 0.0,
+    "avg_input_tokens" : 0.0,
+    "severity_accuracy" : 0.2857142857142857
+  },
+  "per_sample" : [ {
+    "sample_id" : "reverse-001",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5098,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-002",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4912,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-003",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5578,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-004",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 5600,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-005",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4503,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-006",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3677,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-007",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4137,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-008",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4476,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-009",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4727,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-010",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4299,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-011",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4015,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-012",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3971,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-013",
+    "true_positives" : 0,
+    "false_positives" : 1,
+    "false_negatives" : 1,
+    "severity_matches" : 0,
+    "severity_comparisons" : 0,
+    "latency_ms" : 4282,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-014",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4421,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-015",
+    "true_positives" : 1,
+    "false_positives" : 1,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 5765,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-016",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4243,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-017",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 1,
+    "severity_comparisons" : 1,
+    "latency_ms" : 3441,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-018",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4310,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-019",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4552,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  }, {
+    "sample_id" : "reverse-020",
+    "true_positives" : 1,
+    "false_positives" : 0,
+    "false_negatives" : 0,
+    "severity_matches" : 0,
+    "severity_comparisons" : 1,
+    "latency_ms" : 4607,
+    "input_tokens" : 0,
+    "output_tokens" : 0,
+    "tool_calls_total" : 2,
+    "tool_calls_failed" : 1,
+    "tool_statuses" : [ {
+      "tool" : "regex",
+      "status" : "ok",
+      "reason" : null
+    }, {
+      "tool" : "spotbugs",
+      "status" : "skipped",
+      "reason" : "not buildable or not installed"
+    } ]
+  } ]
+}

@@ -1,0 +1,31 @@
+# Testing Review Guidelines
+
+## Test Shape
+- Use Arrange, Act, Assert to make intent obvious.
+- Keep one behavior per test when practical.
+- Name tests after observable behavior, not implementation details.
+- Avoid assertions that only prove mocks were called.
+
+## Unit And Integration Split
+- Unit tests should isolate business decisions.
+- Integration tests should cover wiring, serialization, persistence, and external protocols.
+- Do not mock stable platform behavior when a lightweight real fixture is clearer.
+- Keep slow tests explicit and separated from the fast feedback loop.
+
+## Test Doubles
+- Prefer fakes for stateful collaborators and mocks for boundary interactions.
+- Avoid over-specifying call order unless order is the behavior.
+- Make fake data realistic enough to catch parsing and validation bugs.
+- Do not let test fixtures become hidden production logic.
+
+## Flaky Tests
+- Eliminate sleeps from tests where deterministic synchronization is possible.
+- Control clocks, random numbers, and external services.
+- Treat flaky tests as product risk, not test suite noise.
+- Record enough diagnostics to explain intermittent failures.
+
+## Regression Coverage
+- Add a test that fails before fixing a bug.
+- Keep regression tests small and close to the component they protect.
+- Cover error paths, empty inputs, and boundary sizes.
+- Avoid snapshot tests for outputs that change for unrelated reasons.

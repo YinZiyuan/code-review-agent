@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-024",
+      "file": "EmailFilter.java",
+      "line": 5,
+      "line_range": [5, 5],
+      "category": "PERFORMANCE",
+      "subcategory": "repeated_regex_compile",
+      "severity": "SUGGESTION",
+      "description": "Compiling the same regex on every call adds avoidable CPU and allocation overhead; keep the Pattern cached.",
+      "must_detect": true,
+      "alternative_descriptions": ["Pattern.compile called repeatedly", "regex should be static final"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style performance medium sample."
+}

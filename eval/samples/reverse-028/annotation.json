@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-028",
+      "file": "AuthLogger.java",
+      "line": 3,
+      "line_range": [3, 3],
+      "category": "SECURITY",
+      "subcategory": "secret_logging",
+      "severity": "CRITICAL",
+      "description": "The authentication token is written to audit logs, exposing credentials to log readers and retention systems.",
+      "must_detect": true,
+      "alternative_descriptions": ["token logged", "secret in logs"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style security hard sample."
+}

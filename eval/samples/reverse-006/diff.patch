@@ -1,0 +1,10 @@
+diff --git a/LoginRepository.java b/LoginRepository.java
+--- a/LoginRepository.java
++++ b/LoginRepository.java
+@@ -1,5 +1,5 @@
+ public class LoginRepository {
+     public String findUser(String name) {
+-        return "select * from users where name = '" + name + "'";
++        return "select * from users where name = ?";
+     }
+ }

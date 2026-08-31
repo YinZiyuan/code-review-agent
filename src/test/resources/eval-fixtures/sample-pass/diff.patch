@@ -1,0 +1,7 @@
+diff --git a/User.java b/User.java
+--- a/User.java
++++ b/User.java
+@@ -10,3 +10,4 @@ public class User {
+     int x = 1;
++    String pwd = "hardcoded";
+     int y = 2;

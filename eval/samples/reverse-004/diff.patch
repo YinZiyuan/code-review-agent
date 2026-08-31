@@ -1,0 +1,15 @@
+diff --git a/OrderExporter.java b/OrderExporter.java
+--- a/OrderExporter.java
++++ b/OrderExporter.java
+@@ -1,8 +1,10 @@
+ public class OrderExporter {
+     public List<Row> export(List<Order> orders) {
++        Map<Long, Customer> customers = customerRepository.findAllByIds(
++                orders.stream().map(Order::customerId).toList());
+         List<Row> rows = new ArrayList<>();
+         for (Order order : orders) {
+-            Customer customer = customerRepository.findById(order.customerId());
++            Customer customer = customers.get(order.customerId());
+             rows.add(Row.from(order, customer));
+         }
+         return rows;

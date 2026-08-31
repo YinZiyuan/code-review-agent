@@ -1,0 +1,13 @@
+diff --git a/CounterService.java b/CounterService.java
+--- a/CounterService.java
++++ b/CounterService.java
+@@ -1,7 +1,7 @@
+ public class CounterService {
+     private int count;
+ 
+-    public synchronized int next() {
++    public int next() {
+         count += 1;
+         return count;
+     }
+ }

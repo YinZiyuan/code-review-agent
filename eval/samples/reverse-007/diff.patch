@@ -1,0 +1,11 @@
+diff --git a/PasswordHasher.java b/PasswordHasher.java
+--- a/PasswordHasher.java
++++ b/PasswordHasher.java
+@@ -2,6 +2,6 @@
+ 
+ public class PasswordHasher {
+     public byte[] hash(String password) throws Exception {
+-        return MessageDigest.getInstance("MD5").digest(password.getBytes());
++        return MessageDigest.getInstance("SHA-256").digest(password.getBytes());
+     }
+ }

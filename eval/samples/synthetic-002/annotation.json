@@ -1,0 +1,10 @@
+{
+  "expected_issues": [],
+  "should_not_report": [
+    {
+      "pattern": "prefix",
+      "reason": "The extra local variable is a harmless readability change, not a performance issue."
+    }
+  ],
+  "notes": "Synthetic true-negative clean diff."
+}

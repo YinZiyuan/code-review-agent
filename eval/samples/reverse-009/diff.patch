@@ -1,0 +1,11 @@
+diff --git a/ProfileService.java b/ProfileService.java
+--- a/ProfileService.java
++++ b/ProfileService.java
+@@ -2,6 +2,7 @@
+ 
+ public class ProfileService {
+     public String firstEmail(List<String> emails) {
++        if (emails == null || emails.isEmpty()) return "";
+         return emails.get(0).trim();
+     }
+ }

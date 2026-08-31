@@ -1,0 +1,11 @@
+diff --git a/AccountMapper.java b/AccountMapper.java
+--- a/AccountMapper.java
++++ b/AccountMapper.java
+@@ -1,5 +1,6 @@
+ public class AccountMapper {
+     public AccountDto map(Account account) {
+-        return new AccountDto(account.id(), account.owner().displayName());
++        String label = account.id() == null ? "new" : account.id();
++        return new AccountDto(account.id(), account.owner().displayName().trim());
+     }
+ }

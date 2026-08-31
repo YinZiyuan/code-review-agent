@@ -1,0 +1,11 @@
+diff --git a/SearchController.java b/SearchController.java
+--- a/SearchController.java
++++ b/SearchController.java
+@@ -1,5 +1,6 @@
+ public class SearchController {
+     public String safe(String term) {
+-        return db.query("select * from docs where title = ?", term);
++        String label = "search:" + term.replace("\n", " ");
++        return db.query("select * from docs where title = '" + term + "'");
+     }
+ }

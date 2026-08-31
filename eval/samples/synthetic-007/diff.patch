@@ -1,0 +1,17 @@
+diff --git a/ReportWriter.java b/ReportWriter.java
+--- a/ReportWriter.java
++++ b/ReportWriter.java
+@@ -1,5 +1,12 @@
+ public class ReportWriter {
+     public void write(Path path, String body) throws IOException {
++        if (body == null) {
++            return;
++        }
++
++
++
++
++
+         Files.writeString(path, body);
+     }
+ }

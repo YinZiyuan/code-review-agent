@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-029",
+      "file": "DateRenderer.java",
+      "line": 4,
+      "line_range": [4, 7],
+      "category": "CONCURRENCY",
+      "subcategory": "shared_simple_date_format",
+      "severity": "WARNING",
+      "description": "A static SimpleDateFormat is shared across requests even though SimpleDateFormat is mutable and not thread-safe.",
+      "must_detect": true,
+      "alternative_descriptions": ["SimpleDateFormat is not thread safe", "shared mutable date formatter"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style concurrency hard sample."
+}

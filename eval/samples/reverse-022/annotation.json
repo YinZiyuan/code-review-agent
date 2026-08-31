@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-022",
+      "file": "CounterService.java",
+      "line": 4,
+      "line_range": [4, 6],
+      "category": "CONCURRENCY",
+      "subcategory": "lost_update",
+      "severity": "WARNING",
+      "description": "Removing synchronization makes the shared counter update non-atomic and can lose increments under concurrent requests.",
+      "must_detect": true,
+      "alternative_descriptions": ["race condition on count", "non atomic increment"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style concurrency sample."
+}

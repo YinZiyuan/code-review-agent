@@ -1,0 +1,31 @@
+# Concurrency Review Guidelines
+
+## Shared State
+- Identify every mutable object shared across threads.
+- Prefer immutable data or confined state over locking.
+- Do not publish partially constructed objects.
+- Treat static mutable fields as global shared state.
+
+## Locks
+- Use a consistent lock ordering when acquiring multiple locks.
+- Keep synchronized blocks small and free of remote calls.
+- Prefer ReentrantLock only when timed or interruptible locking is needed.
+- Always release locks in finally blocks when using explicit locks.
+
+## Concurrent Collections
+- Use ConcurrentHashMap for concurrent updates, not HashMap with hope.
+- Do not assume compound operations on concurrent collections are atomic.
+- Prefer computeIfAbsent for lazy initialization, but keep mapping functions simple.
+- Avoid iterating mutable collections while other threads mutate them.
+
+## Visibility
+- Use volatile for visibility, not for compound atomic updates.
+- Understand happens-before edges created by locks, futures, and thread start/join.
+- Avoid double-checked locking unless the field is volatile and construction is safe.
+- Make cancellation flags visible across worker threads.
+
+## Executors
+- Shut down ExecutorService instances owned by the component.
+- Bound queues to avoid unbounded memory growth.
+- Separate scheduling, CPU, and blocking IO workloads when traffic is high.
+- Propagate request context carefully across async boundaries.

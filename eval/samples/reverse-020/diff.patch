@@ -1,0 +1,12 @@
+diff --git a/AssertionHelper.java b/AssertionHelper.java
+--- a/AssertionHelper.java
++++ b/AssertionHelper.java
+@@ -4,7 +4,7 @@
+             assertion.run();
+             return true;
+         } catch (AssertionError e) {
+-            return true;
++            return false;
+         }
+     }
+ }

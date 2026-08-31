@@ -1,0 +1,23 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-S006",
+      "file": "ProductPage.java",
+      "line": 4,
+      "line_range": [4, 4],
+      "category": "PERFORMANCE",
+      "subcategory": "n_plus_one_query",
+      "severity": "WARNING",
+      "description": "The render path now calls prices.lookup for every product instead of using the bulk lookup, creating an N+1 service call pattern.",
+      "must_detect": true,
+      "alternative_descriptions": ["lookup inside stream", "per-product price call"]
+    }
+  ],
+  "should_not_report": [
+    {
+      "pattern": "title",
+      "reason": "The title string on line 3 is harmless."
+    }
+  ],
+  "notes": "Synthetic near-miss for performance."
+}

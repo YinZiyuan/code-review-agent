@@ -1,0 +1,10 @@
+diff --git a/SecretConfig.java b/SecretConfig.java
+--- a/SecretConfig.java
++++ b/SecretConfig.java
+@@ -1,5 +1,5 @@
+ public class SecretConfig {
+     public String token() {
+-        return "prod-secret-token";
++        return System.getenv("APP_TOKEN");
+     }
+ }

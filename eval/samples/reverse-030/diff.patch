@@ -1,0 +1,17 @@
+diff --git a/AvatarCache.java b/AvatarCache.java
+--- a/AvatarCache.java
++++ b/AvatarCache.java
+@@ -1,9 +1,9 @@
+-import com.github.benmanes.caffeine.cache.Cache;
+-import com.github.benmanes.caffeine.cache.Caffeine;
++import java.util.HashMap;
++import java.util.Map;
+ 
+ public class AvatarCache {
+-    private final Cache<String, byte[]> cache = Caffeine.newBuilder().maximumSize(10_000).build();
++    private final Map<String, byte[]> cache = new HashMap<>();
+ 
+     public void put(String userId, byte[] image) {
+         cache.put(userId, image);
+     }
+ }

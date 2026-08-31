@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-S010",
+      "file": "RetryPolicyTest.java",
+      "line": 8,
+      "line_range": [8, 8],
+      "category": "TEST",
+      "subcategory": "weakened_assertion",
+      "severity": "WARNING",
+      "description": "The test no longer verifies the exact retry count and would pass for many incorrect retry policies.",
+      "must_detect": true,
+      "alternative_descriptions": ["assertion weakened", "test no longer checks three attempts"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Synthetic test boundary sample."
+}

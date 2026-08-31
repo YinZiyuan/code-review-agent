@@ -1,0 +1,39 @@
+langchain4j:
+  open-ai:
+    chat-model:
+      base-url: https://api.moonshot.cn/v1
+      api-key: ${MOONSHOT_API_KEY:}
+      model-name: moonshot-v1-8k
+      temperature: 0
+      max-tokens: 4096
+      timeout: 90s
+      log-requests: false
+      log-responses: false
+
+code-review:
+  rag:
+    embedding-cache-dir: ${user.home}/.code-review-agent/cache
+    top-k: 3
+    min-score: 0.4
+    rerank-enabled: true
+    bm25-top-k: 8
+    rerank-top-k: 4
+    rrf-k: 60
+  orchestration:
+    reviewer-timeout: 60s
+    parallelism: 3
+  eval:
+    judge-model: moonshot-v1-8k
+    runs-per-sample: 1      # W1 keeps it 1; release uses 3
+    samples-dir: eval/samples
+    report-dir: eval/reports
+
+spring:
+  main:
+    web-application-type: none
+    banner-mode: off
+
+logging:
+  level:
+    root: INFO
+    dev.langchain4j.example: INFO

@@ -1,0 +1,18 @@
+{
+  "expected_issues": [
+    {
+      "id": "I-027",
+      "file": "ProfileLoader.java",
+      "line": 6,
+      "line_range": [5, 6],
+      "category": "STABILITY",
+      "subcategory": "swallowed_exception",
+      "severity": "WARNING",
+      "description": "The remote failure is swallowed and converted to null, hiding the root cause and pushing NullPointerException risk to callers.",
+      "must_detect": true,
+      "alternative_descriptions": ["exception swallowed", "returns null on failure"]
+    }
+  ],
+  "should_not_report": [],
+  "notes": "Reverse-style stability hard sample."
+}

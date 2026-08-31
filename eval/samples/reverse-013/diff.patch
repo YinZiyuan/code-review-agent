@@ -1,0 +1,12 @@
+diff --git a/LazyCache.java b/LazyCache.java
+--- a/LazyCache.java
++++ b/LazyCache.java
+@@ -1,6 +1,6 @@
+ public class LazyCache {
+-    private Helper helper;
+-    public Helper get() {
++    private volatile Helper helper;
++    public synchronized Helper get() {
+         if (helper == null) {
+             helper = new Helper();
+         }

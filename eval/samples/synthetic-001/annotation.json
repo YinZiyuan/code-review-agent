@@ -1,0 +1,10 @@
+{
+  "expected_issues": [],
+  "should_not_report": [
+    {
+      "pattern": "strip",
+      "reason": "Do not flag strip() as a bug; both inputs are already trimmed and final strip is harmless."
+    }
+  ],
+  "notes": "Synthetic true-negative clean diff."
+}

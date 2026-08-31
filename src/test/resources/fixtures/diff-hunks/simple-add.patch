@@ -1,0 +1,10 @@
+diff --git a/Foo.java b/Foo.java
+index 1111111..2222222 100644
+--- a/Foo.java
++++ b/Foo.java
+@@ -10,3 +10,5 @@ public class Foo {
+     int x = 1;
+     int y = 2;
++    int z = 3;
++    System.out.println(z);
+     int w = 4;

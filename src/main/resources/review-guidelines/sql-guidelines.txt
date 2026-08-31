@@ -1,0 +1,34 @@
+# SQL Review Guidelines
+
+## Parameterized Queries
+- Never concatenate user input into SQL strings.
+- Prefer PreparedStatement, named parameters, or ORM bind variables.
+- Treat search, sort, and pagination parameters as untrusted input.
+- Validate dynamic table or column names against an allow-list.
+- Avoid logging full SQL statements that include secrets or personal data.
+
+## ORM And JDBC Boundaries
+- Keep repository methods small and explicit about transaction scope.
+- Avoid leaking ORM entities directly into API response DTOs.
+- Use projection queries when only a few columns are required.
+- Be careful with lazy relations outside a transaction.
+- Do not hide database calls behind getters or serialization hooks.
+
+## N Plus One Queries
+- Review loops that call repositories or lazy getters per item.
+- Prefer join fetch, batch fetch, or explicit bulk queries.
+- Watch for stream pipelines that trigger database calls inside map/filter.
+- Add tests or logs for expected query counts in high-traffic paths.
+
+## Transaction Scope
+- Keep transactions short and avoid network calls inside them.
+- Do not mix long-running file or HTTP work with database locks.
+- Choose isolation levels intentionally for read-modify-write workflows.
+- Retry only idempotent transaction failures.
+- Document lock ordering when multiple tables are updated.
+
+## Batch And Pooling
+- Use batching for high-volume inserts or updates.
+- Size connection pools based on downstream database capacity, not CPU count alone.
+- Avoid unbounded result sets; require pagination for user-facing queries.
+- Stream large exports carefully and close database resources promptly.

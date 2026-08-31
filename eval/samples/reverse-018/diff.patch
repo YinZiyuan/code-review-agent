@@ -1,0 +1,14 @@
+diff --git a/FileLoader.java b/FileLoader.java
+--- a/FileLoader.java
++++ b/FileLoader.java
+@@ -3,7 +3,9 @@
+ 
+ public class FileLoader {
+     public String first(String path) throws Exception {
+-        BufferedReader reader = new BufferedReader(new FileReader(path));
+-        return reader.readLine();
++        try (BufferedReader reader = new BufferedReader(new FileReader(path))) {
++            return reader.readLine();
++        }
+     }
+ }
