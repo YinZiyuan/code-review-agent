@@ -25,7 +25,6 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunConcurrencyException;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
-import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessException;
@@ -187,6 +186,46 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void competingRequiredTransactionsReceiveOptimisticConcurrencyInsteadOfALockFailure() throws Exception {
+        ReviewRun original = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000016")));
+        repository.insert(original);
+
+        CountDownLatch bothTransactionsReadVersionZero = new CountDownLatch(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Outcome<Long>> first = executor.submit(() -> capture(() ->
+                    findThenCompeteToUpdate(
+                            original.id(), REQUESTED_AT.plusSeconds(1), bothTransactionsReadVersionZero)));
+            Future<Outcome<Long>> second = executor.submit(() -> capture(() ->
+                    findThenCompeteToUpdate(
+                            original.id(), REQUESTED_AT.plusSeconds(2), bothTransactionsReadVersionZero)));
+
+            List<Outcome<Long>> outcomes = List.of(
+                    first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS));
+
+            assertThat(outcomes).filteredOn(outcome -> outcome.failure() == null)
+                    .singleElement()
+                    .extracting(Outcome::value)
+                    .isEqualTo(1L);
+            assertThat(outcomes).filteredOn(outcome -> outcome.failure() != null)
+                    .singleElement()
+                    .satisfies(outcome -> {
+                        assertThat(outcome.failure())
+                                .isInstanceOf(ReviewRunConcurrencyException.class)
+                                .isNotInstanceOf(DataAccessException.class);
+                        ReviewRunConcurrencyException concurrencyFailure =
+                                (ReviewRunConcurrencyException) outcome.failure();
+                        assertThat(concurrencyFailure.reviewRunId()).isEqualTo(original.id());
+                        assertThat(concurrencyFailure.expectedVersion()).isZero();
+                    });
+        } finally {
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
     void findNeverReturnsAMixedVersionWhenAnUpdateRunsAfterTheRootSelect() throws Exception {
         ReviewRun running = runningRun(new ReviewRunId(
                 UUID.fromString("00000000-0000-0000-0000-000000000010")));
@@ -216,16 +255,10 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
             continueChildReads.countDown();
             Outcome<ReviewRunRepository.StoredReviewRun> readerOutcome = reader.get(5, TimeUnit.SECONDS);
 
+            assertThat(writerOutcome.failure()).isNull();
+            assertThat(writerOutcome.value()).isEqualTo(1L);
             assertThat(readerOutcome.failure()).isNull();
-            assertThat(readerOutcome.value().version()).isZero();
-            assertThat(readerOutcome.value().reviewRun().state()).isEqualTo(ReviewRunState.RUNNING);
-            assertThat(readerOutcome.value().reviewRun().findings()).isEmpty();
-            assertThat(writerOutcome.value()).isNull();
-            assertThat(writerOutcome.failure()).isInstanceOf(DataAccessException.class);
-
-            assertThat(repository.update(writerCopy, 0)).isEqualTo(1);
-            assertThat(repository.find(running.id()).orElseThrow().reviewRun().state())
-                    .isEqualTo(ReviewRunState.COMPLETED);
+            assertStoredRun(readerOutcome.value(), writerCopy, 1);
         } finally {
             continueChildReads.countDown();
             executor.shutdownNow();
@@ -452,6 +485,28 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
     }
 
     private record Outcome<T>(T value, Throwable failure) {
+    }
+
+    private long findThenCompeteToUpdate(ReviewRunId id, Instant attemptStartedAt,
+                                         CountDownLatch bothTransactionsReadVersionZero) {
+        Long nextVersion = transactionTemplate.execute(status -> {
+            jdbcTemplate.execute("SET LOCAL deadlock_timeout = '100ms'");
+            jdbcTemplate.execute("SET LOCAL lock_timeout = '3s'");
+            ReviewRunRepository.StoredReviewRun stored = repository.find(id).orElseThrow();
+            assertThat(stored.version()).isZero();
+            bothTransactionsReadVersionZero.countDown();
+            try {
+                if (!bothTransactionsReadVersionZero.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("timed out waiting for both transaction reads");
+                }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while waiting for competing update", exception);
+            }
+            stored.reviewRun().startAttempt(attemptStartedAt);
+            return repository.update(stored.reviewRun(), stored.version());
+        });
+        return java.util.Objects.requireNonNull(nextVersion, "transaction result");
     }
 
     private void assertLegacyCorruptionFails(ReviewRunId id, String tableName,

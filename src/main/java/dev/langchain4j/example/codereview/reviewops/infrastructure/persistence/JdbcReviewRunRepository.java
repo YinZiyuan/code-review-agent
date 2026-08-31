@@ -39,6 +39,7 @@ import java.util.UUID;
 
 public final class JdbcReviewRunRepository implements ReviewRunRepository {
 
+    private static final int MAX_SNAPSHOT_READ_ATTEMPTS = 3;
     private static final String BUSINESS_IDENTITY_CONSTRAINT =
             "review_runs_installation_id_repository_id_pull_request_numb_key";
 
@@ -49,7 +50,12 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                    failure_code, failure_class, failure_safe_message, finished_at, version
             FROM review_runs
             WHERE id = ?
-            FOR SHARE
+            """;
+
+    private static final String SELECT_ROOT_VERSION = """
+            SELECT version
+            FROM review_runs
+            WHERE id = ?
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -72,18 +78,33 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
     }
 
     private Optional<StoredReviewRun> findConsistentSnapshot(ReviewRunId id) {
-        List<PersistedRoot> roots = jdbcTemplate.query(
-                SELECT_ROOT, (resultSet, rowNumber) -> mapRoot(resultSet), id.value());
-        if (roots.isEmpty()) {
-            return Optional.empty();
+        for (int attempt = 1; attempt <= MAX_SNAPSHOT_READ_ATTEMPTS; attempt++) {
+            List<PersistedRoot> roots = jdbcTemplate.query(
+                    SELECT_ROOT, (resultSet, rowNumber) -> mapRoot(resultSet), id.value());
+            if (roots.isEmpty()) {
+                return Optional.empty();
+            }
+            PersistedRoot root = roots.get(0);
+            List<ReviewAttempt> attempts = loadAttempts(id);
+            List<ReviewFinding> findings = loadFindings(id);
+            if (rootVersionIsStill(id, root.version())) {
+                ReviewRun run = ReviewRun.reconstitute(
+                        root.id(), root.revision(), root.configuration(), root.requestedAt(), root.state(),
+                        attempts, findings, root.finalFailure(), root.finishedAt(), root.checkRunExternalId());
+                return Optional.of(new StoredReviewRun(run, root.version()));
+            }
         }
-        PersistedRoot root = roots.get(0);
-        List<ReviewAttempt> attempts = loadAttempts(id);
-        List<ReviewFinding> findings = loadFindings(id);
-        ReviewRun run = ReviewRun.reconstitute(
-                root.id(), root.revision(), root.configuration(), root.requestedAt(), root.state(),
-                attempts, findings, root.finalFailure(), root.finishedAt(), root.checkRunExternalId());
-        return Optional.of(new StoredReviewRun(run, root.version()));
+        throw new IllegalStateException(
+                "Could not read a consistent review run snapshot for " + id
+                        + " after " + MAX_SNAPSHOT_READ_ATTEMPTS + " attempts");
+    }
+
+    private boolean rootVersionIsStill(ReviewRunId id, long expectedVersion) {
+        List<Long> versions = jdbcTemplate.query(
+                SELECT_ROOT_VERSION,
+                (resultSet, rowNumber) -> resultSet.getLong("version"),
+                id.value());
+        return versions.size() == 1 && versions.get(0) == expectedVersion;
     }
 
     @Override
