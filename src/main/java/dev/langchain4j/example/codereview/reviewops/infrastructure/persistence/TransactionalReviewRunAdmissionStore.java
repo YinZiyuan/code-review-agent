@@ -8,6 +8,7 @@ import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxEve
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxStore;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunState;
 import org.springframework.transaction.support.TransactionOperations;
 
 import java.util.List;
@@ -37,6 +38,14 @@ public final class TransactionalReviewRunAdmissionStore implements ReviewRunAdmi
                       List<OutboxEvent> outboxEvents) {
         Objects.requireNonNull(reviewRun, "reviewRun");
         Objects.requireNonNull(executionJob, "executionJob");
+        if (reviewRun.state() != ReviewRunState.REQUESTED || !reviewRun.attempts().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "admission requires a new REQUESTED review run without attempts");
+        }
+        if (!ReviewRunAdmissionStore.REVIEW_EXECUTION_JOB_TYPE.equals(executionJob.jobType())) {
+            throw new IllegalArgumentException(
+                    "admission requires a " + ReviewRunAdmissionStore.REVIEW_EXECUTION_JOB_TYPE + " job");
+        }
         if (!reviewRun.id().value().equals(executionJob.payloadReference())) {
             throw new ReviewRunJobMismatchException(
                     reviewRun.id(), executionJob.payloadReference());

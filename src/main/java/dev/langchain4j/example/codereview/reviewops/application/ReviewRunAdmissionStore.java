@@ -8,6 +8,8 @@ import java.util.List;
 
 public interface ReviewRunAdmissionStore {
 
+    String REVIEW_EXECUTION_JOB_TYPE = "REVIEW_EXECUTION";
+
     void admit(ReviewRun reviewRun,
                DurableJobRequest executionJob,
                List<OutboxEvent> outboxEvents);

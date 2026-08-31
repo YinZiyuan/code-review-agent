@@ -21,6 +21,7 @@
 - PostgreSQL row locking uses `FOR UPDATE SKIP LOCKED`; H2 is forbidden for lock and transaction tests.
 - Integration tests use PostgreSQL 17 through Testcontainers and prove migrations, round trips, uniqueness, optimistic locking, exclusive leasing, lease recovery, and rollback.
 - New production behavior follows strict RED → GREEN → REFACTOR; each test must name the production break it catches and exercise real JDBC/PostgreSQL behavior.
+- This persistence slice uses `spring-jdbc` with an explicitly supplied `DataSource`. Boot-managed connection pooling and datasource/Flyway auto-configuration belong to the later `serve` runtime bootstrap slice, where CLI and server contexts can be selected before startup.
 
 ---
 
@@ -124,7 +125,7 @@ git commit -m "feat: add review run persistence contract"
 
 - [ ] **Step 1: Add managed dependencies**
 
-Add `spring-boot-starter-jdbc`, `flyway-core`, `flyway-database-postgresql`, runtime `org.postgresql:postgresql`, and test-scoped `org.testcontainers:junit-jupiter` plus `org.testcontainers:postgresql`. Use Spring Boot dependency management; do not hard-code versions.
+Add `spring-jdbc`, `flyway-core`, `flyway-database-postgresql`, runtime `org.postgresql:postgresql`, and test-scoped `org.testcontainers:junit-jupiter` plus `org.testcontainers:postgresql`. Use Spring Boot dependency management; do not hard-code versions. Do not enable Boot datasource auto-configuration in the CLI-only runtime; the `serve` bootstrap slice will add a pooled datasource while preserving datasource-free CLI startup.
 
 - [ ] **Step 2: Write the failing migration integration test**
 

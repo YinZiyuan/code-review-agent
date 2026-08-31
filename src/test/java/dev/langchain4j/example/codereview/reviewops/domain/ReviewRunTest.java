@@ -10,6 +10,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 
 class ReviewRunTest {
     private static final Instant T0 = Instant.parse("2026-08-30T00:00:00Z");
@@ -158,7 +159,7 @@ class ReviewRunTest {
     }
 
     @Test
-    void partialInlineCommentCoverageLeavesEveryFindingUnchanged() {
+    void partialPublicationProgressIsRetainedForARecoverableRetry() {
         ReviewRun run = completedWithTwoFindings();
         ReviewFinding first = run.findings().get(0);
         ReviewFinding second = run.findings().get(1);
@@ -167,13 +168,51 @@ class ReviewRunTest {
                 second.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
         run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
 
-        assertThatThrownBy(() -> run.confirmPublication("check-1", Map.of(
-                first.fingerprint(), new PublicationReference("REVIEW_COMMENT", "comment-1")),
-                T0.plusSeconds(3)))
-                .isInstanceOf(IllegalArgumentException.class);
+        PublicationReference firstReference =
+                new PublicationReference("REVIEW_COMMENT", "comment-1");
+        run.recordPublicationProgress("check-1", Map.of(first.fingerprint(), firstReference));
 
-        assertUnconfirmedPublication(run);
-        assertThat(first.publicationReference()).isEmpty();
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(run.checkRunExternalId()).contains("check-1");
+        assertThat(first.publicationReference()).contains(firstReference);
+        assertThat(second.publicationReference()).isEmpty();
+
+        PublicationReference secondReference =
+                new PublicationReference("REVIEW_COMMENT", "comment-2");
+        run.confirmPublication("check-1", Map.of(
+                first.fingerprint(), firstReference,
+                second.fingerprint(), secondReference), T0.plusSeconds(3));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHED);
+        assertThat(second.publicationReference()).contains(secondReference);
+    }
+
+    @Test
+    void conflictingPublicationProgressIsRejectedWithoutMutation() {
+        ReviewRun run = completedWithTwoFindings();
+        ReviewFinding first = run.findings().get(0);
+        ReviewFinding second = run.findings().get(1);
+        run.acceptPublicationDecisions(Map.of(
+                first.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1"),
+                second.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+        PublicationReference confirmed = new PublicationReference("REVIEW_COMMENT", "comment-1");
+        run.recordPublicationProgress("check-1", Map.of(first.fingerprint(), confirmed));
+
+        assertThatThrownBy(() -> run.recordPublicationProgress(
+                "check-2", Map.of(second.fingerprint(),
+                        new PublicationReference("REVIEW_COMMENT", "comment-2"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("checkRunExternalId conflicts");
+        assertThatThrownBy(() -> run.recordPublicationProgress(
+                "check-1", Map.of(first.fingerprint(),
+                        new PublicationReference("REVIEW_COMMENT", "different-comment"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("reference conflicts");
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(run.checkRunExternalId()).contains("check-1");
+        assertThat(run.commentReferences()).containsOnly(entry(first.fingerprint(), confirmed));
         assertThat(second.publicationReference()).isEmpty();
     }
 

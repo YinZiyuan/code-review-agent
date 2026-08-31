@@ -95,6 +95,94 @@ class ReviewRunReconstitutionTest {
                 null, null, "check-123")).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void reconstitutesPublishingReviewWithPartialExternalProgress() {
+        ReviewAttempt successfulAttempt = ReviewAttempt.reconstitute(
+                1, REQUESTED_AT, ReviewAttemptState.SUCCEEDED, COMPLETED_AT, MEASUREMENTS, null);
+        ReviewFinding first = ReviewFindingTest.finding("regex", List.of());
+        ReviewFinding second = ReviewFindingTest.finding("spotbugs", List.of());
+        PublicationDecision inline = new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v4");
+        PublicationReference confirmed = new PublicationReference("REVIEW_COMMENT", "comment-1");
+
+        ReviewRun restored = ReviewRun.reconstitute(
+                ReviewRunId.newId(), new PullRequestRevision(17, 29, 41, "head-sha"), configuration(),
+                REQUESTED_AT, ReviewRunState.PUBLISHING, List.of(successfulAttempt), List.of(
+                        ReviewFinding.reconstitute(
+                                first.fingerprint(), first.location(), first.content(), first.evidence(),
+                                inline, confirmed),
+                        ReviewFinding.reconstitute(
+                                new FindingFingerprint(
+                                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                                second.location(), second.content(), second.evidence(),
+                                inline, null)),
+                null, null, "check-123");
+
+        assertThat(restored.state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(restored.checkRunExternalId()).contains("check-123");
+        assertThat(restored.findings().get(0).publicationReference()).contains(confirmed);
+        assertThat(restored.findings().get(1).publicationReference()).isEmpty();
+        assertThat(restored.drainEvents()).isEmpty();
+    }
+
+    @Test
+    void reconstitutesFailedPublicationWithoutDiscardingConfirmedArtifacts() {
+        ReviewAttempt successfulAttempt = ReviewAttempt.reconstitute(
+                1, REQUESTED_AT, ReviewAttemptState.SUCCEEDED, COMPLETED_AT, MEASUREMENTS, null);
+        ReviewFinding finding = ReviewFindingTest.finding("regex", List.of());
+        PublicationReference confirmed = new PublicationReference("REVIEW_COMMENT", "comment-1");
+
+        ReviewRun restored = ReviewRun.reconstitute(
+                ReviewRunId.newId(), new PullRequestRevision(17, 29, 41, "head-sha"), configuration(),
+                REQUESTED_AT, ReviewRunState.FAILED, List.of(successfulAttempt), List.of(
+                        ReviewFinding.reconstitute(
+                                finding.fingerprint(), finding.location(), finding.content(), finding.evidence(),
+                                new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v4"), confirmed)),
+                new ReviewFailure("github-failure", FailureClass.TERMINAL, "publication failed"),
+                COMPLETED_AT.plusSeconds(1), "check-123");
+
+        assertThat(restored.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(restored.checkRunExternalId()).contains("check-123");
+        assertThat(restored.findings().get(0).publicationReference()).contains(confirmed);
+    }
+
+    @Test
+    void reconstitutesSupersededPublicationWithoutDiscardingConfirmedArtifacts() {
+        ReviewAttempt successfulAttempt = ReviewAttempt.reconstitute(
+                1, REQUESTED_AT, ReviewAttemptState.SUCCEEDED, COMPLETED_AT, MEASUREMENTS, null);
+        ReviewFinding finding = ReviewFindingTest.finding("regex", List.of());
+        PublicationReference confirmed = new PublicationReference("REVIEW_COMMENT", "comment-1");
+
+        ReviewRun restored = ReviewRun.reconstitute(
+                ReviewRunId.newId(), new PullRequestRevision(17, 29, 41, "head-sha"), configuration(),
+                REQUESTED_AT, ReviewRunState.SUPERSEDED, List.of(successfulAttempt), List.of(
+                        ReviewFinding.reconstitute(
+                                finding.fingerprint(), finding.location(), finding.content(), finding.evidence(),
+                                new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v4"), confirmed)),
+                null, COMPLETED_AT.plusSeconds(1), "check-123");
+
+        assertThat(restored.state()).isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThat(restored.checkRunExternalId()).contains("check-123");
+        assertThat(restored.findings().get(0).publicationReference()).contains(confirmed);
+    }
+
+    @Test
+    void rejectsConfirmedPublicationArtifactsWithoutTheirCheckRunIdentity() {
+        ReviewAttempt successfulAttempt = ReviewAttempt.reconstitute(
+                1, REQUESTED_AT, ReviewAttemptState.SUCCEEDED, COMPLETED_AT, MEASUREMENTS, null);
+        ReviewFinding finding = ReviewFindingTest.finding("regex", List.of());
+
+        assertThatThrownBy(() -> ReviewRun.reconstitute(
+                ReviewRunId.newId(), new PullRequestRevision(17, 29, 41, "head-sha"), configuration(),
+                REQUESTED_AT, ReviewRunState.PUBLISHING, List.of(successfulAttempt), List.of(
+                        ReviewFinding.reconstitute(
+                                finding.fingerprint(), finding.location(), finding.content(), finding.evidence(),
+                                new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v4"),
+                                new PublicationReference("REVIEW_COMMENT", "comment-1"))),
+                null, null, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("publication references require a check run external id");
+    }
+
     private static ReviewConfigurationSnapshot configuration() {
         return new ReviewConfigurationSnapshot(
                 "pipeline-v2", "configuration-v5", "model-v3", "policy-v4", 3);

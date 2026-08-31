@@ -110,6 +110,38 @@ class TransactionalReviewRunAdmissionStoreTest extends PostgresIntegrationSuppor
     }
 
     @Test
+    void runningReviewIsRejectedBeforeAnyAdmissionWrite() {
+        ReviewRun run = requestedRun(ORIGINAL_RUN_ID);
+        run.startAttempt(REQUESTED_AT.plusSeconds(1));
+
+        assertThatThrownBy(() -> admission(jobs, outbox).admit(
+                run,
+                executionJob(run.id(), "review-run:already-started"),
+                List.of(requestedEvent(FIRST_EVENT_ID, run.id(), REQUESTED_AT))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("new REQUESTED");
+
+        assertTableCounts(0, 0, 0);
+    }
+
+    @Test
+    void nonExecutionJobIsRejectedBeforeAnyAdmissionWrite() {
+        ReviewRun run = requestedRun(ORIGINAL_RUN_ID);
+        DurableJobRequest wrongJobType = new DurableJobRequest(
+                "REACTION_RECONCILE", run.id().value(), 3, REQUESTED_AT,
+                "review-run:wrong-job-type");
+
+        assertThatThrownBy(() -> admission(jobs, outbox).admit(
+                run,
+                wrongJobType,
+                List.of(requestedEvent(FIRST_EVENT_ID, run.id(), REQUESTED_AT))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("REVIEW_EXECUTION");
+
+        assertTableCounts(0, 0, 0);
+    }
+
+    @Test
     void admissionJoinsAnExistingRequiredTransactionAndRollsBackWithItsCaller() {
         ReviewRun run = requestedRun(ORIGINAL_RUN_ID);
 

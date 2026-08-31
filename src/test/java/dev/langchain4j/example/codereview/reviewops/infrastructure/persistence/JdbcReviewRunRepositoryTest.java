@@ -193,6 +193,22 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void roundTripsRecoverablePartialPublicationProgress() {
+        ReviewRun publishing = completedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000022")));
+        publishing.authorizePublication(
+                new AuthoritativeRevision(publishing.revision().headSha()), COMPLETED_AT);
+        publishing.recordPublicationProgress(
+                "check-run-partial",
+                Map.of(INLINE_FINGERPRINT,
+                        new PublicationReference("REVIEW_COMMENT", "comment-confirmed")));
+
+        repository.insert(publishing);
+
+        assertStoredRun(repository.find(publishing.id()).orElseThrow(), publishing, 0);
+    }
+
+    @Test
     void publicationUpdatesPreserveExistingFindingFeedbackAndItsAuditHistory() {
         ReviewRun completed = completedRunWithoutDecisions(new ReviewRunId(
                 UUID.fromString("00000000-0000-0000-0000-000000000017")));
