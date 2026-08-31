@@ -22,6 +22,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSn
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFinding;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunChildIdentityMismatchException;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunConcurrencyException;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
@@ -118,6 +119,62 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
                         WHERE review_run_id = ? ORDER BY fingerprint
                         """, String.class, completed.id().value()))
                 .containsExactly("INLINE_COMMENT", "CHECK_SUMMARY");
+    }
+
+    @Test
+    void rejectsUpdateThatOmitsAPersistedTransientAttemptAndRollsBackTheRootVersion() {
+        ReviewRun original = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000020")));
+        original.startAttempt(REQUESTED_AT);
+        original.recordTransientAttemptFailure(
+                new ReviewFailure("MODEL_TIMEOUT", FailureClass.TRANSIENT, "model timed out"),
+                new ExecutionMeasurements(2_000, 120, 0, Map.of("regex", "RAN")),
+                FIRST_ATTEMPT_ENDED_AT);
+        repository.insert(original);
+        ReviewRun submittedWithoutAttempt = requestedRun(original.id());
+
+        assertThatThrownBy(() -> repository.update(submittedWithoutAttempt, 0))
+                .isInstanceOfSatisfying(ReviewRunChildIdentityMismatchException.class, exception -> {
+                    assertThat(exception.reviewRunId()).isEqualTo(original.id());
+                    assertThat(exception.childType()).isEqualTo("attempt");
+                    assertThat(exception.omittedIdentities()).containsExactly("1");
+                });
+
+        assertStoredRun(repository.find(original.id()).orElseThrow(), original, 0);
+        assertThat(jdbcTemplate.queryForList("""
+                        SELECT attempt_number FROM review_attempts
+                        WHERE review_run_id = ? ORDER BY attempt_number
+                        """, Integer.class, original.id().value()))
+                .containsExactly(1);
+    }
+
+    @Test
+    void rejectsUpdateThatReplacesAPersistedFindingFingerprintAndRollsBackTheRootVersion() {
+        ReviewRun original = completedRunWithoutDecisions(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000021")),
+                List.of(finding(INLINE_FINGERPRINT)));
+        repository.insert(original);
+        FindingFingerprint replacementFingerprint = new FindingFingerprint("c".repeat(64));
+        ReviewRun submittedWithReplacement = ReviewRun.reconstitute(
+                original.id(), original.revision(), original.configuration(), original.requestedAt(),
+                original.state(), original.attempts(), List.of(finding(replacementFingerprint)),
+                original.finalFailure().orElse(null), original.finishedAt().orElse(null),
+                original.checkRunExternalId().orElse(null));
+
+        assertThatThrownBy(() -> repository.update(submittedWithReplacement, 0))
+                .isInstanceOfSatisfying(ReviewRunChildIdentityMismatchException.class, exception -> {
+                    assertThat(exception.reviewRunId()).isEqualTo(original.id());
+                    assertThat(exception.childType()).isEqualTo("finding");
+                    assertThat(exception.omittedIdentities())
+                            .containsExactly(INLINE_FINGERPRINT.value());
+                });
+
+        assertStoredRun(repository.find(original.id()).orElseThrow(), original, 0);
+        assertThat(jdbcTemplate.queryForList("""
+                        SELECT fingerprint FROM review_findings
+                        WHERE review_run_id = ? ORDER BY fingerprint
+                        """, String.class, original.id().value()))
+                .containsExactly(INLINE_FINGERPRINT.value());
     }
 
     @Test
@@ -537,8 +594,13 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
     }
 
     private static ReviewRun completedRunWithoutDecisions(ReviewRunId id) {
+        return completedRunWithoutDecisions(id, findings());
+    }
+
+    private static ReviewRun completedRunWithoutDecisions(ReviewRunId id,
+                                                           List<ReviewFinding> completedFindings) {
         ReviewRun run = runningRun(id);
-        run.completeReview(findings(), successfulMeasurements(), COMPLETED_AT);
+        run.completeReview(completedFindings, successfulMeasurements(), COMPLETED_AT);
         run.drainEvents();
         return run;
     }
@@ -550,16 +612,7 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
 
     private static List<ReviewFinding> findings() {
         return List.of(
-                new ReviewFinding(
-                        INLINE_FINGERPRINT,
-                        new CodeLocation("src/main/java/example/Service.java", 41, true),
-                        new FindingContent(
-                                FindingSeverity.CRITICAL, FindingCategory.SECURITY,
-                                "SQL injection", "User input reaches SQL", "Bind the value"),
-                        new FindingEvidence(
-                                "request parameter flows into the query",
-                                List.of(new CitationEvidence("owasp-sqli", "OWASP", "Prevention")),
-                                "hybrid-rag")),
+                finding(INLINE_FINGERPRINT),
                 new ReviewFinding(
                         SUMMARY_FINGERPRINT,
                         new CodeLocation("src/test/java/example/ServiceTest.java", 19, false),
@@ -567,6 +620,19 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
                                 FindingSeverity.SUGGESTION, FindingCategory.TEST,
                                 "Missing regression", "The failure path is uncovered", "Add a regression test"),
                         new FindingEvidence("no assertion covers the failure", List.of(), "llm")));
+    }
+
+    private static ReviewFinding finding(FindingFingerprint fingerprint) {
+        return new ReviewFinding(
+                fingerprint,
+                new CodeLocation("src/main/java/example/Service.java", 41, true),
+                new FindingContent(
+                        FindingSeverity.CRITICAL, FindingCategory.SECURITY,
+                        "SQL injection", "User input reaches SQL", "Bind the value"),
+                new FindingEvidence(
+                        "request parameter flows into the query",
+                        List.of(new CitationEvidence("owasp-sqli", "OWASP", "Prevention")),
+                        "hybrid-rag"));
     }
 
     private static Map<FindingFingerprint, PublicationDecision> publicationDecisions() {

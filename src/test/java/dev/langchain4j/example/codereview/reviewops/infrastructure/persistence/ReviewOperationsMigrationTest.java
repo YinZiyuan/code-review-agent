@@ -1,5 +1,11 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.example.codereview.reviewops.domain.DuplicateReviewRunException;
+import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.BeforeEach;
@@ -7,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -87,6 +95,68 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void upgradesADeployedV2SchemaWithoutChangingV1ChecksumAndRenamesTheBusinessConstraint()
+            throws Exception {
+        String schema = "deployed_v2_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try (var connection = DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setSchema(schema);
+            SingleConnectionDataSource isolatedDataSource =
+                    new SingleConnectionDataSource(connection, true);
+
+            // This fixture is byte-for-byte V1 from b8bb54d, the version that may already be deployed.
+            Flyway deployedV1 = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .locations("classpath:legacy-db/migration")
+                    .load();
+            assertThat(deployedV1.migrate().migrationsExecuted).isEqualTo(1);
+
+            JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
+            assertThat(businessIdentityConstraintName(isolated, schema))
+                    .isEqualTo("review_runs_installation_id_repository_id_pull_request_numb_key");
+
+            Flyway deployedV2 = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .locations("classpath:db/migration")
+                    .target("2")
+                    .load();
+            assertThat(deployedV2.migrate().migrationsExecuted).isEqualTo(1);
+            assertFlywayIsValid(deployedV2);
+
+            Flyway latest = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .locations("classpath:db/migration")
+                    .load();
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertFlywayIsValid(latest);
+            assertThat(businessIdentityConstraintName(isolated, schema))
+                    .isEqualTo("uq_review_runs_business_identity");
+
+            JdbcReviewRunRepository repository = new JdbcReviewRunRepository(
+                    isolated,
+                    new TransactionTemplate(new DataSourceTransactionManager(isolatedDataSource)),
+                    new JsonColumnCodec(new ObjectMapper()));
+            ReviewRun original = requestedRun(ReviewRunId.newId());
+            ReviewRun duplicate = requestedRun(ReviewRunId.newId());
+            repository.insert(original);
+
+            assertThatThrownBy(() -> repository.insert(duplicate))
+                    .isInstanceOf(DuplicateReviewRunException.class);
+            assertThat(repository.find(original.id())).isPresent();
+            assertThat(repository.find(duplicate.id())).isEmpty();
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
     void v2BackfillsAndRequiresTheInitialDurableJobSchedule() throws Exception {
         String schema = "job_intent_backfill_" + UUID.randomUUID().toString().replace("-", "");
         jdbcTemplate.execute("CREATE SCHEMA " + schema);
@@ -117,12 +187,13 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     Timestamp.from(originalSchedule.minusSeconds(1)),
                     Timestamp.from(originalSchedule.minusSeconds(1)));
 
-            Flyway latest = Flyway.configure()
+            Flyway v2 = Flyway.configure()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
+                    .target("2")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertThat(v2.migrate().migrationsExecuted).isEqualTo(1);
 
             assertThat(isolated.queryForObject("""
                             SELECT initial_next_attempt_at
@@ -453,6 +524,45 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                         SET citations = CAST(? AS jsonb)
                         WHERE review_run_id = ?
                         """, citationsJson, runId);
+    }
+
+    private static String businessIdentityConstraintName(JdbcTemplate jdbcTemplate, String schema) {
+        return jdbcTemplate.queryForObject("""
+                        SELECT constraint_definition.conname
+                        FROM pg_constraint constraint_definition
+                        JOIN pg_class table_definition
+                          ON table_definition.oid = constraint_definition.conrelid
+                        JOIN pg_namespace schema_definition
+                          ON schema_definition.oid = table_definition.relnamespace
+                        CROSS JOIN unnest(constraint_definition.conkey) WITH ORDINALITY
+                          AS key_columns(attribute_number, ordinality)
+                        JOIN pg_attribute attribute
+                          ON attribute.attrelid = table_definition.oid
+                         AND attribute.attnum = key_columns.attribute_number
+                        WHERE schema_definition.nspname = ?
+                          AND table_definition.relname = 'review_runs'
+                          AND constraint_definition.contype = 'u'
+                        GROUP BY constraint_definition.oid, constraint_definition.conname
+                        HAVING array_agg(attribute.attname ORDER BY key_columns.ordinality) =
+                               ARRAY['installation_id', 'repository_id', 'pull_request_number',
+                                     'head_sha', 'pipeline_version', 'configuration_version']::name[]
+                        """, String.class, schema);
+    }
+
+    private static void assertFlywayIsValid(Flyway flyway) {
+        var validation = flyway.validateWithResult();
+        assertThat(validation.validationSuccessful)
+                .as(validation.getAllErrorMessages())
+                .isTrue();
+    }
+
+    private static ReviewRun requestedRun(ReviewRunId id) {
+        return ReviewRun.request(
+                id,
+                new PullRequestRevision(101, 202, 303, "reviewed-head-sha"),
+                new ReviewConfigurationSnapshot(
+                        "pipeline-v3", "configuration-v7", "kimi-k2", "policy-v5", 3),
+                Instant.parse("2026-08-31T01:00:00Z"));
     }
 
     private List<String> tableNames() throws SQLException {

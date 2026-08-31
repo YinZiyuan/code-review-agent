@@ -20,6 +20,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSn
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFinding;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunChildIdentityMismatchException;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunConcurrencyException;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
@@ -35,6 +36,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public final class JdbcReviewRunRepository implements ReviewRunRepository {
@@ -138,6 +140,7 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
             if (updated == 0) {
                 throw new ReviewRunConcurrencyException(reviewRun.id(), expectedVersion);
             }
+            requirePersistedChildIdentitiesAreSubmitted(reviewRun);
             upsertOwnedChildren(reviewRun);
             return expectedVersion + 1;
         });
@@ -199,6 +202,46 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
     private void upsertOwnedChildren(ReviewRun run) {
         run.attempts().forEach(attempt -> upsertAttempt(run.id(), attempt));
         run.findings().forEach(finding -> upsertFinding(run.id(), finding));
+    }
+
+    private void requirePersistedChildIdentitiesAreSubmitted(ReviewRun run) {
+        requirePersistedChildIdentitiesAreSubmitted(
+                run.id(),
+                "attempt",
+                jdbcTemplate.queryForList("""
+                                SELECT attempt_number
+                                FROM review_attempts
+                                WHERE review_run_id = ?
+                                ORDER BY attempt_number
+                                """, Integer.class, run.id().value()).stream()
+                        .map(String::valueOf)
+                        .toList(),
+                run.attempts().stream()
+                        .map(attempt -> Integer.toString(attempt.attemptNumber()))
+                        .collect(java.util.stream.Collectors.toSet()));
+        requirePersistedChildIdentitiesAreSubmitted(
+                run.id(),
+                "finding",
+                jdbcTemplate.queryForList("""
+                                SELECT fingerprint
+                                FROM review_findings
+                                WHERE review_run_id = ?
+                                ORDER BY fingerprint
+                                """, String.class, run.id().value()),
+                run.findings().stream()
+                        .map(finding -> finding.fingerprint().value())
+                        .collect(java.util.stream.Collectors.toSet()));
+    }
+
+    private static void requirePersistedChildIdentitiesAreSubmitted(
+            ReviewRunId id, String childType, List<String> persistedIdentities,
+            Set<String> submittedIdentities) {
+        List<String> omittedIdentities = persistedIdentities.stream()
+                .filter(identity -> !submittedIdentities.contains(identity))
+                .toList();
+        if (!omittedIdentities.isEmpty()) {
+            throw new ReviewRunChildIdentityMismatchException(id, childType, omittedIdentities);
+        }
     }
 
     private void insertAttempt(ReviewRunId id, ReviewAttempt attempt) {
