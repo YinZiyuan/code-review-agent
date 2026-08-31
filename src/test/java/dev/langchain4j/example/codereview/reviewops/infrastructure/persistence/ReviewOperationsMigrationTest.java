@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,6 +36,11 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
         assertThat(constraintColumns("durable_jobs", "u"))
                 .contains(List.of("idempotency_key"));
         assertThat(unpublishedOutboxIndexExists()).isTrue();
+    }
+
+    @Test
+    void rerunningFlywayOnTheMigratedDatabaseExecutesNoMigrations() {
+        assertThat(flyway.migrate().migrationsExecuted).isZero();
     }
 
     private List<String> tableNames() throws SQLException {
@@ -101,5 +107,59 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             resultSet.next();
             return resultSet.getBoolean(1);
         }
+    }
+}
+
+class PostgresIntegrationSupportCompatibilityTest {
+
+    private static final String DOCKER_API_VERSION_PROPERTY = "api.version";
+
+    private String originalApiVersion;
+
+    @org.junit.jupiter.api.BeforeEach
+    void preserveOriginalApiVersion() {
+        originalApiVersion = System.getProperty(DOCKER_API_VERSION_PROPERTY);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void restoreOriginalApiVersion() {
+        if (originalApiVersion == null) {
+            System.clearProperty(DOCKER_API_VERSION_PROPERTY);
+        } else {
+            System.setProperty(DOCKER_API_VERSION_PROPERTY, originalApiVersion);
+        }
+    }
+
+    @Test
+    void preservesAnExplicitCallerApiVersionAndRestoresItAfterTheCompatibilityScope() {
+        System.setProperty(DOCKER_API_VERSION_PROPERTY, "1.45");
+
+        Runnable restore = PostgresIntegrationSupport.configureDockerApiVersion(() -> Optional.of("1.44"));
+
+        assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isEqualTo("1.45");
+        restore.run();
+        assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isEqualTo("1.45");
+    }
+
+    @Test
+    void suppliesAndRemovesTheFallbackOnlyForADaemonThatRequiresIt() {
+        System.clearProperty(DOCKER_API_VERSION_PROPERTY);
+
+        Runnable restore = PostgresIntegrationSupport.configureDockerApiVersion(() -> Optional.of("1.44"));
+
+        assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isEqualTo("1.44");
+        restore.run();
+        assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isNull();
+    }
+
+    @Test
+    void leavesApiVersionUnsetWhenTheDaemonSupportsTestcontainersDefault() {
+        System.clearProperty(DOCKER_API_VERSION_PROPERTY);
+
+        Runnable restore = PostgresIntegrationSupport.configureDockerApiVersion(() -> Optional.of("1.32"));
+
+        assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isNull();
+        restore.run();
+        assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isNull();
     }
 }
