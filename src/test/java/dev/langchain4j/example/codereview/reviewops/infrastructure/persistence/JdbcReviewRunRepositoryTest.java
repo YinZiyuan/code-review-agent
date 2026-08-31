@@ -1,0 +1,278 @@
+package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
+import dev.langchain4j.example.codereview.reviewops.domain.CitationEvidence;
+import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
+import dev.langchain4j.example.codereview.reviewops.domain.DuplicateReviewRunException;
+import dev.langchain4j.example.codereview.reviewops.domain.ExecutionMeasurements;
+import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingCategory;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingContent;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingEvidence;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprint;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingSeverity;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationReference;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
+import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewAttemptState;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewFinding;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunConcurrencyException;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunState;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
+
+    private static final Instant REQUESTED_AT = Instant.parse("2026-08-31T01:00:00Z");
+    private static final Instant FIRST_ATTEMPT_ENDED_AT = REQUESTED_AT.plusSeconds(2);
+    private static final Instant SECOND_ATTEMPT_STARTED_AT = REQUESTED_AT.plusSeconds(3);
+    private static final Instant COMPLETED_AT = REQUESTED_AT.plusSeconds(8);
+    private static final Instant PUBLISHED_AT = REQUESTED_AT.plusSeconds(10);
+    private static final FindingFingerprint INLINE_FINGERPRINT =
+            new FindingFingerprint("a".repeat(64));
+    private static final FindingFingerprint SUMMARY_FINGERPRINT =
+            new FindingFingerprint("b".repeat(64));
+
+    private JdbcTemplate jdbcTemplate;
+    private TransactionTemplate transactionTemplate;
+    private JdbcReviewRunRepository repository;
+
+    @BeforeEach
+    void setUpRepository() {
+        jdbcTemplate = new JdbcTemplate(dataSource);
+        transactionTemplate = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        repository = new JdbcReviewRunRepository(
+                jdbcTemplate, transactionTemplate, new JsonColumnCodec(new ObjectMapper()));
+        jdbcTemplate.execute("TRUNCATE TABLE review_runs CASCADE");
+    }
+
+    @Test
+    void roundTripsARequestedReviewAtVersionZeroWithoutReplayingEvents() {
+        ReviewRun requested = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000001")));
+
+        repository.insert(requested);
+
+        assertStoredRun(repository.find(requested.id()).orElseThrow(), requested, 0);
+        assertThat(repository.find(ReviewRunId.newId())).isEmpty();
+    }
+
+    @Test
+    void roundTripsCompletedAggregateChildrenAndReplacesTheRunningAttemptOnUpdate() {
+        ReviewRun running = runningRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000002")));
+        repository.insert(running);
+        ReviewRun loaded = repository.find(running.id()).orElseThrow().reviewRun();
+
+        loaded.completeReview(findings(), successfulMeasurements(), COMPLETED_AT);
+        loaded.acceptPublicationDecisions(publicationDecisions());
+        long nextVersion = repository.update(loaded, 0);
+
+        assertThat(nextVersion).isEqualTo(1);
+        assertStoredRun(repository.find(loaded.id()).orElseThrow(), loaded, 1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM review_attempts WHERE review_run_id = ?",
+                Integer.class, loaded.id().value())).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM review_findings WHERE review_run_id = ?",
+                Integer.class, loaded.id().value())).isEqualTo(2);
+    }
+
+    @Test
+    void roundTripsPublicationReferencesAndRootCompletionTimestamp() {
+        ReviewRun published = completedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000003")));
+        published.authorizePublication(new AuthoritativeRevision(published.revision().headSha()), COMPLETED_AT);
+        published.confirmPublication(
+                "check-run-314",
+                Map.of(INLINE_FINGERPRINT, new PublicationReference("REVIEW_COMMENT", "comment-2718")),
+                PUBLISHED_AT);
+
+        repository.insert(published);
+
+        assertStoredRun(repository.find(published.id()).orElseThrow(), published, 0);
+    }
+
+    @Test
+    void roundTripsFinalFailureAndItsTimestamp() {
+        ReviewRun failed = completedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000004")));
+        failed.authorizePublication(new AuthoritativeRevision(failed.revision().headSha()), COMPLETED_AT);
+        failed.recordPublicationFailure(
+                new ReviewFailure("GITHUB_UNAVAILABLE", FailureClass.TERMINAL, "publication unavailable"),
+                PUBLISHED_AT);
+
+        repository.insert(failed);
+
+        assertStoredRun(repository.find(failed.id()).orElseThrow(), failed, 0);
+    }
+
+    @Test
+    void roundTripsACancelledAttemptWhenARunningReviewIsSuperseded() {
+        ReviewRun superseded = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000005")));
+        superseded.startAttempt(REQUESTED_AT.plusSeconds(1));
+        superseded.supersede(new AuthoritativeRevision("new-head-sha"), FIRST_ATTEMPT_ENDED_AT);
+
+        repository.insert(superseded);
+
+        assertStoredRun(repository.find(superseded.id()).orElseThrow(), superseded, 0);
+        assertThat(repository.find(superseded.id()).orElseThrow().reviewRun().attempts().get(0).state())
+                .isEqualTo(ReviewAttemptState.CANCELLED);
+    }
+
+    @Test
+    void translatesOnlyTheSixColumnBusinessIdentityConflictToDuplicateReviewRun() {
+        ReviewRun original = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000006")));
+        ReviewRun duplicateIdentity = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000007")));
+        repository.insert(original);
+
+        assertThatThrownBy(() -> repository.insert(duplicateIdentity))
+                .isInstanceOfSatisfying(DuplicateReviewRunException.class,
+                        exception -> assertThat(exception.reviewRunId()).isEqualTo(duplicateIdentity.id()));
+        assertThat(repository.find(original.id())).isPresent();
+        assertThat(repository.find(duplicateIdentity.id())).isEmpty();
+    }
+
+    @Test
+    void rejectsTheSecondUpdateFromTwoReadersOfVersionZero() {
+        ReviewRun original = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000008")));
+        repository.insert(original);
+        ReviewRunRepository.StoredReviewRun firstRead = repository.find(original.id()).orElseThrow();
+        ReviewRunRepository.StoredReviewRun secondRead = repository.find(original.id()).orElseThrow();
+        firstRead.reviewRun().startAttempt(REQUESTED_AT.plusSeconds(1));
+        secondRead.reviewRun().startAttempt(REQUESTED_AT.plusSeconds(2));
+
+        assertThat(repository.update(firstRead.reviewRun(), firstRead.version())).isEqualTo(1);
+
+        assertThatThrownBy(() -> repository.update(secondRead.reviewRun(), secondRead.version()))
+                .isInstanceOfSatisfying(ReviewRunConcurrencyException.class, exception -> {
+                    assertThat(exception.reviewRunId()).isEqualTo(original.id());
+                    assertThat(exception.expectedVersion()).isZero();
+                });
+        assertThat(repository.find(original.id()).orElseThrow().version()).isEqualTo(1);
+        assertThat(repository.find(original.id()).orElseThrow().reviewRun().attempts().get(0).startedAt())
+                .isEqualTo(REQUESTED_AT.plusSeconds(1));
+    }
+
+    @Test
+    void joinsAnExistingRequiredTransaction() {
+        ReviewRun requested = requestedRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000009")));
+
+        transactionTemplate.executeWithoutResult(status -> {
+            repository.insert(requested);
+            status.setRollbackOnly();
+        });
+
+        assertThat(repository.find(requested.id())).isEmpty();
+    }
+
+    @Test
+    void jsonCodecPreservesTheOriginalJacksonCauseForMalformedPersistedJson() {
+        JsonColumnCodec codec = new JsonColumnCodec(new ObjectMapper());
+
+        assertThatThrownBy(() -> codec.decodeToolStates("not-json"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasCauseInstanceOf(JsonProcessingException.class);
+    }
+
+    private static ReviewRun requestedRun(ReviewRunId id) {
+        return ReviewRun.request(id,
+                new PullRequestRevision(101, 202, 303, "reviewed-head-sha"),
+                new ReviewConfigurationSnapshot(
+                        "pipeline-v3", "configuration-v7", "kimi-k2", "policy-v5", 3),
+                REQUESTED_AT);
+    }
+
+    private static ReviewRun runningRun(ReviewRunId id) {
+        ReviewRun run = requestedRun(id);
+        run.startAttempt(REQUESTED_AT);
+        run.recordTransientAttemptFailure(
+                new ReviewFailure("MODEL_TIMEOUT", FailureClass.TRANSIENT, "model timed out"),
+                new ExecutionMeasurements(2_000, 120, 0, Map.of("regex", "RAN", "spotbugs", "SKIPPED")),
+                FIRST_ATTEMPT_ENDED_AT);
+        run.startAttempt(SECOND_ATTEMPT_STARTED_AT);
+        return run;
+    }
+
+    private static ReviewRun completedRun(ReviewRunId id) {
+        ReviewRun run = runningRun(id);
+        run.completeReview(findings(), successfulMeasurements(), COMPLETED_AT);
+        run.acceptPublicationDecisions(publicationDecisions());
+        run.drainEvents();
+        return run;
+    }
+
+    private static ExecutionMeasurements successfulMeasurements() {
+        return new ExecutionMeasurements(
+                5_000, 1_200, 340, Map.of("regex", "RAN", "spotbugs", "RAN", "rag", "RAN"));
+    }
+
+    private static List<ReviewFinding> findings() {
+        return List.of(
+                new ReviewFinding(
+                        INLINE_FINGERPRINT,
+                        new CodeLocation("src/main/java/example/Service.java", 41, true),
+                        new FindingContent(
+                                FindingSeverity.CRITICAL, FindingCategory.SECURITY,
+                                "SQL injection", "User input reaches SQL", "Bind the value"),
+                        new FindingEvidence(
+                                "request parameter flows into the query",
+                                List.of(new CitationEvidence("owasp-sqli", "OWASP", "Prevention")),
+                                "hybrid-rag")),
+                new ReviewFinding(
+                        SUMMARY_FINGERPRINT,
+                        new CodeLocation("src/test/java/example/ServiceTest.java", 19, false),
+                        new FindingContent(
+                                FindingSeverity.SUGGESTION, FindingCategory.TEST,
+                                "Missing regression", "The failure path is uncovered", "Add a regression test"),
+                        new FindingEvidence("no assertion covers the failure", List.of(), "llm")));
+    }
+
+    private static Map<FindingFingerprint, PublicationDecision> publicationDecisions() {
+        return Map.of(
+                INLINE_FINGERPRINT, new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v5"),
+                SUMMARY_FINGERPRINT, new PublicationDecision(PublicationTier.CHECK_SUMMARY, "policy-v5"));
+    }
+
+    private static void assertStoredRun(ReviewRunRepository.StoredReviewRun stored,
+                                        ReviewRun expected, long expectedVersion) {
+        ReviewRun actual = stored.reviewRun();
+        assertThat(stored.version()).isEqualTo(expectedVersion);
+        assertThat(actual.id()).isEqualTo(expected.id());
+        assertThat(actual.revision()).isEqualTo(expected.revision());
+        assertThat(actual.configuration()).isEqualTo(expected.configuration());
+        assertThat(actual.requestedAt()).isEqualTo(expected.requestedAt());
+        assertThat(actual.state()).isEqualTo(expected.state());
+        assertThat(actual.attempts()).usingRecursiveComparison().isEqualTo(expected.attempts());
+        assertThat(actual.findings()).usingRecursiveComparison().isEqualTo(expected.findings());
+        assertThat(actual.commentReferences()).isEqualTo(expected.commentReferences());
+        assertThat(actual.checkRunExternalId()).isEqualTo(expected.checkRunExternalId());
+        assertThat(actual.finalFailure()).isEqualTo(expected.finalFailure());
+        assertThat(actual.finishedAt()).isEqualTo(expected.finishedAt());
+        assertThat(actual.drainEvents()).isEmpty();
+    }
+}
