@@ -2,10 +2,14 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.time.Duration;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -161,5 +165,79 @@ class PostgresIntegrationSupportCompatibilityTest {
         assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isNull();
         restore.run();
         assertThat(System.getProperty(DOCKER_API_VERSION_PROPERTY)).isNull();
+    }
+
+    @Test
+    void boundedDockerApiProbeForcefullyTerminatesASilentProcess() {
+        SilentProcess process = new SilentProcess();
+        long startedAt = System.nanoTime();
+
+        Optional<String> result = PostgresIntegrationSupport.dockerMinimumApiVersion(process, () -> {
+            throw new AssertionError("output must not be read before a successful process exit");
+        });
+
+        assertThat(result).isEmpty();
+        assertThat(Duration.ofNanos(System.nanoTime() - startedAt)).isLessThan(Duration.ofSeconds(1));
+        assertThat(process.forcefullyDestroyed).isTrue();
+        assertThat(process.boundedWaitCount).isEqualTo(2);
+        assertThat(process.unboundedWaitCalled).isFalse();
+    }
+
+    private static final class SilentProcess extends Process {
+
+        private boolean forcefullyDestroyed;
+        private int boundedWaitCount;
+        private boolean unboundedWaitCalled;
+
+        @Override
+        public ByteArrayOutputStream getOutputStream() {
+            return new ByteArrayOutputStream();
+        }
+
+        @Override
+        public ByteArrayInputStream getInputStream() {
+            return new ByteArrayInputStream(new byte[0]);
+        }
+
+        @Override
+        public ByteArrayInputStream getErrorStream() {
+            return new ByteArrayInputStream(new byte[0]);
+        }
+
+        @Override
+        public int waitFor() {
+            unboundedWaitCalled = true;
+            throw new AssertionError("probe must not wait indefinitely");
+        }
+
+        @Override
+        public boolean waitFor(long timeout, TimeUnit unit) {
+            boundedWaitCount++;
+            return forcefullyDestroyed;
+        }
+
+        @Override
+        public int exitValue() {
+            if (!forcefullyDestroyed) {
+                throw new IllegalThreadStateException("process is still running");
+            }
+            return 137;
+        }
+
+        @Override
+        public void destroy() {
+            forcefullyDestroyed = true;
+        }
+
+        @Override
+        public Process destroyForcibly() {
+            forcefullyDestroyed = true;
+            return this;
+        }
+
+        @Override
+        public boolean isAlive() {
+            return !forcefullyDestroyed;
+        }
     }
 }

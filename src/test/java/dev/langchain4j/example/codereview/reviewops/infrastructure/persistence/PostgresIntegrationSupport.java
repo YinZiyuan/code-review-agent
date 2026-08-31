@@ -7,9 +7,10 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.testcontainers.containers.PostgreSQLContainer;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -18,6 +19,7 @@ abstract class PostgresIntegrationSupport {
 
     private static final String DOCKER_API_VERSION_PROPERTY = "api.version";
     private static final int TESTCONTAINERS_DEFAULT_DOCKER_API_MINOR_VERSION = 32;
+    private static final int DOCKER_API_OUTPUT_MAX_BYTES = 1024;
 
     protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
     protected static HikariDataSource dataSource;
@@ -72,23 +74,61 @@ abstract class PostgresIntegrationSupport {
     }
 
     private static Optional<String> dockerMinimumApiVersion() {
+        Path output = null;
         try {
+            output = Files.createTempFile("code-review-agent-docker-api-", ".txt");
             Process process = new ProcessBuilder("docker", "version", "--format", "{{.Server.MinAPIVersion}}")
-                    .redirectErrorStream(true)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .redirectOutput(output.toFile())
                     .start();
-            String output;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                output = reader.readLine();
-            }
-            if (!process.waitFor(10, TimeUnit.SECONDS) || process.exitValue() != 0) {
-                return Optional.empty();
-            }
-            return Optional.ofNullable(output).map(String::trim).filter(value -> !value.isEmpty());
+            Path capturedOutput = output;
+            return dockerMinimumApiVersion(process, () -> readDockerApiVersion(capturedOutput));
         } catch (IOException exception) {
             return Optional.empty();
+        } finally {
+            if (output != null) {
+                try {
+                    Files.deleteIfExists(output);
+                } catch (IOException ignored) {
+                    // The operating system will clean up a failed test probe artifact.
+                }
+            }
+        }
+    }
+
+    static Optional<String> dockerMinimumApiVersion(Process process, Supplier<Optional<String>> capturedOutput) {
+        try {
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                forcefullyTerminate(process);
+                return Optional.empty();
+            }
+            if (process.exitValue() != 0) {
+                return Optional.empty();
+            }
+            return capturedOutput.get();
         } catch (InterruptedException exception) {
+            forcefullyTerminate(process);
             Thread.currentThread().interrupt();
             return Optional.empty();
+        }
+    }
+
+    private static Optional<String> readDockerApiVersion(Path output) {
+        try (var input = Files.newInputStream(output)) {
+            return Optional.of(new String(input.readNBytes(DOCKER_API_OUTPUT_MAX_BYTES), StandardCharsets.UTF_8))
+                    .map(String::trim)
+                    .filter(value -> !value.isEmpty());
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private static void forcefullyTerminate(Process process) {
+        process.destroyForcibly();
+        try {
+            process.waitFor(1, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
         }
     }
 
