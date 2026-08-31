@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -121,6 +122,103 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                             WHERE table_schema = ? AND table_name = 'durable_jobs'
                               AND column_name = 'initial_next_attempt_at'
                             """, String.class, schema)).isEqualTo("NO");
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
+    void v2RejectsLegacyJobsWhoseInitialScheduleCannotBeRecovered() throws Exception {
+        String schema = "job_intent_unsafe_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try (var connection = DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setSchema(schema);
+            SingleConnectionDataSource isolatedDataSource =
+                    new SingleConnectionDataSource(connection, true);
+            Flyway v1 = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .target("1")
+                    .load();
+            v1.migrate();
+            JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
+            Instant createdAt = Instant.parse("2026-08-31T02:00:00Z");
+            Instant retryAt = Instant.parse("2026-08-31T02:05:00Z");
+            isolated.update("""
+                            INSERT INTO durable_jobs (
+                                id, job_type, payload_reference, state, attempt_count, max_attempts,
+                                next_attempt_at, last_failure_class, idempotency_key,
+                                created_at, updated_at)
+                            VALUES (?, 'REVIEW_EXECUTION', ?, 'READY', 1, 3,
+                                    ?, 'TRANSIENT', 'rescheduled-legacy-job', ?, ?)
+                            """,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    Timestamp.from(retryAt),
+                    Timestamp.from(createdAt),
+                    Timestamp.from(createdAt.plusSeconds(30)));
+
+            Flyway latest = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .load();
+
+            assertThatThrownBy(latest::migrate)
+                    .isInstanceOf(FlywayException.class)
+                    .hasStackTraceContaining(
+                            "cannot safely infer durable_jobs.initial_next_attempt_at")
+                    .hasStackTraceContaining("authoritative backfill or manual resolution");
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
+    void v2RejectsLifecycleEvidenceEvenWhenLegacyAttemptCountIsZero() throws Exception {
+        String schema = "job_intent_suspect_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try (var connection = DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setSchema(schema);
+            SingleConnectionDataSource isolatedDataSource =
+                    new SingleConnectionDataSource(connection, true);
+            Flyway v1 = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .target("1")
+                    .load();
+            v1.migrate();
+            JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
+            Instant createdAt = Instant.parse("2026-08-31T02:00:00Z");
+            isolated.update("""
+                            INSERT INTO durable_jobs (
+                                id, job_type, payload_reference, state, attempt_count, max_attempts,
+                                next_attempt_at, last_failure_class, idempotency_key,
+                                created_at, updated_at)
+                            VALUES (?, 'REVIEW_EXECUTION', ?, 'READY', 0, 3,
+                                    ?, 'TRANSIENT', 'suspect-legacy-job', ?, ?)
+                            """,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    Timestamp.from(createdAt.plusSeconds(300)),
+                    Timestamp.from(createdAt),
+                    Timestamp.from(createdAt.plusSeconds(30)));
+
+            Flyway latest = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .load();
+
+            assertThatThrownBy(latest::migrate)
+                    .isInstanceOf(FlywayException.class)
+                    .hasStackTraceContaining(
+                            "cannot safely infer durable_jobs.initial_next_attempt_at")
+                    .hasStackTraceContaining("authoritative backfill or manual resolution");
         } finally {
             jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
         }
