@@ -21,7 +21,9 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -60,6 +62,14 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                         "head_sha",
                         "pipeline_version",
                         "configuration_version"));
+        assertThat(constraintColumnsByName("review_runs", "u"))
+                .containsEntry("uq_review_runs_business_identity", List.of(
+                        "installation_id",
+                        "repository_id",
+                        "pull_request_number",
+                        "head_sha",
+                        "pipeline_version",
+                        "configuration_version"));
         assertThat(constraintColumns("review_attempts", "p"))
                 .contains(List.of("review_run_id", "attempt_number"));
         assertThat(constraintColumns("review_findings", "p"))
@@ -67,6 +77,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
         assertThat(constraintColumns("durable_jobs", "u"))
                 .contains(List.of("idempotency_key"));
         assertThat(unpublishedOutboxIndexExists()).isTrue();
+        assertThat(unpublishedOutboxIndexColumns())
+                .containsExactly("occurred_at", "event_id");
     }
 
     @Test
@@ -491,6 +503,39 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
         }
     }
 
+    private Map<String, List<String>> constraintColumnsByName(
+            String tableName, String constraintType) throws SQLException {
+        try (var connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT constraint_definition.conname,
+                            array_agg(attribute.attname ORDER BY key_columns.ordinality) AS columns
+                     FROM pg_constraint constraint_definition
+                     JOIN pg_class table_definition ON table_definition.oid = constraint_definition.conrelid
+                     JOIN pg_namespace schema_definition ON schema_definition.oid = table_definition.relnamespace
+                     CROSS JOIN unnest(constraint_definition.conkey) WITH ORDINALITY
+                         AS key_columns(attribute_number, ordinality)
+                     JOIN pg_attribute attribute
+                         ON attribute.attrelid = table_definition.oid
+                        AND attribute.attnum = key_columns.attribute_number
+                     WHERE schema_definition.nspname = 'public'
+                       AND table_definition.relname = ?
+                       AND constraint_definition.contype = ?
+                     GROUP BY constraint_definition.oid, constraint_definition.conname
+                     """)) {
+            statement.setString(1, tableName);
+            statement.setString(2, constraintType);
+            try (var resultSet = statement.executeQuery()) {
+                Map<String, List<String>> constraints = new LinkedHashMap<>();
+                while (resultSet.next()) {
+                    constraints.put(
+                            resultSet.getString("conname"),
+                            List.of((String[]) resultSet.getArray("columns").getArray()));
+                }
+                return constraints;
+            }
+        }
+    }
+
     private boolean unpublishedOutboxIndexExists() throws SQLException {
         try (var connection = dataSource.getConnection();
              var statement = connection.prepareStatement("""
@@ -506,6 +551,37 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
              var resultSet = statement.executeQuery()) {
             resultSet.next();
             return resultSet.getBoolean(1);
+        }
+    }
+
+    private List<String> unpublishedOutboxIndexColumns() throws SQLException {
+        try (var connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT attribute.attname
+                     FROM pg_index index_metadata
+                     JOIN pg_class index_definition
+                       ON index_definition.oid = index_metadata.indexrelid
+                     JOIN pg_class table_definition
+                       ON table_definition.oid = index_metadata.indrelid
+                     JOIN pg_namespace schema_definition
+                       ON schema_definition.oid = table_definition.relnamespace
+                     CROSS JOIN unnest(index_metadata.indkey) WITH ORDINALITY
+                       AS key_columns(attribute_number, ordinality)
+                     JOIN pg_attribute attribute
+                       ON attribute.attrelid = table_definition.oid
+                      AND attribute.attnum = key_columns.attribute_number
+                     WHERE schema_definition.nspname = 'public'
+                       AND table_definition.relname = 'outbox_events'
+                       AND index_definition.relname = 'idx_outbox_events_unpublished'
+                     ORDER BY key_columns.ordinality
+                     """)) {
+            try (var resultSet = statement.executeQuery()) {
+                List<String> columns = new ArrayList<>();
+                while (resultSet.next()) {
+                    columns.add(resultSet.getString("attname"));
+                }
+                return columns;
+            }
         }
     }
 }

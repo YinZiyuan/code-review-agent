@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 @Component
-@Command(name = "review", description = "Review a git diff")
+@Command(name = "review", description = "Review a git diff", mixinStandardHelpOptions = true)
 public class ReviewCommand implements Callable<Integer> {
 
     @Parameters(index = "0", description = "Path to git repository", defaultValue = ".")

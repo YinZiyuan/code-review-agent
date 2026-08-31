@@ -41,7 +41,7 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
 
     private static final int MAX_SNAPSHOT_READ_ATTEMPTS = 3;
     private static final String BUSINESS_IDENTITY_CONSTRAINT =
-            "review_runs_installation_id_repository_id_pull_request_numb_key";
+            "uq_review_runs_business_identity";
 
     private static final String SELECT_ROOT = """
             SELECT id, installation_id, repository_id, pull_request_number, head_sha,
@@ -110,11 +110,15 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
     @Override
     public void insert(ReviewRun reviewRun) {
         Objects.requireNonNull(reviewRun, "reviewRun");
+        transactions.executeWithoutResult(status -> {
+            insertRootTranslatingBusinessDuplicate(reviewRun);
+            insertOwnedChildren(reviewRun);
+        });
+    }
+
+    private void insertRootTranslatingBusinessDuplicate(ReviewRun reviewRun) {
         try {
-            transactions.executeWithoutResult(status -> {
-                insertRoot(reviewRun);
-                insertOwnedChildren(reviewRun);
-            });
+            insertRoot(reviewRun);
         } catch (DataIntegrityViolationException exception) {
             if (BUSINESS_IDENTITY_CONSTRAINT.equals(postgresConstraintName(exception))) {
                 throw new DuplicateReviewRunException(reviewRun.id());
@@ -134,8 +138,7 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
             if (updated == 0) {
                 throw new ReviewRunConcurrencyException(reviewRun.id(), expectedVersion);
             }
-            deleteOwnedChildren(reviewRun.id());
-            insertOwnedChildren(reviewRun);
+            upsertOwnedChildren(reviewRun);
             return expectedVersion + 1;
         });
         return Objects.requireNonNull(nextVersion, "transaction result");
@@ -193,9 +196,9 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
         run.findings().forEach(finding -> insertFinding(run.id(), finding));
     }
 
-    private void deleteOwnedChildren(ReviewRunId id) {
-        jdbcTemplate.update("DELETE FROM review_findings WHERE review_run_id = ?", id.value());
-        jdbcTemplate.update("DELETE FROM review_attempts WHERE review_run_id = ?", id.value());
+    private void upsertOwnedChildren(ReviewRun run) {
+        run.attempts().forEach(attempt -> upsertAttempt(run.id(), attempt));
+        run.findings().forEach(finding -> upsertFinding(run.id(), finding));
     }
 
     private void insertAttempt(ReviewRunId id, ReviewAttempt attempt) {
@@ -220,6 +223,60 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                 failure == null ? null : failure.code(),
                 failure == null ? null : failure.classification().name(),
                 failure == null ? null : failure.safeMessage());
+    }
+
+    private void upsertAttempt(ReviewRunId id, ReviewAttempt attempt) {
+        ExecutionMeasurements measurements = attempt.measurements().orElse(null);
+        ReviewFailure failure = attempt.failure().orElse(null);
+        int affected = jdbcTemplate.update("""
+                        INSERT INTO review_attempts (
+                            review_run_id, attempt_number, state, started_at, ended_at,
+                            latency_ms, input_tokens, output_tokens, tool_states,
+                            failure_code, failure_class, failure_safe_message)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?)
+                        ON CONFLICT (review_run_id, attempt_number) DO UPDATE
+                        SET state = EXCLUDED.state,
+                            ended_at = EXCLUDED.ended_at,
+                            latency_ms = EXCLUDED.latency_ms,
+                            input_tokens = EXCLUDED.input_tokens,
+                            output_tokens = EXCLUDED.output_tokens,
+                            tool_states = EXCLUDED.tool_states,
+                            failure_code = EXCLUDED.failure_code,
+                            failure_class = EXCLUDED.failure_class,
+                            failure_safe_message = EXCLUDED.failure_safe_message
+                        WHERE review_attempts.started_at = EXCLUDED.started_at
+                          AND (
+                              (review_attempts.state = 'STARTED'
+                                  AND EXCLUDED.state IN (
+                                      'STARTED', 'SUCCEEDED', 'TRANSIENT_FAILURE',
+                                      'TERMINAL_FAILURE', 'CANCELLED'))
+                              OR (
+                                  review_attempts.state = EXCLUDED.state
+                                  AND review_attempts.ended_at IS NOT DISTINCT FROM EXCLUDED.ended_at
+                                  AND review_attempts.latency_ms IS NOT DISTINCT FROM EXCLUDED.latency_ms
+                                  AND review_attempts.input_tokens IS NOT DISTINCT FROM EXCLUDED.input_tokens
+                                  AND review_attempts.output_tokens IS NOT DISTINCT FROM EXCLUDED.output_tokens
+                                  AND review_attempts.tool_states IS NOT DISTINCT FROM EXCLUDED.tool_states
+                                  AND review_attempts.failure_code IS NOT DISTINCT FROM EXCLUDED.failure_code
+                                  AND review_attempts.failure_class IS NOT DISTINCT FROM EXCLUDED.failure_class
+                                  AND review_attempts.failure_safe_message
+                                      IS NOT DISTINCT FROM EXCLUDED.failure_safe_message
+                              )
+                          )
+                        """,
+                id.value(),
+                attempt.attemptNumber(),
+                attempt.state().name(),
+                timestamp(attempt.startedAt()),
+                attempt.endedAt().map(JdbcReviewRunRepository::timestamp).orElse(null),
+                measurements == null ? null : measurements.latencyMs(),
+                measurements == null ? null : measurements.inputTokens(),
+                measurements == null ? null : measurements.outputTokens(),
+                measurements == null ? null : jsonCodec.encodeToolStates(measurements.toolStates()),
+                failure == null ? null : failure.code(),
+                failure == null ? null : failure.classification().name(),
+                failure == null ? null : failure.safeMessage());
+        requireIdentityAwareWrite(affected, "attempt", id, Integer.toString(attempt.attemptNumber()));
     }
 
     private void insertFinding(ReviewRunId id, ReviewFinding finding) {
@@ -250,6 +307,82 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                 decision == null ? null : decision.policyVersion(),
                 reference == null ? null : reference.artifactType(),
                 reference == null ? null : reference.externalId());
+    }
+
+    private void upsertFinding(ReviewRunId id, ReviewFinding finding) {
+        PublicationDecision decision = finding.publicationDecision().orElse(null);
+        PublicationReference reference = finding.publicationReference().orElse(null);
+        int affected = jdbcTemplate.update("""
+                        INSERT INTO review_findings (
+                            review_run_id, fingerprint, file_path, post_change_line, changed_line,
+                            severity, category, title, description, suggestion,
+                            evidence, citations, source, publication_tier,
+                            publication_policy_version, artifact_type, artifact_external_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, ?)
+                        ON CONFLICT (review_run_id, fingerprint) DO UPDATE
+                        SET publication_tier = EXCLUDED.publication_tier,
+                            publication_policy_version = EXCLUDED.publication_policy_version,
+                            artifact_type = EXCLUDED.artifact_type,
+                            artifact_external_id = EXCLUDED.artifact_external_id
+                        WHERE review_findings.file_path = EXCLUDED.file_path
+                          AND review_findings.post_change_line = EXCLUDED.post_change_line
+                          AND review_findings.changed_line = EXCLUDED.changed_line
+                          AND review_findings.severity = EXCLUDED.severity
+                          AND review_findings.category = EXCLUDED.category
+                          AND review_findings.title = EXCLUDED.title
+                          AND review_findings.description = EXCLUDED.description
+                          AND review_findings.suggestion = EXCLUDED.suggestion
+                          AND review_findings.evidence = EXCLUDED.evidence
+                          AND review_findings.citations = EXCLUDED.citations
+                          AND review_findings.source = EXCLUDED.source
+                          AND (
+                              (review_findings.publication_tier IS NULL
+                                  AND review_findings.publication_policy_version IS NULL)
+                              OR (
+                                  review_findings.publication_tier
+                                      IS NOT DISTINCT FROM EXCLUDED.publication_tier
+                                  AND review_findings.publication_policy_version
+                                      IS NOT DISTINCT FROM EXCLUDED.publication_policy_version
+                              )
+                          )
+                          AND (
+                              (review_findings.artifact_type IS NULL
+                                  AND review_findings.artifact_external_id IS NULL)
+                              OR (
+                                  review_findings.artifact_type
+                                      IS NOT DISTINCT FROM EXCLUDED.artifact_type
+                                  AND review_findings.artifact_external_id
+                                      IS NOT DISTINCT FROM EXCLUDED.artifact_external_id
+                              )
+                          )
+                        """,
+                id.value(),
+                finding.fingerprint().value(),
+                finding.location().file(),
+                finding.location().line(),
+                finding.location().changedLine(),
+                finding.content().severity().name(),
+                finding.content().category().name(),
+                finding.content().title(),
+                finding.content().description(),
+                finding.content().suggestion(),
+                finding.evidence().evidence(),
+                jsonCodec.encodeCitations(finding.evidence().citations()),
+                finding.evidence().source(),
+                decision == null ? null : decision.tier().name(),
+                decision == null ? null : decision.policyVersion(),
+                reference == null ? null : reference.artifactType(),
+                reference == null ? null : reference.externalId());
+        requireIdentityAwareWrite(affected, "finding", id, finding.fingerprint().value());
+    }
+
+    private static void requireIdentityAwareWrite(int affected, String childType,
+                                                  ReviewRunId id, String childIdentity) {
+        if (affected != 1) {
+            throw new IllegalStateException(
+                    "Persisted " + childType + " identity or lifecycle conflicts with aggregate "
+                            + id.value() + ": " + childIdentity);
+        }
     }
 
     private List<ReviewAttempt> loadAttempts(ReviewRunId id) {

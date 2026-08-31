@@ -28,6 +28,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -85,24 +86,38 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
     }
 
     @Test
-    void roundTripsCompletedAggregateChildrenAndReplacesTheRunningAttemptOnUpdate() {
-        ReviewRun running = runningRun(new ReviewRunId(
+    void updatesAppendNewChildrenAndProgressTheirPublicationAtSuccessiveVersions() {
+        ReviewRun requested = requestedRun(new ReviewRunId(
                 UUID.fromString("00000000-0000-0000-0000-000000000002")));
-        repository.insert(running);
-        ReviewRun loaded = repository.find(running.id()).orElseThrow().reviewRun();
+        repository.insert(requested);
+        ReviewRun running = repository.find(requested.id()).orElseThrow().reviewRun();
+        running.startAttempt(SECOND_ATTEMPT_STARTED_AT);
 
-        loaded.completeReview(findings(), successfulMeasurements(), COMPLETED_AT);
-        loaded.acceptPublicationDecisions(publicationDecisions());
-        long nextVersion = repository.update(loaded, 0);
+        assertThat(repository.update(running, 0)).isEqualTo(1);
 
-        assertThat(nextVersion).isEqualTo(1);
-        assertStoredRun(repository.find(loaded.id()).orElseThrow(), loaded, 1);
+        ReviewRun completed = repository.find(requested.id()).orElseThrow().reviewRun();
+        completed.completeReview(findings(), successfulMeasurements(), COMPLETED_AT);
+        completed.acceptPublicationDecisions(publicationDecisions());
+
+        assertThat(repository.update(completed, 1)).isEqualTo(2);
+
+        assertStoredRun(repository.find(completed.id()).orElseThrow(), completed, 2);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM review_attempts WHERE review_run_id = ?",
-                Integer.class, loaded.id().value())).isEqualTo(2);
+                Integer.class, completed.id().value())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForList("""
+                        SELECT state FROM review_attempts
+                        WHERE review_run_id = ? ORDER BY attempt_number
+                        """, String.class, completed.id().value()))
+                .containsExactly("SUCCEEDED");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM review_findings WHERE review_run_id = ?",
-                Integer.class, loaded.id().value())).isEqualTo(2);
+                Integer.class, completed.id().value())).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForList("""
+                        SELECT publication_tier FROM review_findings
+                        WHERE review_run_id = ? ORDER BY fingerprint
+                        """, String.class, completed.id().value()))
+                .containsExactly("INLINE_COMMENT", "CHECK_SUMMARY");
     }
 
     @Test
@@ -118,6 +133,69 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
         repository.insert(published);
 
         assertStoredRun(repository.find(published.id()).orElseThrow(), published, 0);
+    }
+
+    @Test
+    void publicationUpdatesPreserveExistingFindingFeedbackAndItsAuditHistory() {
+        ReviewRun completed = completedRunWithoutDecisions(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000017")));
+        repository.insert(completed);
+        String auditEntries = """
+                [
+                  {"recordedAt":"2026-08-31T01:00:09Z","state":"HELPFUL"},
+                  {"recordedAt":"2026-08-31T01:00:10Z","state":"FALSE_POSITIVE"}
+                ]
+                """;
+        jdbcTemplate.update("""
+                        INSERT INTO finding_feedback (
+                            review_run_id, finding_fingerprint, actor_id, actor_login, state,
+                            github_reaction_id, audit_entries, first_recorded_at, last_changed_at)
+                        VALUES (?, ?, 404, 'reviewer', 'FALSE_POSITIVE', 505,
+                                CAST(? AS jsonb), ?, ?)
+                        """,
+                completed.id().value(), INLINE_FINGERPRINT.value(), auditEntries,
+                java.sql.Timestamp.from(REQUESTED_AT.plusSeconds(9)),
+                java.sql.Timestamp.from(REQUESTED_AT.plusSeconds(10)));
+
+        ReviewRun publishing = repository.find(completed.id()).orElseThrow().reviewRun();
+        publishing.acceptPublicationDecisions(publicationDecisions());
+        publishing.authorizePublication(
+                new AuthoritativeRevision(publishing.revision().headSha()), COMPLETED_AT.plusSeconds(1));
+
+        assertThat(repository.update(publishing, 0)).isEqualTo(1);
+
+        ReviewRun published = repository.find(completed.id()).orElseThrow().reviewRun();
+        published.confirmPublication(
+                "check-run-314",
+                Map.of(INLINE_FINGERPRINT, new PublicationReference("REVIEW_COMMENT", "comment-2718")),
+                PUBLISHED_AT);
+        assertThat(repository.update(published, 1)).isEqualTo(2);
+
+        assertStoredRun(repository.find(completed.id()).orElseThrow(), published, 2);
+        assertThat(jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM finding_feedback
+                        WHERE review_run_id = ? AND finding_fingerprint = ? AND actor_id = 404
+                        """, Integer.class, completed.id().value(), INLINE_FINGERPRINT.value()))
+                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                        SELECT audit_entries = CAST(? AS jsonb)
+                        FROM finding_feedback
+                        WHERE review_run_id = ? AND finding_fingerprint = ? AND actor_id = 404
+                        """, Boolean.class, auditEntries,
+                completed.id().value(), INLINE_FINGERPRINT.value())).isTrue();
+        assertThat(jdbcTemplate.queryForMap("""
+                        SELECT actor_login, state, github_reaction_id,
+                               first_recorded_at, last_changed_at, withdrawn_at
+                        FROM finding_feedback
+                        WHERE review_run_id = ? AND finding_fingerprint = ? AND actor_id = 404
+                        """, completed.id().value(), INLINE_FINGERPRINT.value()))
+                .containsEntry("actor_login", "reviewer")
+                .containsEntry("state", "FALSE_POSITIVE")
+                .containsEntry("github_reaction_id", 505L)
+                .containsEntry("first_recorded_at", java.sql.Timestamp.from(REQUESTED_AT.plusSeconds(9)))
+                .containsEntry("last_changed_at", java.sql.Timestamp.from(REQUESTED_AT.plusSeconds(10)))
+                .containsEntry("withdrawn_at", null);
     }
 
     @Test
@@ -161,6 +239,45 @@ class JdbcReviewRunRepositoryTest extends PostgresIntegrationSupport {
                         exception -> assertThat(exception.reviewRunId()).isEqualTo(duplicateIdentity.id()));
         assertThat(repository.find(original.id())).isPresent();
         assertThat(repository.find(duplicateIdentity.id())).isEmpty();
+    }
+
+    @Test
+    void doesNotTranslateAnUnrelatedChildConstraintThatSharesTheBusinessConstraintName() {
+        jdbcTemplate.execute("""
+                ALTER TABLE review_attempts
+                ADD CONSTRAINT uq_review_runs_business_identity CHECK (attempt_number <> 1)
+                """);
+        ReviewRun running = runningRun(new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000018")));
+        try {
+            assertThatThrownBy(() -> repository.insert(running))
+                    .isInstanceOf(DataIntegrityViolationException.class)
+                    .isNotInstanceOf(DuplicateReviewRunException.class);
+            assertThat(repository.find(running.id())).isEmpty();
+        } finally {
+            jdbcTemplate.execute("""
+                    ALTER TABLE review_attempts
+                    DROP CONSTRAINT uq_review_runs_business_identity
+                    """);
+        }
+    }
+
+    @Test
+    void doesNotTranslateTheUnrelatedReviewRunTechnicalPrimaryKeyConstraint() {
+        ReviewRunId sharedTechnicalId = new ReviewRunId(
+                UUID.fromString("00000000-0000-0000-0000-000000000019"));
+        ReviewRun original = requestedRun(sharedTechnicalId);
+        repository.insert(original);
+        ReviewRun technicalConflict = ReviewRun.request(
+                sharedTechnicalId,
+                new PullRequestRevision(101, 202, 303, "different-head-sha"),
+                original.configuration(),
+                REQUESTED_AT);
+
+        assertThatThrownBy(() -> repository.insert(technicalConflict))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .isNotInstanceOf(DuplicateReviewRunException.class);
+        assertStoredRun(repository.find(sharedTechnicalId).orElseThrow(), original, 0);
     }
 
     @Test

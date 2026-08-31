@@ -26,7 +26,10 @@ CREATE TABLE review_runs (
     ),
     finished_at TIMESTAMPTZ,
     version BIGINT NOT NULL DEFAULT 0 CHECK (version >= 0),
-    UNIQUE (installation_id, repository_id, pull_request_number, head_sha, pipeline_version, configuration_version)
+    CONSTRAINT uq_review_runs_business_identity UNIQUE (
+        installation_id, repository_id, pull_request_number,
+        head_sha, pipeline_version, configuration_version
+    )
 );
 
 CREATE TABLE github_deliveries (

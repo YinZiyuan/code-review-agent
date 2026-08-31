@@ -1,12 +1,12 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 
+import javax.sql.DataSource;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,7 +23,7 @@ public abstract class PostgresIntegrationSupport {
     private static final long OUTPUT_DRAINER_SHUTDOWN_TIMEOUT_MILLIS = 1000;
 
     protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
-    protected static HikariDataSource dataSource;
+    protected static DataSource dataSource;
     protected static Flyway flyway;
     private static Runnable restoreDockerApiVersion = () -> {
     };
@@ -35,11 +35,8 @@ public abstract class PostgresIntegrationSupport {
         try {
             POSTGRES.start();
 
-            HikariConfig configuration = new HikariConfig();
-            configuration.setJdbcUrl(POSTGRES.getJdbcUrl());
-            configuration.setUsername(POSTGRES.getUsername());
-            configuration.setPassword(POSTGRES.getPassword());
-            dataSource = new HikariDataSource(configuration);
+            dataSource = new DriverManagerDataSource(
+                    POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
 
             flyway = Flyway.configure().dataSource(dataSource).load();
             flyway.migrate();
@@ -54,9 +51,6 @@ public abstract class PostgresIntegrationSupport {
     @AfterAll
     static void stopPostgres() {
         try {
-            if (dataSource != null) {
-                dataSource.close();
-            }
             POSTGRES.stop();
         } finally {
             flyway = null;
