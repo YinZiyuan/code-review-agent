@@ -1,0 +1,18 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  flyway:
+    enabled: true
+
+code-review:
+  server:
+    github:
+      app-id: ${GITHUB_APP_ID:0}
+      private-key: ${GITHUB_APP_PRIVATE_KEY:}
+      webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
+      max-webhook-bytes: ${GITHUB_MAX_WEBHOOK_BYTES:1048576}
+    worker:
+      poll-interval: 1s
+      batch-size: 10

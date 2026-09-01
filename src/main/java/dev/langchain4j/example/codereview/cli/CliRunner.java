@@ -2,12 +2,14 @@ package dev.langchain4j.example.codereview.cli;
 
 import org.springframework.boot.ExitCodeGenerator;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine;
 import picocli.CommandLine.IFactory;
 
 @Component
+@ConditionalOnProperty(name = "code-review.runtime", havingValue = "cli", matchIfMissing = true)
 public class CliRunner implements ExitCodeGenerator {
 
     private final RootCommand rootCommand;
