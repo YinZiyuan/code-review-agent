@@ -1,7 +1,10 @@
 package dev.langchain4j.example.codereview.reviewops.application;
 
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
+import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
@@ -40,9 +43,15 @@ public final class PublishReviewOutcome {
             return settled;
         }
 
-        AuthoritativeRevision authoritative = Objects.requireNonNull(
-                github.authoritativeRevision(run.revision()),
-                "authoritative revision");
+        AuthoritativeRevision authoritative;
+        try {
+            authoritative = Objects.requireNonNull(
+                    github.authoritativeRevision(run.revision()),
+                    "authoritative revision");
+        } catch (GitHubFailureException failure) {
+            settleTerminalHeadLookupFailure(run, stored.version(), failure);
+            throw failure;
+        }
         if (!authoritative.matches(run.revision())) {
             if (run.state() == ReviewRunState.COMPLETED) {
                 run.authorizePublication(authoritative, clock.instant());
@@ -58,6 +67,28 @@ public final class PublishReviewOutcome {
             mutations.saveProgress(run, stored.version());
         }
         return PublicationOutcome.AUTHORIZED;
+    }
+
+    private void settleTerminalHeadLookupFailure(
+            ReviewRun run,
+            long expectedVersion,
+            GitHubFailureException failure) {
+        ReviewFailure terminalFailure = switch (failure.classification()) {
+            case TRANSIENT, RATE_LIMITED -> null;
+            case AUTHORIZATION -> new ReviewFailure(
+                    "github_authorization", FailureClass.TERMINAL, failure.getMessage());
+            case DETERMINISTIC_INPUT -> new ReviewFailure(
+                    "github_deterministic_input", FailureClass.TERMINAL, failure.getMessage());
+        };
+        if (terminalFailure == null) {
+            return;
+        }
+        if (run.state() == ReviewRunState.COMPLETED) {
+            run.recordPublicationAuthorizationFailure(terminalFailure, clock.instant());
+        } else {
+            run.recordPublicationFailure(terminalFailure, clock.instant());
+        }
+        mutations.saveProgress(run, expectedVersion);
     }
 
     private static PublicationOutcome settledOutcome(ReviewRunState state) {

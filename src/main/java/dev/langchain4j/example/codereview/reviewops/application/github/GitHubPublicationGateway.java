@@ -23,22 +23,94 @@ public interface GitHubPublicationGateway {
     InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request);
 
     record CheckRunRequest(
-            ReviewRunId reviewRunId,
+            ReviewRunId reconciliationExternalId,
             PullRequestRevision revision,
+            CheckPresentation presentation,
             List<PublicationFinding> findings,
-            Optional<String> existingExternalId) {
+            Optional<String> existingGitHubArtifactId) {
 
         public CheckRunRequest {
-            Objects.requireNonNull(reviewRunId, "reviewRunId");
+            Objects.requireNonNull(reconciliationExternalId, "reconciliationExternalId");
             Objects.requireNonNull(revision, "revision");
+            Objects.requireNonNull(presentation, "presentation");
             findings = List.copyOf(Objects.requireNonNull(findings, "findings"));
-            existingExternalId = existingExternalId == null
-                    ? Optional.empty() : existingExternalId;
-            existingExternalId.ifPresent(value -> {
+            if (presentation.outcome() == CheckOutcome.NEUTRAL_SYSTEM_FAILURE
+                    && !findings.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "system failure Check must not contain review findings");
+            }
+            existingGitHubArtifactId = existingGitHubArtifactId == null
+                    ? Optional.empty() : existingGitHubArtifactId;
+            existingGitHubArtifactId.ifPresent(value -> {
                 if (value.isBlank()) {
-                    throw new IllegalArgumentException("existingExternalId must not be blank");
+                    throw new IllegalArgumentException(
+                            "existingGitHubArtifactId must not be blank");
                 }
             });
+        }
+    }
+
+    enum CheckOutcome {
+        SUCCESS,
+        NEUTRAL_SYSTEM_FAILURE
+    }
+
+    enum CheckStatus {
+        COMPLETED
+    }
+
+    enum CheckConclusion {
+        SUCCESS,
+        NEUTRAL
+    }
+
+    record CheckPresentation(
+            CheckOutcome outcome,
+            CheckStatus status,
+            CheckConclusion conclusion,
+            String safeSummary) {
+
+        public static final int MAX_SAFE_SUMMARY_CHARACTERS = 4096;
+
+        public CheckPresentation {
+            Objects.requireNonNull(outcome, "outcome");
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(conclusion, "conclusion");
+            if (safeSummary == null || safeSummary.isBlank()) {
+                throw new IllegalArgumentException("safeSummary must not be blank");
+            }
+            if (safeSummary.length() > MAX_SAFE_SUMMARY_CHARACTERS) {
+                throw new IllegalArgumentException(
+                        "safeSummary exceeds " + MAX_SAFE_SUMMARY_CHARACTERS + " characters");
+            }
+            if (outcome == CheckOutcome.SUCCESS
+                    && (status != CheckStatus.COMPLETED
+                    || conclusion != CheckConclusion.SUCCESS)) {
+                throw new IllegalArgumentException(
+                        "successful Check must be completed with a success conclusion");
+            }
+            if (outcome == CheckOutcome.NEUTRAL_SYSTEM_FAILURE
+                    && (status != CheckStatus.COMPLETED
+                    || conclusion != CheckConclusion.NEUTRAL)) {
+                throw new IllegalArgumentException(
+                        "system failure Check must be completed with a neutral conclusion");
+            }
+        }
+
+        public static CheckPresentation success(String safeSummary) {
+            return new CheckPresentation(
+                    CheckOutcome.SUCCESS,
+                    CheckStatus.COMPLETED,
+                    CheckConclusion.SUCCESS,
+                    safeSummary);
+        }
+
+        public static CheckPresentation neutralSystemFailure(String safeSummary) {
+            return new CheckPresentation(
+                    CheckOutcome.NEUTRAL_SYSTEM_FAILURE,
+                    CheckStatus.COMPLETED,
+                    CheckConclusion.NEUTRAL,
+                    safeSummary);
         }
     }
 

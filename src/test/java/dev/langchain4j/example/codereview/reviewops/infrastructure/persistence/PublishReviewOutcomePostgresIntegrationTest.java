@@ -1,10 +1,19 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.example.codereview.reviewops.application.DecideReviewPublication;
 import dev.langchain4j.example.codereview.reviewops.application.PublishReviewOutcome;
 import dev.langchain4j.example.codereview.reviewops.application.github.CheckRunArtifact;
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.BackoffPolicy;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobDispatcher;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobHandler;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobWorker;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ScheduledLeaseHeartbeat;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
 import dev.langchain4j.example.codereview.reviewops.domain.ExecutionMeasurements;
@@ -13,6 +22,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.FindingContent;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingEvidence;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprint;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingSeverity;
+import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
@@ -22,6 +32,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunState;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.jobs.PostgresDurableJobQueue;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,10 +40,12 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -45,6 +58,7 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
     private JdbcTemplate jdbcTemplate;
     private JdbcReviewRunRepository reviewRuns;
     private TransactionalReviewRunMutationStore mutations;
+    private PostgresDurableJobQueue jobs;
 
     @BeforeEach
     void setUpAdapters() {
@@ -53,10 +67,10 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
                 new DataSourceTransactionManager(dataSource));
         reviewRuns = new JdbcReviewRunRepository(
                 jdbcTemplate, transactions, new JsonColumnCodec(new ObjectMapper()));
+        jobs = new PostgresDurableJobQueue(
+                jdbcTemplate, transactions, Clock.fixed(NOW, ZoneOffset.UTC));
         mutations = new TransactionalReviewRunMutationStore(
-                reviewRuns,
-                new PostgresDurableJobQueue(
-                        jdbcTemplate, transactions, Clock.fixed(NOW, ZoneOffset.UTC)),
+                reviewRuns, jobs,
                 new JdbcOutboxStore(jdbcTemplate),
                 transactions);
         jdbcTemplate.execute("TRUNCATE TABLE outbox_events, durable_jobs, review_runs CASCADE");
@@ -85,6 +99,121 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         assertThat(gateway.commentMutations).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM durable_jobs", Integer.class)).isZero();
+    }
+
+    @Test
+    void completedRunFailsDurablyBeforeAuthorizationFailureDeadLettersPublicationJob() {
+        ReviewRun run = completedRunWithDecision();
+        reviewRuns.insert(run);
+        FailingGateway gateway = new FailingGateway(
+                GitHubFailureException.Classification.AUTHORIZATION);
+        var result = runPublicationWorker(run, gateway);
+
+        assertThat(result.dead()).isOne();
+        assertThat(result.retried()).isZero();
+        assertDurableTerminalConvergence(
+                run.id(), "github_authorization", null);
+        assertThat(gateway.authoritativeCalls).isOne();
+        assertThat(gateway.checkMutations).isZero();
+        assertThat(gateway.commentMutations).isZero();
+    }
+
+    @Test
+    void partiallyPublishingRunFailsDurablyBeforeDeterministicFailureDeadLettersJob() {
+        ReviewRun run = completedRunWithDecision();
+        run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
+        run.recordPublicationProgress("check-existing", Map.of());
+        reviewRuns.insert(run);
+        FailingGateway gateway = new FailingGateway(
+                GitHubFailureException.Classification.DETERMINISTIC_INPUT);
+        var result = runPublicationWorker(run, gateway);
+
+        assertThat(result.dead()).isOne();
+        assertThat(result.retried()).isZero();
+        assertDurableTerminalConvergence(
+                run.id(), "github_deterministic_input", "check-existing");
+        assertThat(gateway.authoritativeCalls).isOne();
+        assertThat(gateway.checkMutations).isZero();
+        assertThat(gateway.commentMutations).isZero();
+    }
+
+    private ReviewJobWorker.WorkerCycleResult runPublicationWorker(
+            ReviewRun run,
+            GitHubPublicationGateway gateway) {
+        Instant workerNow = NOW.plusSeconds(1);
+        Clock workerClock = Clock.fixed(workerNow, ZoneOffset.UTC);
+        jobs.enqueue(new DurableJobRequest(
+                DecideReviewPublication.PUBLISH_REVIEW_JOB_TYPE,
+                run.id().value(),
+                3,
+                NOW,
+                "publish:" + run.id().value()));
+        PublishReviewOutcome publisher = new PublishReviewOutcome(
+                reviewRuns, mutations, gateway, workerClock);
+        ReviewJobHandler handler = publicationHandler(publisher);
+        var scheduler = Executors.newSingleThreadScheduledExecutor();
+        try (ScheduledLeaseHeartbeat heartbeat = new ScheduledLeaseHeartbeat(
+                jobs,
+                workerClock,
+                Duration.ofMinutes(3),
+                Duration.ofSeconds(30),
+                scheduler)) {
+            ReviewJobWorker worker = new ReviewJobWorker(
+                    jobs,
+                    new ReviewJobDispatcher(List.of(handler)),
+                    BackoffPolicy.exponential(
+                            Duration.ofSeconds(10), Duration.ofMinutes(1), 0.0, () -> 0.0),
+                    heartbeat,
+                    workerClock,
+                    new SimpleMeterRegistry(),
+                    new ReviewJobWorker.WorkerSettings(
+                            "publication-worker",
+                            Duration.ofMinutes(3),
+                            Duration.ofSeconds(30),
+                            1));
+            return worker.runOnce();
+        }
+    }
+
+    private void assertDurableTerminalConvergence(
+            ReviewRunId runId,
+            String expectedFailureCode,
+            String expectedCheckRunId) {
+        ReviewRun persisted = reviewRuns.find(runId).orElseThrow().reviewRun();
+        assertThat(persisted.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(persisted.finalFailure()).hasValueSatisfying(failure -> {
+            assertThat(failure.code()).isEqualTo(expectedFailureCode);
+            assertThat(failure.classification()).isEqualTo(FailureClass.TERMINAL);
+            assertThat(failure.safeMessage()).isEqualTo("safe terminal head lookup failure");
+        });
+        if (expectedCheckRunId == null) {
+            assertThat(persisted.checkRunExternalId()).isEmpty();
+        } else {
+            assertThat(persisted.checkRunExternalId()).contains(expectedCheckRunId);
+        }
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT state FROM durable_jobs WHERE payload_reference = ?",
+                String.class,
+                runId.value())).isEqualTo("DEAD");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT last_failure_class FROM durable_jobs WHERE payload_reference = ?",
+                String.class,
+                runId.value())).isEqualTo("TERMINAL");
+    }
+
+    private static ReviewJobHandler publicationHandler(PublishReviewOutcome publisher) {
+        return new ReviewJobHandler() {
+            @Override
+            public String jobType() {
+                return DecideReviewPublication.PUBLISH_REVIEW_JOB_TYPE;
+            }
+
+            @Override
+            public JobOutcome handle(LeasedJob job) {
+                publisher.publish(new ReviewRunId(job.payloadReference()));
+                return JobOutcome.succeeded();
+            }
+        };
     }
 
     private static ReviewRun completedRunWithDecision() {
@@ -137,6 +266,36 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
             commentMutations++;
             throw new AssertionError("stale runs must not mutate inline comments");
+        }
+    }
+
+    private static final class FailingGateway implements GitHubPublicationGateway {
+        private final GitHubFailureException.Classification classification;
+        private int authoritativeCalls;
+        private int checkMutations;
+        private int commentMutations;
+
+        private FailingGateway(GitHubFailureException.Classification classification) {
+            this.classification = classification;
+        }
+
+        @Override
+        public AuthoritativeRevision authoritativeRevision(PullRequestRevision revision) {
+            authoritativeCalls++;
+            throw new GitHubFailureException(
+                    classification, "safe terminal head lookup failure");
+        }
+
+        @Override
+        public CheckRunArtifact upsertCheck(CheckRunRequest request) {
+            checkMutations++;
+            throw new AssertionError("head lookup failure must prevent Check mutation");
+        }
+
+        @Override
+        public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
+            commentMutations++;
+            throw new AssertionError("head lookup failure must prevent comment mutation");
         }
     }
 }

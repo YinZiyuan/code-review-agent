@@ -133,9 +133,10 @@ class PublishReviewOutcomeTest {
     }
 
     @Test
-    void authoritativeLookupPreservesTaskFiveFailureClassificationForTheWorker() {
-        for (GitHubFailureException.Classification classification
-                : GitHubFailureException.Classification.values()) {
+    void retryableAuthoritativeLookupFailuresPropagateWithoutSettlingTheRun() {
+        for (GitHubFailureException.Classification classification : List.of(
+                GitHubFailureException.Classification.TRANSIENT,
+                GitHubFailureException.Classification.RATE_LIMITED)) {
             ReviewRun run = completedRunWithDecision();
             RecordingMutationStore mutations = new RecordingMutationStore();
             GitHubFailureException failure = new GitHubFailureException(
@@ -152,6 +153,62 @@ class PublishReviewOutcomeTest {
             assertThat(mutations.progressSaveCount).isZero();
             assertThat(mutations.atomicSaveCount).isZero();
         }
+    }
+
+    @Test
+    void terminalAuthoritativeLookupFailuresSettleCompletedRunBeforePropagatingToWorker() {
+        for (GitHubFailureException.Classification classification : List.of(
+                GitHubFailureException.Classification.AUTHORIZATION,
+                GitHubFailureException.Classification.DETERMINISTIC_INPUT)) {
+            ReviewRun run = completedRunWithDecision();
+            RecordingMutationStore mutations = new RecordingMutationStore();
+            GitHubFailureException failure = new GitHubFailureException(
+                    classification, "safe GitHub publication failure");
+
+            assertThatThrownBy(() -> publisher(
+                    run, 13, mutations, new FailingGateway(failure)).publish(run.id()))
+                    .isSameAs(failure);
+
+            assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+            assertThat(run.finalFailure()).contains(new ReviewFailure(
+                    classification == GitHubFailureException.Classification.AUTHORIZATION
+                            ? "github_authorization" : "github_deterministic_input",
+                    FailureClass.TERMINAL,
+                    "safe GitHub publication failure"));
+            assertThat(run.finishedAt()).contains(NOW);
+            assertThat(run.checkRunExternalId()).isEmpty();
+            assertThat(mutations.progressSaveCount).isOne();
+            assertThat(mutations.progressExpectedVersion).isEqualTo(13);
+            assertThat(mutations.progressState).isEqualTo(ReviewRunState.FAILED);
+            assertThat(mutations.atomicSaveCount).isZero();
+        }
+    }
+
+    @Test
+    void terminalAuthoritativeLookupFailureSettlesPublishingRunAndRetainsProgress() {
+        ReviewRun run = completedRunWithDecision();
+        run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
+        run.recordPublicationProgress("check-existing", Map.of());
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        GitHubFailureException failure = new GitHubFailureException(
+                GitHubFailureException.Classification.AUTHORIZATION,
+                "safe GitHub publication failure");
+
+        assertThatThrownBy(() -> publisher(
+                run, 17, mutations, new FailingGateway(failure)).publish(run.id()))
+                .isSameAs(failure);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(new ReviewFailure(
+                "github_authorization",
+                FailureClass.TERMINAL,
+                "safe GitHub publication failure"));
+        assertThat(run.finishedAt()).contains(NOW);
+        assertThat(run.checkRunExternalId()).contains("check-existing");
+        assertThat(mutations.progressSaveCount).isOne();
+        assertThat(mutations.progressExpectedVersion).isEqualTo(17);
+        assertThat(mutations.progressState).isEqualTo(ReviewRunState.FAILED);
+        assertThat(mutations.atomicSaveCount).isZero();
     }
 
     private static PublishReviewOutcome publisher(

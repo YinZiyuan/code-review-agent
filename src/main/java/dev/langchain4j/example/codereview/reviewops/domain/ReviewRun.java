@@ -204,6 +204,18 @@ public final class ReviewRun {
 
     public void recordPublicationFailure(ReviewFailure failure, Instant failedAt) {
         requireState(ReviewRunState.PUBLISHING);
+        settleTerminalPublicationFailure(failure, failedAt);
+    }
+
+    public void recordPublicationAuthorizationFailure(ReviewFailure failure, Instant failedAt) {
+        requireState(ReviewRunState.COMPLETED);
+        if (findings.stream().anyMatch(finding -> finding.publicationDecision().isEmpty())) {
+            throw new IllegalStateException("publication decisions are incomplete");
+        }
+        settleTerminalPublicationFailure(failure, failedAt);
+    }
+
+    private void settleTerminalPublicationFailure(ReviewFailure failure, Instant failedAt) {
         requireTerminalFailure(failure);
         Objects.requireNonNull(failedAt, "failedAt");
         finalFailure = failure;

@@ -155,6 +155,25 @@ class ReviewRunTest {
     }
 
     @Test
+    void terminalPublicationAuthorizationFailureEndsCompletedReview() {
+        ReviewRun run = completed();
+        run.acceptPublicationDecisions(Map.of(
+                run.findings().get(0).fingerprint(),
+                new PublicationDecision(PublicationTier.CHECK_SUMMARY, "publish-v1")));
+        ReviewFailure failure = new ReviewFailure(
+                "github_authorization",
+                FailureClass.TERMINAL,
+                "GitHub publication is not authorized");
+
+        run.recordPublicationAuthorizationFailure(failure, T0.plusSeconds(2));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(failure);
+        assertThat(run.finishedAt()).contains(T0.plusSeconds(2));
+        assertThat(run.checkRunExternalId()).isEmpty();
+    }
+
+    @Test
     void publicationCommentReferencesMustBelongToInlineFindings() {
         ReviewRun run = completed();
         FindingFingerprint fingerprint = run.findings().get(0).fingerprint();
