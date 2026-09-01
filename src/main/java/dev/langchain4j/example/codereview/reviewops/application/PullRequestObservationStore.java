@@ -18,7 +18,8 @@ public interface PullRequestObservationStore {
             String payloadSha256,
             Instant receivedAt,
             ReviewRun reviewRun,
-            DurableJobRequest executionJob) {
+            DurableJobRequest executionJob,
+            DurableJobRequest supersessionJob) {
         public ObservationRequest {
             if (payloadSha256 == null || !payloadSha256.matches("[0-9a-fA-F]{64}")) {
                 throw new IllegalArgumentException(

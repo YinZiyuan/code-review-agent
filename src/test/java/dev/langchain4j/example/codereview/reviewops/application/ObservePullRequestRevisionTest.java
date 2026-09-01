@@ -51,6 +51,13 @@ class ObservePullRequestRevisionTest {
         assertThat(request.executionJob().nextAttemptAt()).isEqualTo(ADMITTED_AT);
         assertThat(request.executionJob().idempotencyKey())
                 .isEqualTo("review-execution:" + request.reviewRun().id().value());
+        assertThat(request.supersessionJob().jobType()).isEqualTo("SUPERSEDE_OBSOLETE_RUNS");
+        assertThat(request.supersessionJob().payloadReference())
+                .isEqualTo(request.reviewRun().id().value());
+        assertThat(request.supersessionJob().maxAttempts()).isEqualTo(3);
+        assertThat(request.supersessionJob().nextAttemptAt()).isEqualTo(ADMITTED_AT);
+        assertThat(request.supersessionJob().idempotencyKey())
+                .isEqualTo("supersede-obsolete-runs:" + request.reviewRun().id().value());
         assertThat(result.status()).isEqualTo(ADMITTED);
         assertThat(result.reviewRunId()).isEqualTo(request.reviewRun().id());
     }

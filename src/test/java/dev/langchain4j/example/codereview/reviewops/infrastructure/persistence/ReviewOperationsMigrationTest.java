@@ -82,6 +82,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 .contains(List.of("review_run_id", "attempt_number"));
         assertThat(constraintColumns("review_findings", "p"))
                 .contains(List.of("review_run_id", "fingerprint"));
+        assertThat(constraintColumns("github_deliveries", "f"))
+                .contains(List.of("review_run_id"));
         assertThat(constraintColumns("durable_jobs", "u"))
                 .contains(List.of("idempotency_key"));
         assertThat(unpublishedOutboxIndexExists()).isTrue();
@@ -94,6 +96,50 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     @Test
     void rerunningFlywayOnTheMigratedDatabaseExecutesNoMigrations() {
         assertThat(flyway.migrate().migrationsExecuted).isZero();
+    }
+
+    @Test
+    void v5PreservesPreexistingDeliveriesWithAnExplicitNullLegacyAssociation() throws Exception {
+        String schema = "delivery_association_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try (var connection = DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setSchema(schema);
+            SingleConnectionDataSource isolatedDataSource =
+                    new SingleConnectionDataSource(connection, true);
+            Flyway v4 = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .locations("classpath:db/migration")
+                    .target("4")
+                    .load();
+            assertThat(v4.migrate().migrationsExecuted).isEqualTo(4);
+
+            JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
+            isolated.update("""
+                            INSERT INTO github_deliveries (
+                                delivery_id, event_name, payload_sha256, received_at, handled_at)
+                            VALUES ('legacy-delivery', 'pull_request', ?, ?, ?)
+                            """,
+                    "a".repeat(64),
+                    Timestamp.from(Instant.parse("2026-09-01T01:00:00Z")),
+                    Timestamp.from(Instant.parse("2026-09-01T01:00:01Z")));
+
+            Flyway latest = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .locations("classpath:db/migration")
+                    .load();
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertFlywayIsValid(latest);
+            assertThat(isolated.queryForObject(
+                    "SELECT review_run_id FROM github_deliveries WHERE delivery_id = 'legacy-delivery'",
+                    UUID.class)).isNull();
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
     }
 
     @Test
@@ -136,7 +182,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(3);
             assertFlywayIsValid(latest);
             assertThat(businessIdentityConstraintName(isolated, schema))
                     .isEqualTo("uq_review_runs_business_identity");

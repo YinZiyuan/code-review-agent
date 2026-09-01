@@ -16,6 +16,7 @@ import java.util.Objects;
 public final class ObservePullRequestRevision {
 
     private static final String PULL_REQUEST_EVENT = "pull_request";
+    private static final String SUPERSESSION_JOB_TYPE = "SUPERSEDE_OBSOLETE_RUNS";
 
     private final PullRequestObservationStore observations;
     private final Clock clock;
@@ -49,12 +50,19 @@ public final class ObservePullRequestRevision {
                 configuration.maxReviewAttempts(),
                 admittedAt,
                 "review-execution:" + reviewRunId.value());
+        DurableJobRequest supersessionJob = new DurableJobRequest(
+                SUPERSESSION_JOB_TYPE,
+                reviewRunId.value(),
+                configuration.maxReviewAttempts(),
+                admittedAt,
+                "supersede-obsolete-runs:" + reviewRunId.value());
         return observations.admit(new ObservationRequest(
                 event.deliveryId(),
                 PULL_REQUEST_EVENT,
                 payloadSha256,
                 event.observedAt(),
                 reviewRun,
-                executionJob));
+                executionJob,
+                supersessionJob));
     }
 }

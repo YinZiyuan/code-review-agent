@@ -47,9 +47,14 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
             UUID.fromString("00000000-0000-0000-0000-000000000101");
     private static final UUID REPLAY_RUN_ID =
             UUID.fromString("00000000-0000-0000-0000-000000000102");
+    private static final UUID LATER_RUN_ID =
+            UUID.fromString("00000000-0000-0000-0000-000000000103");
     private static final ReviewConfigurationSnapshot CONFIGURATION =
             new ReviewConfigurationSnapshot(
                     "pipeline-v3", "configuration-v7", "kimi-k2", "policy-v5", 3);
+    private static final ReviewConfigurationSnapshot CONFIGURATION_V2 =
+            new ReviewConfigurationSnapshot(
+                    "pipeline-v4", "configuration-v8", "kimi-k2", "policy-v5", 3);
 
     private JdbcTemplate jdbcTemplate;
     private TransactionTemplate transactions;
@@ -80,7 +85,7 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
         assertThat(admitted).isEqualTo(new ObservationResult(ADMITTED, runId(ORIGINAL_RUN_ID)));
         assertThat(replay)
                 .isEqualTo(new ObservationResult(DUPLICATE_DELIVERY, runId(ORIGINAL_RUN_ID)));
-        assertCounts(1, 1, 1);
+        assertCounts(1, 1, 2);
         assertThat(jdbcTemplate.queryForMap("""
                         SELECT event_name, payload_sha256, received_at, handled_at
                         FROM github_deliveries
@@ -93,7 +98,20 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
                 "SELECT handled_at IS NOT NULL FROM github_deliveries WHERE delivery_id = ?",
                 Boolean.class,
                 "delivery-123")).isTrue();
-        assertExecutionJob(ORIGINAL_RUN_ID);
+        assertReviewIntentJobs(ORIGINAL_RUN_ID);
+    }
+
+    @Test
+    void replayAfterConfigurationChangeUsesTheRunAssociatedAtOriginalAdmission() {
+        PullRequestObservationStore store = store(admission(jobs));
+        store.admit(request("delivery-123", ORIGINAL_RUN_ID));
+
+        ObservationResult replay = store.admit(request(
+                "delivery-123", REPLAY_RUN_ID, PAYLOAD_SHA256, CONFIGURATION_V2));
+
+        assertThat(replay)
+                .isEqualTo(new ObservationResult(DUPLICATE_DELIVERY, runId(ORIGINAL_RUN_ID)));
+        assertCounts(1, 1, 2);
     }
 
     @Test
@@ -105,10 +123,46 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
 
         assertThat(result)
                 .isEqualTo(new ObservationResult(EXISTING_REVISION, runId(ORIGINAL_RUN_ID)));
-        assertCounts(2, 1, 1);
+        assertCounts(2, 1, 2);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM github_deliveries WHERE handled_at IS NOT NULL",
                 Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void existingRevisionDeliveryReplayKeepsItsOriginalAssociationAcrossConfigurationChange() {
+        PullRequestObservationStore store = store(admission(jobs));
+        store.admit(request("delivery-original", ORIGINAL_RUN_ID));
+        ObservationResult existing = store.admit(request("delivery-existing", REPLAY_RUN_ID));
+
+        ObservationResult replay = store.admit(request(
+                "delivery-existing", LATER_RUN_ID, PAYLOAD_SHA256, CONFIGURATION_V2));
+
+        assertThat(existing)
+                .isEqualTo(new ObservationResult(EXISTING_REVISION, runId(ORIGINAL_RUN_ID)));
+        assertThat(replay)
+                .isEqualTo(new ObservationResult(DUPLICATE_DELIVERY, runId(ORIGINAL_RUN_ID)));
+        assertCounts(2, 1, 2);
+    }
+
+    @Test
+    void legacyDeliveryWithoutAnAssociationRequiresExplicitRepair() {
+        jdbcTemplate.update("""
+                        INSERT INTO github_deliveries (
+                            delivery_id, event_name, payload_sha256, received_at, handled_at)
+                        VALUES (?, 'pull_request', ?, ?, ?)
+                        """,
+                "legacy-delivery",
+                PAYLOAD_SHA256,
+                java.sql.Timestamp.from(RECEIVED_AT),
+                java.sql.Timestamp.from(RECEIVED_AT));
+
+        assertThatThrownBy(() -> store(admission(jobs))
+                .admit(request("legacy-delivery", ORIGINAL_RUN_ID)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Legacy delivery requires explicit review-run association repair");
+
+        assertCounts(1, 0, 0);
     }
 
     @Test
@@ -122,7 +176,7 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Recorded delivery conflicts with supplied event facts");
 
-        assertCounts(1, 1, 1);
+        assertCounts(1, 1, 2);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT payload_sha256 FROM github_deliveries WHERE delivery_id = ?",
                 String.class,
@@ -153,7 +207,7 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
                     .containsOnly(results.stream()
                             .filter(result -> result.status() == ADMITTED)
                             .findFirst().orElseThrow().reviewRunId());
-            assertCounts(2, 1, 1);
+            assertCounts(2, 1, 2);
         } finally {
             executor.shutdownNow();
             assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
@@ -176,12 +230,24 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
 
     @Test
     void failureAfterRunInsertRollsBackTheDeliveryAndRun() {
-        DurableJobQueue failingJobs = new FailingEnqueueQueue();
+        DurableJobQueue failingJobs = new FailOnEnqueueQueue(jobs, 1);
 
-        assertThatThrownBy(() -> store(admission(failingJobs))
+        assertThatThrownBy(() -> store(admission(failingJobs), failingJobs)
                 .admit(request("delivery-123", ORIGINAL_RUN_ID)))
                 .isInstanceOf(AdmissionTestFailure.class)
-                .hasMessage("job enqueue failed");
+                .hasMessage("job enqueue 1 failed");
+
+        assertCounts(0, 0, 0);
+    }
+
+    @Test
+    void failureAfterExecutionJobInsertRollsBackDeliveryRunAndBothJobIntents() {
+        DurableJobQueue failingJobs = new FailOnEnqueueQueue(jobs, 2);
+
+        assertThatThrownBy(() -> store(admission(failingJobs), failingJobs)
+                .admit(request("delivery-123", ORIGINAL_RUN_ID)))
+                .isInstanceOf(AdmissionTestFailure.class)
+                .hasMessage("job enqueue 2 failed");
 
         assertCounts(0, 0, 0);
     }
@@ -221,7 +287,13 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
     }
 
     private PullRequestObservationStore store(ReviewRunAdmissionStore admission) {
-        return new JdbcPullRequestObservationStore(jdbcTemplate, admission, transactions);
+        return store(admission, jobs);
+    }
+
+    private PullRequestObservationStore store(
+            ReviewRunAdmissionStore admission, DurableJobQueue durableJobs) {
+        return new JdbcPullRequestObservationStore(
+                jdbcTemplate, admission, durableJobs, transactions);
     }
 
     private ReviewRunAdmissionStore admission(DurableJobQueue jobQueue) {
@@ -233,15 +305,23 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
     }
 
     private static ObservationRequest request(String deliveryId, UUID proposedRunId) {
-        return request(deliveryId, proposedRunId, PAYLOAD_SHA256);
+        return request(deliveryId, proposedRunId, PAYLOAD_SHA256, CONFIGURATION);
     }
 
     private static ObservationRequest request(
             String deliveryId, UUID proposedRunId, String payloadSha256) {
+        return request(deliveryId, proposedRunId, payloadSha256, CONFIGURATION);
+    }
+
+    private static ObservationRequest request(
+            String deliveryId,
+            UUID proposedRunId,
+            String payloadSha256,
+            ReviewConfigurationSnapshot configuration) {
         ReviewRun reviewRun = ReviewRun.request(
                 runId(proposedRunId),
                 new PullRequestRevision(41L, 73L, 12, "observed-head-sha"),
-                CONFIGURATION,
+                configuration,
                 RECEIVED_AT);
         return new ObservationRequest(
                 deliveryId,
@@ -252,24 +332,38 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
                 new DurableJobRequest(
                         "REVIEW_EXECUTION",
                         proposedRunId,
-                        CONFIGURATION.maxReviewAttempts(),
+                        configuration.maxReviewAttempts(),
                         RECEIVED_AT,
-                        "review-execution:" + proposedRunId));
+                        "review-execution:" + proposedRunId),
+                new DurableJobRequest(
+                        "SUPERSEDE_OBSOLETE_RUNS",
+                        proposedRunId,
+                        configuration.maxReviewAttempts(),
+                        RECEIVED_AT,
+                        "supersede-obsolete-runs:" + proposedRunId));
     }
 
     private static ReviewRunId runId(UUID id) {
         return new ReviewRunId(id);
     }
 
-    private void assertExecutionJob(UUID runId) {
-        assertThat(jdbcTemplate.queryForMap("""
+    private void assertReviewIntentJobs(UUID runId) {
+        assertThat(jdbcTemplate.queryForList("""
                         SELECT job_type, payload_reference, max_attempts, idempotency_key
                         FROM durable_jobs
+                        ORDER BY job_type
                         """))
-                .containsEntry("job_type", "REVIEW_EXECUTION")
-                .containsEntry("payload_reference", runId)
-                .containsEntry("max_attempts", 3)
-                .containsEntry("idempotency_key", "review-execution:" + runId);
+                .containsExactly(
+                        java.util.Map.of(
+                                "job_type", "REVIEW_EXECUTION",
+                                "payload_reference", runId,
+                                "max_attempts", 3,
+                                "idempotency_key", "review-execution:" + runId),
+                        java.util.Map.of(
+                                "job_type", "SUPERSEDE_OBSOLETE_RUNS",
+                                "payload_reference", runId,
+                                "max_attempts", 3,
+                                "idempotency_key", "supersede-obsolete-runs:" + runId));
     }
 
     private void assertCounts(int deliveryCount, int reviewRunCount, int durableJobCount) {
@@ -281,11 +375,24 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
                 "SELECT count(*) FROM durable_jobs", Integer.class)).isEqualTo(durableJobCount);
     }
 
-    private static final class FailingEnqueueQueue implements DurableJobQueue {
+    private static final class FailOnEnqueueQueue implements DurableJobQueue {
+
+        private final DurableJobQueue delegate;
+        private final int failingEnqueue;
+        private int enqueueCount;
+
+        private FailOnEnqueueQueue(DurableJobQueue delegate, int failingEnqueue) {
+            this.delegate = delegate;
+            this.failingEnqueue = failingEnqueue;
+        }
 
         @Override
         public UUID enqueue(DurableJobRequest request) {
-            throw new AdmissionTestFailure("job enqueue failed");
+            enqueueCount++;
+            if (enqueueCount == failingEnqueue) {
+                throw new AdmissionTestFailure("job enqueue " + enqueueCount + " failed");
+            }
+            return delegate.enqueue(request);
         }
 
         @Override

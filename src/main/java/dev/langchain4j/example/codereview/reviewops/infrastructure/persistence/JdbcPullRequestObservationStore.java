@@ -2,6 +2,7 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
 import dev.langchain4j.example.codereview.reviewops.application.PullRequestObservationStore;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunAdmissionStore;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
@@ -22,14 +23,17 @@ public final class JdbcPullRequestObservationStore implements PullRequestObserva
 
     private final JdbcTemplate jdbcTemplate;
     private final ReviewRunAdmissionStore reviewRunAdmission;
+    private final DurableJobQueue durableJobs;
     private final TransactionOperations transactions;
 
     public JdbcPullRequestObservationStore(
             JdbcTemplate jdbcTemplate,
             ReviewRunAdmissionStore reviewRunAdmission,
+            DurableJobQueue durableJobs,
             TransactionOperations transactions) {
         this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         this.reviewRunAdmission = Objects.requireNonNull(reviewRunAdmission, "reviewRunAdmission");
+        this.durableJobs = Objects.requireNonNull(durableJobs, "durableJobs");
         this.transactions = Objects.requireNonNull(transactions, "transactions");
     }
 
@@ -43,8 +47,9 @@ public final class JdbcPullRequestObservationStore implements PullRequestObserva
     private ObservationResult admitInTransaction(ObservationRequest request) {
         int deliveryInserted = jdbcTemplate.update("""
                         INSERT INTO github_deliveries (
-                            delivery_id, event_name, payload_sha256, received_at, handled_at)
-                        VALUES (?, ?, ?, ?, NULL)
+                            delivery_id, event_name, payload_sha256, received_at,
+                            handled_at, review_run_id)
+                        VALUES (?, ?, ?, ?, NULL, NULL)
                         ON CONFLICT (delivery_id) DO NOTHING
                         """,
                 request.deliveryId(),
@@ -53,34 +58,37 @@ public final class JdbcPullRequestObservationStore implements PullRequestObserva
                 Timestamp.from(request.receivedAt()));
 
         if (deliveryInserted == 0) {
-            requireMatchingDeliveryFacts(request);
-            ReviewRunId authoritative = findExistingReviewRun(request.reviewRun())
+            DeliveryFacts delivery = requireMatchingDeliveryFacts(request);
+            ReviewRunId authoritative = Optional.ofNullable(delivery.reviewRunId())
+                    .map(ReviewRunId::new)
                     .orElseThrow(() -> new IllegalStateException(
-                            "Recorded delivery has no authoritative review run"));
+                            "Legacy delivery requires explicit review-run association repair"));
             return new ObservationResult(DUPLICATE_DELIVERY, authoritative);
         }
 
         lockBusinessIdentity(request.reviewRun());
         Optional<ReviewRunId> existing = findExistingReviewRun(request.reviewRun());
         if (existing.isPresent()) {
-            markHandled(request);
+            markHandledAndAssociate(request, existing.orElseThrow());
             return new ObservationResult(EXISTING_REVISION, existing.orElseThrow());
         }
 
         reviewRunAdmission.admit(request.reviewRun(), request.executionJob(), List.of());
-        markHandled(request);
+        durableJobs.enqueue(request.supersessionJob());
+        markHandledAndAssociate(request, request.reviewRun().id());
         return new ObservationResult(ADMITTED, request.reviewRun().id());
     }
 
-    private void requireMatchingDeliveryFacts(ObservationRequest request) {
+    private DeliveryFacts requireMatchingDeliveryFacts(ObservationRequest request) {
         List<DeliveryFacts> deliveries = jdbcTemplate.query("""
-                        SELECT event_name, payload_sha256
+                        SELECT event_name, payload_sha256, review_run_id
                         FROM github_deliveries
                         WHERE delivery_id = ?
                         """,
                 (resultSet, rowNumber) -> new DeliveryFacts(
                         resultSet.getString("event_name"),
-                        resultSet.getString("payload_sha256")),
+                        resultSet.getString("payload_sha256"),
+                        resultSet.getObject("review_run_id", UUID.class)),
                 request.deliveryId());
         if (deliveries.size() != 1
                 || !deliveries.get(0).eventName().equals(request.eventName())
@@ -88,6 +96,7 @@ public final class JdbcPullRequestObservationStore implements PullRequestObserva
             throw new IllegalStateException(
                     "Recorded delivery conflicts with supplied event facts");
         }
+        return deliveries.get(0);
     }
 
     private void lockBusinessIdentity(ReviewRun reviewRun) {
@@ -119,13 +128,16 @@ public final class JdbcPullRequestObservationStore implements PullRequestObserva
         return ids.stream().findFirst().map(ReviewRunId::new);
     }
 
-    private void markHandled(ObservationRequest request) {
+    private void markHandledAndAssociate(ObservationRequest request, ReviewRunId authoritativeRunId) {
         int updated = jdbcTemplate.update("""
                         UPDATE github_deliveries
-                        SET handled_at = ?
-                        WHERE delivery_id = ? AND handled_at IS NULL
+                        SET handled_at = ?, review_run_id = ?
+                        WHERE delivery_id = ?
+                          AND handled_at IS NULL
+                          AND review_run_id IS NULL
                         """,
                 Timestamp.from(request.reviewRun().requestedAt()),
+                authoritativeRunId.value(),
                 request.deliveryId());
         if (updated != 1) {
             throw new IllegalStateException("New delivery could not be marked handled");
@@ -141,6 +153,6 @@ public final class JdbcPullRequestObservationStore implements PullRequestObserva
                 + reviewRun.configuration().configurationVersion();
     }
 
-    private record DeliveryFacts(String eventName, String payloadSha256) {
+    private record DeliveryFacts(String eventName, String payloadSha256, UUID reviewRunId) {
     }
 }
