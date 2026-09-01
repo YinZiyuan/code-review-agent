@@ -2,6 +2,7 @@ package dev.langchain4j.example.codereview.agents.pipeline;
 
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.example.codereview.analyzer.Violation;
+import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.infra.JsonRepair;
 import dev.langchain4j.example.codereview.model.Citation;
@@ -9,6 +10,7 @@ import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.example.codereview.rag.CitationTracker;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.query.Query;
@@ -19,7 +21,16 @@ import java.util.List;
 @Component
 public class LlmReviewer {
 
-    public record Draft(ReviewResult result, List<Citation> citationCandidates) {
+    public record Draft(
+            ReviewResult result,
+            List<Citation> citationCandidates,
+            int inputTokens,
+            int outputTokens) {
+        public Draft {
+            if (inputTokens < 0 || outputTokens < 0) {
+                throw new IllegalArgumentException("model token usage must be non-negative");
+            }
+        }
     }
 
     private static final String SYSTEM = """
@@ -93,8 +104,39 @@ public class LlmReviewer {
         var response = chatModel.chat(ChatRequest.builder()
                 .messages(UserMessage.from(prompt))
                 .build());
-        ReviewResult result = jsonRepair.parseOrRepair(response.aiMessage().text(), ReviewResult.class);
-        return new Draft(result, candidates);
+        int mainInputTokens = inputTokens(response);
+        int mainOutputTokens = outputTokens(response);
+        try {
+            JsonRepair.ParseResult<ReviewResult> parsed = jsonRepair.parseOrRepairWithUsage(
+                    response.aiMessage().text(), ReviewResult.class);
+            return new Draft(
+                    parsed.value(),
+                    candidates,
+                    Math.addExact(mainInputTokens, parsed.inputTokens()),
+                    Math.addExact(mainOutputTokens, parsed.outputTokens()));
+        } catch (JsonRepair.RepairFailedException failure) {
+            throw new CodeReviewAgent.ReviewExecutionException(
+                    failure,
+                    Math.addExact(mainInputTokens, failure.inputTokens()),
+                    Math.addExact(mainOutputTokens, failure.outputTokens()));
+        } catch (RuntimeException failure) {
+            throw new CodeReviewAgent.ReviewExecutionException(
+                    failure, mainInputTokens, mainOutputTokens);
+        }
+    }
+
+    private static int inputTokens(ChatResponse response) {
+        if (response.tokenUsage() == null || response.tokenUsage().inputTokenCount() == null) {
+            throw new IllegalStateException("model response did not include input token usage");
+        }
+        return response.tokenUsage().inputTokenCount();
+    }
+
+    private static int outputTokens(ChatResponse response) {
+        if (response.tokenUsage() == null || response.tokenUsage().outputTokenCount() == null) {
+            throw new IllegalStateException("model response did not include output token usage");
+        }
+        return response.tokenUsage().outputTokenCount();
     }
 
     private String buildQuery(ReviewContext ctx, ToolFindings tools) {

@@ -6,6 +6,7 @@ import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.example.codereview.analyzer.Violation;
+import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.infra.JsonRepair;
 import dev.langchain4j.example.codereview.model.Severity;
@@ -15,6 +16,7 @@ import dev.langchain4j.example.codereview.rag.CitationTracker;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -39,6 +42,7 @@ class LlmReviewerTest {
                 .thenReturn(ChatResponse.builder()
                         .aiMessage(AiMessage.from("""
                                 {"summary":"ok","findings":[],"tool_status":[]}"""))
+                        .tokenUsage(new TokenUsage(83, 17))
                         .build());
 
         ContentRetriever retriever = q -> List.of();
@@ -54,6 +58,8 @@ class LlmReviewerTest {
 
         assertThat(draft.result().summary()).isEqualTo("ok");
         assertThat(draft.citationCandidates()).isEmpty();
+        assertThat(draft.inputTokens()).isEqualTo(83);
+        assertThat(draft.outputTokens()).isEqualTo(17);
     }
 
     @Test
@@ -63,6 +69,7 @@ class LlmReviewerTest {
                 .thenReturn(ChatResponse.builder()
                         .aiMessage(AiMessage.from("""
                                 {"summary":"ok","findings":[],"tool_status":[]}"""))
+                        .tokenUsage(new TokenUsage(40, 8))
                         .build());
 
         Content c = Content.from(TextSegment.from("body",
@@ -85,12 +92,68 @@ class LlmReviewerTest {
     }
 
     @Test
+    void formatRepairUsageIsAddedToTheMainModelUsage() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.chat(any(ChatRequest.class)))
+                .thenReturn(
+                        ChatResponse.builder()
+                                .aiMessage(AiMessage.from(
+                                        "{\"summary\":\"ok\" \"findings\":[],\"tool_status\":[]}"))
+                                .tokenUsage(new TokenUsage(100, 10))
+                                .build(),
+                        ChatResponse.builder()
+                                .aiMessage(AiMessage.from(
+                                        "{\"summary\":\"ok\",\"findings\":[],\"tool_status\":[]}"))
+                                .tokenUsage(new TokenUsage(25, 6))
+                                .build());
+        LlmReviewer reviewer = new LlmReviewer(
+                model, q -> List.of(), new CitationTracker(),
+                new JsonRepair(model, new ObjectMapper()));
+
+        var draft = reviewer.review(
+                new ReviewContext("diff", List.of(), Map.of(), Path.of("/tmp")),
+                new ToolFindings(List.of(), List.of()));
+
+        assertThat(draft.inputTokens()).isEqualTo(125);
+        assertThat(draft.outputTokens()).isEqualTo(16);
+    }
+
+    @Test
+    void exhaustedFormatRepairCarriesBothResponsesUsage() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.chat(any(ChatRequest.class)))
+                .thenReturn(
+                        ChatResponse.builder()
+                                .aiMessage(AiMessage.from("not json"))
+                                .tokenUsage(new TokenUsage(100, 10))
+                                .build(),
+                        ChatResponse.builder()
+                                .aiMessage(AiMessage.from("still not json"))
+                                .tokenUsage(new TokenUsage(25, 6))
+                                .build());
+        LlmReviewer reviewer = new LlmReviewer(
+                model, q -> List.of(), new CitationTracker(),
+                new JsonRepair(model, new ObjectMapper()));
+
+        CodeReviewAgent.ReviewExecutionException failure = catchThrowableOfType(
+                CodeReviewAgent.ReviewExecutionException.class,
+                () -> reviewer.review(
+                        new ReviewContext("diff", List.of(), Map.of(), Path.of("/tmp")),
+                        new ToolFindings(List.of(), List.of())));
+
+        assertThat(failure.inputTokens()).isEqualTo(125);
+        assertThat(failure.outputTokens()).isEqualTo(16);
+        assertThat(failure.getCause()).isInstanceOf(JsonRepair.RepairFailedException.class);
+    }
+
+    @Test
     void prompt_keeps_v3_finding_policy_without_tuning_rules() {
         ChatModel model = mock(ChatModel.class);
         when(model.chat(any(ChatRequest.class)))
                 .thenReturn(ChatResponse.builder()
                         .aiMessage(AiMessage.from("""
                                 {"summary":"ok","findings":[],"tool_status":[]}"""))
+                        .tokenUsage(new TokenUsage(30, 6))
                         .build());
 
         LlmReviewer reviewer = new LlmReviewer(model, q -> List.of(), new CitationTracker(),

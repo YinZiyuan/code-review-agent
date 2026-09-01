@@ -17,6 +17,7 @@ public final class ObservePullRequestRevision {
 
     private static final String PULL_REQUEST_EVENT = "pull_request";
     private static final String SUPERSESSION_JOB_TYPE = "SUPERSEDE_OBSOLETE_RUNS";
+    private static final int FINAL_ATTEMPT_RECOVERY_DISPATCHES = 1;
 
     private final PullRequestObservationStore observations;
     private final Clock clock;
@@ -47,7 +48,7 @@ public final class ObservePullRequestRevision {
         DurableJobRequest executionJob = new DurableJobRequest(
                 ReviewRunAdmissionStore.REVIEW_EXECUTION_JOB_TYPE,
                 reviewRunId.value(),
-                configuration.maxReviewAttempts(),
+                executionDispatchAllowance(configuration.maxReviewAttempts()),
                 admittedAt,
                 "review-execution:" + reviewRunId.value());
         DurableJobRequest supersessionJob = new DurableJobRequest(
@@ -64,5 +65,9 @@ public final class ObservePullRequestRevision {
                 reviewRun,
                 executionJob,
                 supersessionJob));
+    }
+
+    private static int executionDispatchAllowance(int reviewAttemptAllowance) {
+        return Math.addExact(reviewAttemptAllowance, FINAL_ATTEMPT_RECOVERY_DISPATCHES);
     }
 }

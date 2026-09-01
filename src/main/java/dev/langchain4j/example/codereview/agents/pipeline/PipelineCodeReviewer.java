@@ -26,11 +26,18 @@ public class PipelineCodeReviewer implements CodeReviewAgent {
 
     @Override
     public ReviewResult review(String request, Path sourceRoot) {
+        return reviewWithTelemetry(request, sourceRoot).result();
+    }
+
+    @Override
+    public ReviewExecution reviewWithTelemetry(String request, Path sourceRoot) {
         String diff = extractDiff(request);
         ReviewContext ctx = diffAnalyzer.analyze(diff, sourceRoot);
         ToolFindings tools = toolFindingsProducer.produce(ctx);
         LlmReviewer.Draft draft = llmReviewer.review(ctx, tools);
-        return summarizer.summarize(draft.result(), tools, draft.citationCandidates());
+        ReviewResult result = summarizer.summarize(
+                draft.result(), tools, draft.citationCandidates());
+        return new ReviewExecution(result, draft.inputTokens(), draft.outputTokens());
     }
 
     private String extractDiff(String request) {

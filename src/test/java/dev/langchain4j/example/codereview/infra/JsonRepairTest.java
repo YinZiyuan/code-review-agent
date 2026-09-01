@@ -8,6 +8,7 @@ import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -60,6 +61,7 @@ class JsonRepairTest {
         when(model.chat(any(ChatRequest.class)))
                 .thenReturn(ChatResponse.builder()
                         .aiMessage(AiMessage.from("still broken {"))
+                        .tokenUsage(new TokenUsage(20, 4))
                         .build());
         JsonRepair repair = new JsonRepair(model, mapper);
 

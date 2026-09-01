@@ -40,11 +40,47 @@ public class Summarizer {
         List<ReviewFinding> calibrated = deduped.stream()
                 .map(this::calibrateSeverity)
                 .toList();
-        List<ReviewFinding> withCitations = citationInjector.inject(calibrated, citationCandidates);
+        List<ReviewFinding> trustedCitations = validateCitations(calibrated, citationCandidates);
+        List<ReviewFinding> withCitations = citationInjector.inject(trustedCitations, citationCandidates);
         return new ReviewResult(
                 draft.summary() == null ? "" : draft.summary(),
                 sort(withCitations),
                 tools.statuses());
+    }
+
+    private List<ReviewFinding> validateCitations(
+            List<ReviewFinding> findings, List<Citation> citationCandidates) {
+        Map<String, Citation> candidatesById = new LinkedHashMap<>();
+        if (citationCandidates != null) {
+            for (Citation candidate : citationCandidates) {
+                if (candidate != null && candidate.id() != null && !candidate.id().isBlank()) {
+                    candidatesById.putIfAbsent(candidate.id(), candidate);
+                }
+            }
+        }
+        return findings.stream()
+                .map(finding -> withTrustedCitations(finding, candidatesById))
+                .toList();
+    }
+
+    private ReviewFinding withTrustedCitations(
+            ReviewFinding finding, Map<String, Citation> candidatesById) {
+        Map<String, Citation> trustedById = new LinkedHashMap<>();
+        if (finding.citations() != null) {
+            for (Citation citation : finding.citations()) {
+                if (citation != null && citation.id() != null) {
+                    Citation candidate = candidatesById.get(citation.id());
+                    if (candidate != null) {
+                        trustedById.putIfAbsent(candidate.id(), candidate);
+                    }
+                }
+            }
+        }
+        return new ReviewFinding(
+                finding.id(), finding.file(), finding.line(), finding.lineRange(),
+                finding.severity(), finding.category(), finding.title(), finding.description(),
+                finding.suggestion(), finding.evidence(), List.copyOf(trustedById.values()),
+                finding.source());
     }
 
     private ReviewFinding calibrateSeverity(ReviewFinding finding) {

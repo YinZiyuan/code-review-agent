@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.agents.pipeline;
 
 import dev.langchain4j.example.codereview.analyzer.Violation;
+import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.model.Category;
 import dev.langchain4j.example.codereview.model.Citation;
 import dev.langchain4j.example.codereview.model.ReviewFinding;
@@ -9,6 +10,11 @@ import dev.langchain4j.example.codereview.model.Severity;
 import dev.langchain4j.example.codereview.model.ToolRunState;
 import dev.langchain4j.example.codereview.model.ToolStatus;
 import dev.langchain4j.example.codereview.rag.CitationKeywordInjector;
+import dev.langchain4j.example.codereview.reviewops.application.FileDiffSet;
+import dev.langchain4j.example.codereview.reviewops.application.ReviewFindingMapper;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingPublicationPolicy;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationPolicySnapshot;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -75,6 +81,32 @@ class SummarizerTest {
                 List.of(candidate));
 
         assertThat(out.findings().get(0).citations()).containsExactly(candidate);
+    }
+
+    @Test
+    void hallucinatedCitationCannotAuthorizeInlinePublication() {
+        Citation hallucinated = new Citation(
+                "sql-guidelines#parameterized-queries", "sql-guidelines.txt", "Parameterized Queries");
+        Citation retrieved = new Citation(
+                "java-concurrency#memory-model", "java-concurrency.txt", "Java Memory Model");
+        ReviewFinding finding = mk(
+                "F-001", "Foo.java", 10, Severity.WARNING,
+                "SQL injection via concatenation", List.of(hallucinated));
+
+        ReviewResult result = summarizer.summarize(
+                new ReviewResult("s", List.of(finding), List.of()),
+                new ToolFindings(List.of(), List.of()),
+                List.of(retrieved));
+
+        assertThat(result.findings().get(0).citations()).isEmpty();
+        var mapped = new ReviewFindingMapper().map(
+                result.findings().get(0),
+                FileDiffSet.from(List.of(new DiffParser.FileDiff(
+                        "Foo.java", List.of(new DiffParser.AddedLine(10, "String query = input;"))))));
+        assertThat(new FindingPublicationPolicy()
+                .decide(List.of(mapped), new PublicationPolicySnapshot("publish-v1", 5))
+                .get(mapped.fingerprint()).tier())
+                .isEqualTo(PublicationTier.CHECK_SUMMARY);
     }
 
     @Test

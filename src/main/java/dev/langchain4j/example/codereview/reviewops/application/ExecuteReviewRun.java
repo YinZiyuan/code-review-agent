@@ -99,17 +99,23 @@ public final class ExecuteReviewRun {
         try {
             output = invokePipeline(run);
         } catch (RuntimeException exception) {
-            return persistExecutionFailure(run, version, startedAt, classify(exception));
+            TokenCounts tokenCounts = tokenCounts(exception);
+            return persistExecutionFailure(
+                    run, version, startedAt, classify(exception), tokenCounts);
         }
 
         Instant completedAt = clock.instant();
         ExecutionMeasurements measurements = measurements(
-                startedAt, completedAt, output.toolStates());
+                startedAt, completedAt, output.inputTokens(), output.outputTokens(), output.toolStates());
         try {
             run.completeReview(output.findings(), measurements, completedAt);
         } catch (IllegalArgumentException | NullPointerException exception) {
             return persistExecutionFailure(
-                    run, version, startedAt, Failure.invalidOutput());
+                    run,
+                    version,
+                    startedAt,
+                    Failure.invalidOutput(),
+                    new TokenCounts(output.inputTokens(), output.outputTokens()));
         }
 
         List<OutboxEvent> events = run.drainEvents().stream()
@@ -129,6 +135,7 @@ public final class ExecuteReviewRun {
     private PipelineOutput invokePipeline(ReviewRun run) {
         PreparedReviewSource prepared = null;
         RuntimeException pipelineFailure = null;
+        CodeReviewAgent.ReviewExecution execution = null;
         try {
             prepared = Objects.requireNonNull(
                     sources.prepare(run.revision()), "prepared review source");
@@ -137,25 +144,41 @@ public final class ExecuteReviewRun {
                 throw new IllegalArgumentException("review diff is required");
             }
             FileDiffSet fileDiffs = FileDiffSet.from(diffParser.parse(diffPatch));
-            ReviewResult result = Objects.requireNonNull(
-                    reviewer.review(REVIEW_PROMPT_PREFIX + diffPatch, prepared.sourceRoot()),
-                    "review result");
+            execution = Objects.requireNonNull(
+                    reviewer.reviewWithTelemetry(
+                            REVIEW_PROMPT_PREFIX + diffPatch, prepared.sourceRoot()),
+                    "review execution");
+            ReviewResult result = execution.result();
             List<dev.langchain4j.example.codereview.model.ReviewFinding> pipelineFindings =
                     Objects.requireNonNull(result.findings(), "review findings");
             List<ReviewFinding> findings = pipelineFindings.stream()
                     .map(finding -> findingMapper.map(finding, fileDiffs))
                     .toList();
             requireUniqueFingerprints(findings);
-            return new PipelineOutput(findings, toolStates(result.toolStatus()));
+            return new PipelineOutput(
+                    findings, toolStates(result.toolStatus()),
+                    execution.inputTokens(), execution.outputTokens());
         } catch (RuntimeException exception) {
-            pipelineFailure = exception;
-            throw exception;
+            RuntimeException reported = exception;
+            if (execution != null
+                    && findCause(exception, CodeReviewAgent.ReviewExecutionException.class) == null) {
+                reported = new CodeReviewAgent.ReviewExecutionException(
+                        exception, execution.inputTokens(), execution.outputTokens());
+            }
+            pipelineFailure = reported;
+            throw reported;
         } finally {
             if (prepared != null) {
                 try {
                     prepared.close();
                 } catch (RuntimeException closeFailure) {
                     if (pipelineFailure == null) {
+                        if (execution != null) {
+                            throw new CodeReviewAgent.ReviewExecutionException(
+                                    closeFailure,
+                                    execution.inputTokens(),
+                                    execution.outputTokens());
+                        }
                         throw closeFailure;
                     }
                     pipelineFailure.addSuppressed(closeFailure);
@@ -165,9 +188,18 @@ public final class ExecuteReviewRun {
     }
 
     private ExecutionOutcome persistExecutionFailure(
-            ReviewRun run, long version, Instant startedAt, Failure classified) {
+            ReviewRun run,
+            long version,
+            Instant startedAt,
+            Failure classified,
+            TokenCounts tokenCounts) {
         Instant failedAt = clock.instant();
-        ExecutionMeasurements measurements = measurements(startedAt, failedAt, Map.of());
+        ExecutionMeasurements measurements = measurements(
+                startedAt,
+                failedAt,
+                tokenCounts.inputTokens(),
+                tokenCounts.outputTokens(),
+                Map.of());
         if (classified.failure().classification() == FailureClass.TRANSIENT) {
             run.recordTransientAttemptFailure(classified.failure(), measurements, failedAt);
         } else {
@@ -215,9 +247,13 @@ public final class ExecuteReviewRun {
     }
 
     private static ExecutionMeasurements measurements(
-            Instant startedAt, Instant endedAt, Map<String, String> toolStates) {
+            Instant startedAt,
+            Instant endedAt,
+            int inputTokens,
+            int outputTokens,
+            Map<String, String> toolStates) {
         long latencyMs = Math.max(0, Duration.between(startedAt, endedAt).toMillis());
-        return new ExecutionMeasurements(latencyMs, 0, 0, toolStates);
+        return new ExecutionMeasurements(latencyMs, inputTokens, outputTokens, toolStates);
     }
 
     private OutboxEvent toOutboxEvent(DomainEvent event) {
@@ -256,8 +292,8 @@ public final class ExecuteReviewRun {
                     "model_timeout", FailureClass.TRANSIENT, "review model timed out"), null);
         }
         if (findCause(exception, JsonRepair.RepairFailedException.class) != null
-                || exception instanceof IllegalArgumentException
-                || exception instanceof NullPointerException) {
+                || findCause(exception, IllegalArgumentException.class) != null
+                || findCause(exception, NullPointerException.class) != null) {
             return Failure.invalidOutput();
         }
         return new Failure(new ReviewFailure(
@@ -274,6 +310,14 @@ public final class ExecuteReviewRun {
             }
         }
         return false;
+    }
+
+    private static TokenCounts tokenCounts(Throwable failure) {
+        CodeReviewAgent.ReviewExecutionException measured = findCause(
+                failure, CodeReviewAgent.ReviewExecutionException.class);
+        return measured == null
+                ? new TokenCounts(0, 0)
+                : new TokenCounts(measured.inputTokens(), measured.outputTokens());
     }
 
     private static <T extends Throwable> T findCause(Throwable failure, Class<T> type) {
@@ -339,10 +383,17 @@ public final class ExecuteReviewRun {
         }
     }
 
-    private record PipelineOutput(List<ReviewFinding> findings, Map<String, String> toolStates) {
+    private record PipelineOutput(
+            List<ReviewFinding> findings,
+            Map<String, String> toolStates,
+            int inputTokens,
+            int outputTokens) {
         private PipelineOutput {
             findings = List.copyOf(findings);
             toolStates = Map.copyOf(toolStates);
+            if (inputTokens < 0 || outputTokens < 0) {
+                throw new IllegalArgumentException("model token usage must be non-negative");
+            }
         }
     }
 
@@ -355,6 +406,14 @@ public final class ExecuteReviewRun {
             return new Failure(new ReviewFailure(
                     "invalid_review_output", FailureClass.TERMINAL,
                     "review pipeline returned invalid output"), null);
+        }
+    }
+
+    private record TokenCounts(int inputTokens, int outputTokens) {
+        private TokenCounts {
+            if (inputTokens < 0 || outputTokens < 0) {
+                throw new IllegalArgumentException("model token usage must be non-negative");
+            }
         }
     }
 }

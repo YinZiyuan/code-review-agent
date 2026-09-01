@@ -99,7 +99,7 @@ class ExecuteReviewRunTest {
         });
         ExecutionMeasurements measurements = run.attempts().get(0).measurements().orElseThrow();
         assertThat(measurements).isEqualTo(
-                new ExecutionMeasurements(250, 0, 0, java.util.Map.of("spotbugs", "RAN")));
+                new ExecutionMeasurements(250, 137, 29, java.util.Map.of("spotbugs", "RAN")));
         mutableStatuses.clear();
         assertThat(measurements.toolStates()).containsExactlyEntriesOf(
                 java.util.Map.of("spotbugs", "RAN"));
@@ -157,6 +157,8 @@ class ExecuteReviewRunTest {
                 "review pipeline returned invalid output"));
         assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
         assertThat(run.findings()).isEmpty();
+        assertThat(run.attempts().get(0).measurements()).contains(
+                new ExecutionMeasurements(10, 137, 29, java.util.Map.of()));
         assertThat(source.closed).isTrue();
         assertThat(mutations.progressStates)
                 .containsExactly(ReviewRunState.RUNNING, ReviewRunState.FAILED);
@@ -170,8 +172,14 @@ class ExecuteReviewRunTest {
         RecordingMutationStore mutations = new RecordingMutationStore();
         FakePreparedSource source = new FakePreparedSource(DIFF, SOURCE_ROOT);
         RecordingAgent agent = new RecordingAgent((request, sourceRoot) -> {
-            throw new JsonRepair.RepairFailedException(
-                    "unsafe malformed model output", new IllegalArgumentException("invalid JSON"));
+            throw new CodeReviewAgent.ReviewExecutionException(
+                    new JsonRepair.RepairFailedException(
+                            "unsafe malformed model output",
+                            new IllegalArgumentException("invalid JSON"),
+                            25,
+                            6),
+                    125,
+                    16);
         });
 
         ExecuteReviewRun.ExecutionOutcome outcome = executor(
@@ -182,8 +190,45 @@ class ExecuteReviewRunTest {
         assertThat(outcome.failure()).contains(new ReviewFailure(
                 "invalid_review_output", FailureClass.TERMINAL,
                 "review pipeline returned invalid output"));
+        assertThat(run.attempts().get(0).measurements()).contains(
+                new ExecutionMeasurements(0, 125, 16, java.util.Map.of()));
         assertThat(source.closed).isTrue();
         assertThat(mutations.jobs).isEmpty();
+    }
+
+    @Test
+    void cleanupFailureAfterAMeasuredResponseRetainsTheModelUsage() {
+        ReviewRun run = requestedRun(3);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        MutableClock clock = new MutableClock(T0);
+        PreparedReviewSource source = new PreparedReviewSource() {
+            @Override
+            public String diffPatch() {
+                return DIFF;
+            }
+
+            @Override
+            public Path sourceRoot() {
+                return SOURCE_ROOT;
+            }
+
+            @Override
+            public void close() {
+                throw new RuntimeException("temporary source cleanup failed");
+            }
+        };
+        RecordingAgent agent = new RecordingAgent((request, sourceRoot) -> {
+            clock.advance(Duration.ofMillis(15));
+            return ReviewResult.empty("reviewed");
+        });
+
+        ExecuteReviewRun.ExecutionOutcome outcome = executor(
+                new FakeReviewRunRepository(run, 2), mutations, revision -> source, agent, clock)
+                .execute(run.id());
+
+        assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.RETRYABLE_FAILURE);
+        assertThat(run.attempts().get(0).measurements()).contains(
+                new ExecutionMeasurements(15, 137, 29, java.util.Map.of()));
     }
 
     @Test
@@ -445,6 +490,9 @@ class ExecuteReviewRunTest {
     }
 
     private static final class RecordingAgent implements CodeReviewAgent {
+        private static final int INPUT_TOKENS = 137;
+        private static final int OUTPUT_TOKENS = 29;
+
         private final AgentBehavior behavior;
         private int calls;
         private String request;
@@ -460,6 +508,12 @@ class ExecuteReviewRunTest {
             this.request = request;
             this.sourceRoot = sourceRoot;
             return behavior.review(request, sourceRoot);
+        }
+
+        @Override
+        public CodeReviewAgent.ReviewExecution reviewWithTelemetry(String request, Path sourceRoot) {
+            return new CodeReviewAgent.ReviewExecution(
+                    review(request, sourceRoot), INPUT_TOKENS, OUTPUT_TOKENS);
         }
     }
 
