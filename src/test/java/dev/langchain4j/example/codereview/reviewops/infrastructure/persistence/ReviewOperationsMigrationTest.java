@@ -132,11 +132,65 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
             assertFlywayIsValid(latest);
             assertThat(isolated.queryForObject(
                     "SELECT review_run_id FROM github_deliveries WHERE delivery_id = 'legacy-delivery'",
                     UUID.class)).isNull();
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
+    void v6BackfillsTheMonotonicLeaseSequenceFromTheExistingAttemptCount() throws Exception {
+        String schema = "lease_sequence_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try (var connection = DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setSchema(schema);
+            SingleConnectionDataSource isolatedDataSource =
+                    new SingleConnectionDataSource(connection, true);
+            Flyway v5 = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .locations("classpath:db/migration")
+                    .target("5")
+                    .load();
+            assertThat(v5.migrate().migrationsExecuted).isEqualTo(5);
+
+            JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
+            UUID jobId = UUID.randomUUID();
+            Instant leasedAt = Instant.parse("2026-09-01T02:00:00Z");
+            isolated.update("""
+                            INSERT INTO durable_jobs (
+                                id, job_type, payload_reference, state, attempt_count, max_attempts,
+                                next_attempt_at, initial_next_attempt_at,
+                                lease_owner, lease_expires_at, idempotency_key, created_at, updated_at)
+                            VALUES (?, 'REVIEW_EXECUTION', ?, 'LEASED', 2, 3, ?, ?,
+                                    'worker-a', ?, 'leased-before-v6', ?, ?)
+                            """,
+                    jobId,
+                    UUID.randomUUID(),
+                    Timestamp.from(leasedAt),
+                    Timestamp.from(leasedAt),
+                    Timestamp.from(leasedAt.plusSeconds(300)),
+                    Timestamp.from(leasedAt.minusSeconds(60)),
+                    Timestamp.from(leasedAt));
+
+            Flyway latest = Flyway.configure()
+                    .dataSource(isolatedDataSource)
+                    .schemas(schema)
+                    .defaultSchema(schema)
+                    .locations("classpath:db/migration")
+                    .load();
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertFlywayIsValid(latest);
+            assertThat(isolated.queryForObject(
+                    "SELECT lease_sequence FROM durable_jobs WHERE id = ?",
+                    Integer.class,
+                    jobId)).isEqualTo(2);
         } finally {
             jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
         }
@@ -182,7 +236,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(3);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(4);
             assertFlywayIsValid(latest);
             assertThat(businessIdentityConstraintName(isolated, schema))
                     .isEqualTo("uq_review_runs_business_identity");

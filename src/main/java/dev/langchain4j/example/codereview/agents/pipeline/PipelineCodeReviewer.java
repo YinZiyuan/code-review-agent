@@ -35,9 +35,14 @@ public class PipelineCodeReviewer implements CodeReviewAgent {
         ReviewContext ctx = diffAnalyzer.analyze(diff, sourceRoot);
         ToolFindings tools = toolFindingsProducer.produce(ctx);
         LlmReviewer.Draft draft = llmReviewer.review(ctx, tools);
-        ReviewResult result = summarizer.summarize(
-                draft.result(), tools, draft.citationCandidates());
-        return new ReviewExecution(result, draft.inputTokens(), draft.outputTokens());
+        try {
+            ReviewResult result = summarizer.summarize(
+                    draft.result(), tools, draft.citationCandidates());
+            return new ReviewExecution(result, draft.inputTokens(), draft.outputTokens());
+        } catch (RuntimeException failure) {
+            throw new ReviewExecutionException(
+                    failure, draft.inputTokens(), draft.outputTokens());
+        }
     }
 
     private String extractDiff(String request) {

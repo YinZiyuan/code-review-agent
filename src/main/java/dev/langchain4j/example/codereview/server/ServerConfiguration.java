@@ -3,6 +3,7 @@ package dev.langchain4j.example.codereview.server;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.ObservePullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.application.PullRequestObservationStore;
+import dev.langchain4j.example.codereview.reviewops.application.RecoverExpiredReviewExecution;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunAdmissionStore;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxStore;
@@ -105,8 +106,16 @@ public class ServerConfiguration {
     }
 
     @Bean
-    DurableJobQueue durableJobQueue(JdbcTemplate jdbcTemplate, TransactionOperations transactions, Clock clock) {
-        return new PostgresDurableJobQueue(jdbcTemplate, transactions, clock);
+    DurableJobQueue durableJobQueue(
+            JdbcTemplate jdbcTemplate,
+            TransactionOperations transactions,
+            Clock clock,
+            ReviewRunRepository reviewRuns) {
+        return new PostgresDurableJobQueue(
+                jdbcTemplate,
+                transactions,
+                clock,
+                new RecoverExpiredReviewExecution(reviewRuns));
     }
 
     @Bean

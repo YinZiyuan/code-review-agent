@@ -7,6 +7,7 @@ import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun;
 import dev.langchain4j.example.codereview.reviewops.application.ObservePullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.application.PullRequestObservationStore;
+import dev.langchain4j.example.codereview.reviewops.application.RecoverExpiredReviewExecution;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewFindingMapper;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
 import dev.langchain4j.example.codereview.reviewops.application.github.VerifiedPullRequestEvent;
@@ -33,7 +34,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -62,14 +62,17 @@ class ExecuteReviewRunPostgresIntegrationTest extends PostgresIntegrationSupport
         reviewRuns = new JdbcReviewRunRepository(
                 jdbcTemplate, transactions, new JsonColumnCodec(new ObjectMapper()));
         jobs = new PostgresDurableJobQueue(
-                jdbcTemplate, transactions, Clock.fixed(T0, ZoneOffset.UTC));
+                jdbcTemplate,
+                transactions,
+                Clock.fixed(T0, ZoneOffset.UTC),
+                new RecoverExpiredReviewExecution(reviewRuns));
         mutations = new TransactionalReviewRunMutationStore(
                 reviewRuns, jobs, new JdbcOutboxStore(jdbcTemplate), transactions);
         jdbcTemplate.execute("TRUNCATE TABLE outbox_events, durable_jobs, review_runs CASCADE");
     }
 
     @Test
-    void finalStartedAttemptGetsARecoveryDispatchThatFailsTheRunAndSettlesTheJob() {
+    void exhaustedLeaseRecoveryRecyclesPreStartCrashThenSettlesFinalStartedAttempt() {
         ReviewConfigurationSnapshot configuration = new ReviewConfigurationSnapshot(
                 "pipeline-v3", "configuration-v1", "model-v1", "policy-v1", 1);
         CapturingObservationStore observations = new CapturingObservationStore();
@@ -80,35 +83,28 @@ class ExecuteReviewRunPostgresIntegrationTest extends PostgresIntegrationSupport
         reviewRuns.insert(admission.reviewRun());
         var jobId = jobs.enqueue(admission.executionJob());
 
-        LeasedJob crashedLease = jobs.leaseDue(
+        LeasedJob preStartCrash = jobs.leaseDue(
                 "worker-a", T0, LEASE_DURATION, 1).get(0);
+        assertThat(jobs.recoverExpiredLeases(preStartCrash.leaseExpiresAt())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap(
+                        "SELECT state, attempt_count, max_attempts FROM durable_jobs WHERE id = ?",
+                        jobId))
+                .containsEntry("state", "READY")
+                .containsEntry("attempt_count", 0)
+                .containsEntry("max_attempts", 1);
+
+        LeasedJob finalDelivery = jobs.leaseDue(
+                "worker-b", preStartCrash.leaseExpiresAt(), LEASE_DURATION, 1).get(0);
+        assertThat(finalDelivery.attemptCount()).isGreaterThan(preStartCrash.attemptCount());
         var stored = reviewRuns.find(admission.reviewRun().id()).orElseThrow();
         ReviewRun started = stored.reviewRun();
-        started.startAttempt(T0.plusSeconds(1));
-        mutations.saveProgress(started, stored.version());
+        started.startAttempt(preStartCrash.leaseExpiresAt().plusSeconds(1));
+        reviewRuns.update(started, stored.version());
 
-        Instant recoveredAt = crashedLease.leaseExpiresAt();
+        Instant recoveredAt = finalDelivery.leaseExpiresAt();
         assertThat(jobs.recoverExpiredLeases(recoveredAt)).isEqualTo(1);
-        LeasedJob recoveryLease = jobs.leaseDue(
-                "worker-b", recoveredAt, LEASE_DURATION, 1).get(0);
-        AtomicInteger sourceCalls = new AtomicInteger();
-        ExecuteReviewRun.ExecutionOutcome outcome = executor(
-                revision -> {
-                    sourceCalls.incrementAndGet();
-                    throw new AssertionError("terminal recovery must not prepare source");
-                },
-                new FixedTelemetryAgent(ReviewResult.empty("unused"), 1, 1),
-                Clock.fixed(recoveredAt.plusSeconds(1), ZoneOffset.UTC))
-                .execute(admission.reviewRun().id());
-        jobs.markSucceeded(
-                jobId,
-                "worker-b",
-                recoveryLease.attemptCount(),
-                recoveredAt.plusSeconds(1));
 
-        assertThat(admission.executionJob().maxAttempts()).isEqualTo(2);
-        assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.TERMINAL_FAILURE);
-        assertThat(sourceCalls).hasValue(0);
+        assertThat(admission.executionJob().maxAttempts()).isEqualTo(1);
         ReviewRun settled = reviewRuns.find(admission.reviewRun().id()).orElseThrow().reviewRun();
         assertThat(settled.state()).isEqualTo(ReviewRunState.FAILED);
         assertThat(settled.finalFailure()).hasValueSatisfying(failure -> {
@@ -124,8 +120,8 @@ class ExecuteReviewRunPostgresIntegrationTest extends PostgresIntegrationSupport
                         "SELECT state, attempt_count, max_attempts FROM durable_jobs WHERE id = ?",
                         jobId))
                 .containsEntry("state", "SUCCEEDED")
-                .containsEntry("attempt_count", 2)
-                .containsEntry("max_attempts", 2);
+                .containsEntry("attempt_count", 1)
+                .containsEntry("max_attempts", 1);
     }
 
     @Test
@@ -146,6 +142,42 @@ class ExecuteReviewRunPostgresIntegrationTest extends PostgresIntegrationSupport
         assertThat(persisted.attempts()).singleElement().satisfies(attempt ->
                 assertThat(attempt.measurements()).contains(
                         new ExecutionMeasurements(0, 211, 47, java.util.Map.of())));
+    }
+
+    @Test
+    void measuredDownstreamFailurePersistsAndRoundTripsNonZeroModelUsage() {
+        ReviewRun run = requestedRun(1);
+        reviewRuns.insert(run);
+        AtomicBoolean closed = new AtomicBoolean();
+        CodeReviewAgent reviewer = new CodeReviewAgent() {
+            @Override
+            public ReviewResult review(String request, Path sourceRoot) {
+                throw new AssertionError("telemetry path is required");
+            }
+
+            @Override
+            public ReviewExecution reviewWithTelemetry(String request, Path sourceRoot) {
+                throw new ReviewExecutionException(
+                        new IllegalArgumentException("invalid summarized output"), 333, 61);
+            }
+        };
+
+        ExecuteReviewRun.ExecutionOutcome outcome = executor(
+                revision -> preparedSource(closed),
+                reviewer,
+                Clock.fixed(T0.plusSeconds(2), ZoneOffset.UTC))
+                .execute(run.id());
+
+        assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.TERMINAL_FAILURE);
+        assertThat(outcome.failure()).hasValueSatisfying(failure ->
+                assertThat(failure.code()).isEqualTo("invalid_review_output"));
+        assertThat(closed).isTrue();
+        ReviewRun persisted = reviewRuns.find(run.id()).orElseThrow().reviewRun();
+        assertThat(persisted.attempts()).singleElement().satisfies(attempt -> {
+            assertThat(attempt.state()).isEqualTo(ReviewAttemptState.TERMINAL_FAILURE);
+            assertThat(attempt.measurements()).contains(
+                    new ExecutionMeasurements(0, 333, 61, java.util.Map.of()));
+        });
     }
 
     private ExecuteReviewRun executor(

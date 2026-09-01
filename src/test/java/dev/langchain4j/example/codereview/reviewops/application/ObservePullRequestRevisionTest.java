@@ -47,7 +47,7 @@ class ObservePullRequestRevisionTest {
         assertThat(request.executionJob().jobType()).isEqualTo("REVIEW_EXECUTION");
         assertThat(request.executionJob().payloadReference())
                 .isEqualTo(request.reviewRun().id().value());
-        assertThat(request.executionJob().maxAttempts()).isEqualTo(4);
+        assertThat(request.executionJob().maxAttempts()).isEqualTo(3);
         assertThat(request.executionJob().nextAttemptAt()).isEqualTo(ADMITTED_AT);
         assertThat(request.executionJob().idempotencyKey())
                 .isEqualTo("review-execution:" + request.reviewRun().id().value());

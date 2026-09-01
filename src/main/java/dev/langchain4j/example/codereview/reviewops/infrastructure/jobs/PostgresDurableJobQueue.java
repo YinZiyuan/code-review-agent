@@ -3,6 +3,7 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.jobs;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobIntentConflictException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ExpiredJobLeaseRecovery;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -32,7 +33,9 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
             )
             UPDATE durable_jobs AS job
             SET state = 'LEASED', lease_owner = ?, lease_expires_at = ?,
-                attempt_count = job.attempt_count + 1, updated_at = ?
+                attempt_count = job.attempt_count + 1,
+                lease_sequence = job.lease_sequence + 1,
+                updated_at = ?
             FROM due
             WHERE job.id = due.id
             RETURNING job.*
@@ -41,11 +44,22 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionOperations transactions;
     private final Clock clock;
+    private final ExpiredJobLeaseRecovery expiredLeaseRecovery;
 
     public PostgresDurableJobQueue(JdbcTemplate jdbcTemplate, TransactionOperations transactions, Clock clock) {
+        this(jdbcTemplate, transactions, clock,
+                (expiredLease, recoveredAt) -> ExpiredJobLeaseRecovery.RecoveryAction.UNHANDLED);
+    }
+
+    public PostgresDurableJobQueue(
+            JdbcTemplate jdbcTemplate,
+            TransactionOperations transactions,
+            Clock clock,
+            ExpiredJobLeaseRecovery expiredLeaseRecovery) {
         this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
         this.transactions = Objects.requireNonNull(transactions, "transactions");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.expiredLeaseRecovery = Objects.requireNonNull(expiredLeaseRecovery, "expiredLeaseRecovery");
     }
 
     @Override
@@ -117,7 +131,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                         UPDATE durable_jobs
                         SET state = 'SUCCEEDED', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
-                          AND attempt_count = ? AND lease_expires_at > ?
+                          AND lease_sequence = ? AND lease_expires_at > ?
                         """,
                 timestamp(now), jobId, owner, expectedAttempt, timestamp(now));
         requireCurrentLease(updated, jobId, owner, expectedAttempt);
@@ -143,7 +157,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                             last_failure_class = ?,
                             updated_at = ?
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
-                          AND attempt_count = ? AND lease_expires_at > ?
+                          AND lease_sequence = ? AND lease_expires_at > ?
                         """,
                 failureClass.name(),
                 timestamp(nextAttemptAt),
@@ -159,18 +173,63 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     @Override
     public int recoverExpiredLeases(Instant now) {
         Objects.requireNonNull(now, "now");
+        Integer recovered = transactions.execute(status -> {
+            List<LeasedJob> exhausted = jdbcTemplate.query("""
+                            SELECT *
+                            FROM durable_jobs
+                            WHERE state = 'LEASED' AND lease_expires_at <= ?
+                              AND attempt_count >= max_attempts
+                            ORDER BY lease_expires_at, id
+                            FOR UPDATE
+                            """,
+                    PostgresDurableJobQueue::mapLeasedJob,
+                    timestamp(now));
+            int recoveredExhausted = 0;
+            for (LeasedJob expiredLease : exhausted) {
+                ExpiredJobLeaseRecovery.RecoveryAction action = Objects.requireNonNull(
+                        expiredLeaseRecovery.recover(expiredLease, now),
+                        "expired lease recovery action");
+                recoveredExhausted += settleExhaustedLease(expiredLease, action, now);
+            }
+            int recoveredRetryable = jdbcTemplate.update("""
+                            UPDATE durable_jobs
+                            SET state = 'READY',
+                                lease_owner = NULL,
+                                lease_expires_at = NULL,
+                                updated_at = ?
+                            WHERE state = 'LEASED' AND lease_expires_at <= ?
+                              AND attempt_count < max_attempts
+                            """,
+                    timestamp(now), timestamp(now));
+            return recoveredExhausted + recoveredRetryable;
+        });
+        return Objects.requireNonNull(recovered, "transaction result");
+    }
+
+    private int settleExhaustedLease(
+            LeasedJob expiredLease,
+            ExpiredJobLeaseRecovery.RecoveryAction action,
+            Instant recoveredAt) {
         return jdbcTemplate.update("""
                         UPDATE durable_jobs
-                        SET state = CASE
-                                WHEN attempt_count >= max_attempts THEN 'DEAD'
-                                ELSE 'READY'
-                            END,
+                        SET state = ?,
+                            attempt_count = attempt_count + ?,
                             lease_owner = NULL,
                             lease_expires_at = NULL,
                             updated_at = ?
-                        WHERE state = 'LEASED' AND lease_expires_at <= ?
+                        WHERE id = ? AND state = 'LEASED' AND lease_sequence = ?
+                          AND lease_expires_at <= ?
                         """,
-                timestamp(now), timestamp(now));
+                switch (action) {
+                    case RETRY_WITHOUT_CHARGE -> "READY";
+                    case SUCCEEDED -> "SUCCEEDED";
+                    case UNHANDLED -> "DEAD";
+                },
+                action == ExpiredJobLeaseRecovery.RecoveryAction.RETRY_WITHOUT_CHARGE ? -1 : 0,
+                timestamp(recoveredAt),
+                expiredLease.id(),
+                expiredLease.attemptCount(),
+                timestamp(recoveredAt));
     }
 
     private static LeasedJob mapLeasedJob(ResultSet resultSet, int rowNumber) throws SQLException {
@@ -178,7 +237,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                 resultSet.getObject("id", UUID.class),
                 resultSet.getString("job_type"),
                 resultSet.getObject("payload_reference", UUID.class),
-                resultSet.getInt("attempt_count"),
+                resultSet.getInt("lease_sequence"),
                 resultSet.getInt("max_attempts"),
                 resultSet.getTimestamp("lease_expires_at").toInstant());
     }

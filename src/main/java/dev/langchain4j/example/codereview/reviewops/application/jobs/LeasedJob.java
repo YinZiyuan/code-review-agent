@@ -4,6 +4,9 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * A leased job whose {@code attemptCount} is the monotonic fencing number for this lease.
+ */
 public record LeasedJob(
         UUID id,
         String jobType,
