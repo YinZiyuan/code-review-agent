@@ -5,6 +5,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Duration;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ApplicationModeTest {
@@ -40,6 +42,43 @@ class ApplicationModeTest {
     @Test
     void rejectsNonPositiveWebhookPayloadLimitBeforeWebhookHandling() {
         contextRunner.withPropertyValues("code-review.server.github.max-webhook-bytes=0")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void bindsBoundedWorkerLifecycleConfiguration() {
+        contextRunner.withPropertyValues(
+                        "code-review.server.worker.poll-interval=2s",
+                        "code-review.server.worker.batch-size=7",
+                        "code-review.server.worker.lease-duration=4m",
+                        "code-review.server.worker.heartbeat-interval=30s",
+                        "code-review.server.worker.initial-backoff=11s",
+                        "code-review.server.worker.max-backoff=3m",
+                        "code-review.server.worker.jitter-ratio=0.15")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    ServerProperties.Worker worker = context.getBean(ServerProperties.class).worker();
+                    assertThat(worker.pollInterval()).isEqualTo(Duration.ofSeconds(2));
+                    assertThat(worker.batchSize()).isEqualTo(7);
+                    assertThat(worker.leaseDuration()).isEqualTo(Duration.ofMinutes(4));
+                    assertThat(worker.heartbeatInterval()).isEqualTo(Duration.ofSeconds(30));
+                    assertThat(worker.initialBackoff()).isEqualTo(Duration.ofSeconds(11));
+                    assertThat(worker.maxBackoff()).isEqualTo(Duration.ofMinutes(3));
+                    assertThat(worker.jitterRatio()).isEqualTo(0.15);
+                });
+    }
+
+    @Test
+    void rejectsWorkerSettingsThatWouldBusySpinOrLoseHeartbeats() {
+        contextRunner.withPropertyValues("code-review.server.worker.poll-interval=0s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues(
+                        "code-review.server.worker.lease-duration=30s",
+                        "code-review.server.worker.heartbeat-interval=30s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues(
+                        "code-review.server.worker.initial-backoff=2m",
+                        "code-review.server.worker.max-backoff=1m")
                 .run(context -> assertThat(context).hasFailed());
     }
 

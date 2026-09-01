@@ -27,5 +27,14 @@ public interface DurableJobQueue {
     void recordFailure(UUID jobId, String owner, int expectedAttempt, FailureClass failureClass,
                        Instant nextAttemptAt, Instant now);
 
+    default void renewLease(
+            UUID jobId,
+            String owner,
+            int expectedAttempt,
+            Instant now,
+            Duration leaseDuration) {
+        throw new UnsupportedOperationException("lease renewal is not supported");
+    }
+
     int recoverExpiredLeases(Instant now);
 }

@@ -16,3 +16,8 @@ code-review:
     worker:
       poll-interval: 1s
       batch-size: 10
+      lease-duration: 3m
+      heartbeat-interval: 30s
+      initial-backoff: 10s
+      max-backoff: 5m
+      jitter-ratio: 0.2

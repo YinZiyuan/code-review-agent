@@ -171,6 +171,36 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     }
 
     @Override
+    public void renewLease(
+            UUID jobId,
+            String owner,
+            int expectedAttempt,
+            Instant now,
+            Duration leaseDuration) {
+        Objects.requireNonNull(jobId, "jobId");
+        owner = requireNonBlank(owner, "owner");
+        Objects.requireNonNull(now, "now");
+        Objects.requireNonNull(leaseDuration, "leaseDuration");
+        if (leaseDuration.isZero() || leaseDuration.isNegative()) {
+            throw new IllegalArgumentException("leaseDuration must be positive");
+        }
+        Instant proposedExpiry = now.plus(leaseDuration);
+        int updated = jdbcTemplate.update("""
+                        UPDATE durable_jobs
+                        SET lease_expires_at = GREATEST(lease_expires_at, ?), updated_at = ?
+                        WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+                          AND lease_sequence = ? AND lease_expires_at > ?
+                        """,
+                timestamp(proposedExpiry),
+                timestamp(now),
+                jobId,
+                owner,
+                expectedAttempt,
+                timestamp(now));
+        requireCurrentLease(updated, jobId, owner, expectedAttempt);
+    }
+
+    @Override
     public int recoverExpiredLeases(Instant now) {
         Objects.requireNonNull(now, "now");
         Integer recovered = transactions.execute(status -> {
@@ -238,6 +268,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                 resultSet.getString("job_type"),
                 resultSet.getObject("payload_reference", UUID.class),
                 resultSet.getInt("lease_sequence"),
+                resultSet.getInt("attempt_count"),
                 resultSet.getInt("max_attempts"),
                 resultSet.getTimestamp("lease_expires_at").toInstant());
     }

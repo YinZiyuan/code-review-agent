@@ -2,6 +2,7 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.jobs;
 
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobIntentConflictException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ExpiredJobLeaseRecovery;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresIntegrationSupport;
@@ -186,7 +187,8 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
         List<LeasedJob> leased = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
 
         assertThat(leased).containsExactly(new LeasedJob(
-                jobId, "REVIEW_EXECUTION", payloadReference, 1, 3, LEASED_AT.plus(LEASE_DURATION)));
+                jobId, "REVIEW_EXECUTION", payloadReference, 1, 1, 3,
+                LEASED_AT.plus(LEASE_DURATION)));
         assertThat(jobRow(jobId))
                 .containsEntry("state", "LEASED")
                 .containsEntry("attempt_count", 1)
@@ -324,6 +326,60 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("state", "SUCCEEDED")
                 .containsEntry("lease_owner", null)
                 .containsEntry("lease_expires_at", null);
+    }
+
+    @Test
+    void currentOwnerHeartbeatExtendsTheLeaseWithoutChangingItsFence() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "heartbeat-extension",
+                UUID.fromString("00000000-0000-0000-0000-000000000033"),
+                3,
+                DUE_AT));
+        LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        Instant heartbeatAt = LEASED_AT.plusSeconds(30);
+        Duration extendedDuration = Duration.ofMinutes(7);
+
+        queue.renewLease(
+                jobId,
+                "worker-a",
+                lease.attemptCount(),
+                heartbeatAt,
+                extendedDuration);
+
+        assertThat(jobRow(jobId))
+                .containsEntry("state", "LEASED")
+                .containsEntry("attempt_count", 1)
+                .containsEntry("lease_owner", "worker-a");
+        assertThat(((Timestamp) jobRow(jobId).get("lease_expires_at")).toInstant())
+                .isEqualTo(heartbeatAt.plus(extendedDuration));
+    }
+
+    @Test
+    void heartbeatRejectsForeignStaleAndExpiredLeaseOwnership() {
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "heartbeat-fencing",
+                UUID.fromString("00000000-0000-0000-0000-000000000034"),
+                3,
+                DUE_AT));
+        LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        Instant heartbeatAt = LEASED_AT.plusSeconds(30);
+
+        assertThatThrownBy(() -> queue.renewLease(
+                jobId, "worker-b", lease.attemptCount(), heartbeatAt, LEASE_DURATION))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(jobId.toString());
+        assertThatThrownBy(() -> queue.renewLease(
+                jobId, "worker-a", lease.attemptCount() + 1, heartbeatAt, LEASE_DURATION))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(jobId.toString());
+        assertThatThrownBy(() -> queue.renewLease(
+                jobId, "worker-a", lease.attemptCount(), lease.leaseExpiresAt(), LEASE_DURATION))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(jobId.toString());
+        assertThat(((Timestamp) jobRow(jobId).get("lease_expires_at")).toInstant())
+                .isEqualTo(lease.leaseExpiresAt());
     }
 
     @Test
@@ -482,6 +538,32 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("state", "READY")
                 .containsEntry("attempt_count", secondLease.attemptCount())
                 .containsEntry("last_failure_class", "TRANSIENT");
+    }
+
+    @Test
+    void refundedDeliveryKeepsChargedAttemptSeparateFromTheMonotonicFence() {
+        PostgresDurableJobQueue recoveringQueue = new PostgresDurableJobQueue(
+                jdbcTemplate,
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+                Clock.fixed(CREATED_AT, ZoneOffset.UTC),
+                (lease, recoveredAt) -> ExpiredJobLeaseRecovery.RecoveryAction.RETRY_WITHOUT_CHARGE);
+        recoveringQueue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "refunded-delivery-attempt",
+                UUID.fromString("00000000-0000-0000-0000-000000000035"),
+                1,
+                DUE_AT));
+        LeasedJob first = recoveringQueue.leaseDue(
+                "worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        recoveringQueue.recoverExpiredLeases(first.leaseExpiresAt());
+
+        LeasedJob second = recoveringQueue.leaseDue(
+                "worker-b", first.leaseExpiresAt(), LEASE_DURATION, 1).get(0);
+
+        assertThat(first.attemptCount()).isEqualTo(1);
+        assertThat(first.deliveryAttempt()).isEqualTo(1);
+        assertThat(second.attemptCount()).isEqualTo(2);
+        assertThat(second.deliveryAttempt()).isEqualTo(1);
     }
 
     @Test
