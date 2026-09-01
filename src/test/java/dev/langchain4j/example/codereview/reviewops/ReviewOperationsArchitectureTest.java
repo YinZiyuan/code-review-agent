@@ -25,6 +25,29 @@ class ReviewOperationsArchitectureTest {
                     "..reviewops.domain..");
 
     @ArchTest
+    static final ArchRule application_does_not_depend_on_infrastructure_or_runtime_frameworks = noClasses()
+            .that().resideInAPackage("..reviewops.application..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "..reviewops.infrastructure..",
+                    "java.sql..",
+                    "javax.sql..",
+                    "org.flywaydb..",
+                    "org.springframework..",
+                    "org.testcontainers..");
+
+    @ArchTest
+    static final ArchRule domain_does_not_depend_on_persistence_frameworks = noClasses()
+            .that().resideInAPackage("..reviewops.domain..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "..reviewops.infrastructure..",
+                    "java.sql..",
+                    "javax.sql..",
+                    "com.fasterxml.jackson..",
+                    "org.flywaydb..",
+                    "org.springframework..",
+                    "org.testcontainers..");
+
+    @ArchTest
     static final ArchRule production_review_operations_does_not_depend_on_evaluation = noClasses()
             .that().resideInAPackage("..reviewops..")
             .should().dependOnClassesThat().resideInAPackage("..eval..");

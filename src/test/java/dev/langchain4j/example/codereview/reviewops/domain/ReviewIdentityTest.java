@@ -23,13 +23,27 @@ class ReviewIdentityTest {
     }
 
     @Test
-    void configurationRequiresTwoRetriesAsThreeTotalAttempts() {
+    void configurationVersionChangesConfigurationSnapshotIdentity() {
         ReviewConfigurationSnapshot snapshot =
-                new ReviewConfigurationSnapshot("w4-tuned", "moonshot-v1-8k", "publish-v1", 3);
+                new ReviewConfigurationSnapshot(
+                        "w4-tuned", "config-2026-08-31", "moonshot-v1-8k", "publish-v1", 3);
+        ReviewConfigurationSnapshot changedConfigurationVersion =
+                new ReviewConfigurationSnapshot(
+                        "w4-tuned", "config-2026-09-01", "moonshot-v1-8k", "publish-v1", 3);
+
+        assertThat(changedConfigurationVersion).isNotEqualTo(snapshot);
+    }
+
+    @Test
+    void configurationRequiresAtLeastOneTotalAttempt() {
+        ReviewConfigurationSnapshot snapshot =
+                new ReviewConfigurationSnapshot(
+                        "w4-tuned", "config-2026-08-31", "moonshot-v1-8k", "publish-v1", 3);
 
         assertThat(snapshot.maxReviewAttempts()).isEqualTo(3);
         assertThatThrownBy(() ->
-                new ReviewConfigurationSnapshot("w4-tuned", "moonshot-v1-8k", "publish-v1", 0))
+                new ReviewConfigurationSnapshot(
+                        "w4-tuned", "config-2026-08-31", "moonshot-v1-8k", "publish-v1", 0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

@@ -19,6 +19,20 @@ public final class ReviewFinding {
         this.evidence = Objects.requireNonNull(evidence, "evidence");
     }
 
+    public static ReviewFinding reconstitute(FindingFingerprint fingerprint, CodeLocation location,
+                                             FindingContent content, FindingEvidence evidence,
+                                             PublicationDecision publicationDecision,
+                                             PublicationReference publicationReference) {
+        if (publicationReference != null && (publicationDecision == null
+                || publicationDecision.tier() != PublicationTier.INLINE_COMMENT)) {
+            throw new IllegalArgumentException("only an inline finding may record a comment reference");
+        }
+        ReviewFinding finding = new ReviewFinding(fingerprint, location, content, evidence);
+        finding.publicationDecision = publicationDecision;
+        finding.publicationReference = publicationReference;
+        return finding;
+    }
+
     void acceptPublicationDecision(PublicationDecision decision) {
         if (publicationDecision != null) throw new IllegalStateException("decision already assigned");
         publicationDecision = Objects.requireNonNull(decision, "decision");
