@@ -79,13 +79,32 @@ class MatcherTest {
     void layer2RejectsWhenJudgeSaysNo() {
         Matcher matcher = new Matcher((expected, agent) ->
                 new LlmJudge.JudgeVerdict(false, 0.1, "different concern"), 5);
+        ReviewFinding candidate = agent("Foo.java", 43, "missing javadoc");
 
         List<MatchResult> results = matcher.match(
                 List.of(expected(42, new int[]{40, 45})),
-                List.of(agent("Foo.java", 43, "missing javadoc"))
+                List.of(candidate)
         );
 
         assertThat(results.get(0).matched()).isFalse();
+        assertThat(results.get(0).agentFinding()).isSameAs(candidate);
+        assertThat(results.get(0).confidence()).isEqualTo(0.1);
+        assertThat(results.get(0).judgeReason()).isEqualTo("different concern");
+    }
+
+    @Test
+    void oneFindingCannotMatchMultipleExpectedIssues() {
+        Matcher matcher = new Matcher((expected, agent) ->
+                new LlmJudge.JudgeVerdict(true, 0.9, "same problem"), 5);
+        ReviewFinding finding = agent("Foo.java", 43, "SQL injection");
+
+        List<MatchResult> results = matcher.match(
+                List.of(expected(42, new int[]{40, 45}), expected(43, new int[]{40, 45})),
+                List.of(finding)
+        );
+
+        assertThat(results).filteredOn(MatchResult::matched).hasSize(1);
+        assertThat(results).filteredOn(result -> !result.matched()).hasSize(1);
     }
 
     @Test

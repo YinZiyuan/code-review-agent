@@ -8,10 +8,13 @@ import dev.langchain4j.example.codereview.eval.EvaluationRunner;
 import dev.langchain4j.example.codereview.eval.LlmJudge;
 import dev.langchain4j.example.codereview.eval.LlmJudgeImpl;
 import dev.langchain4j.example.codereview.eval.Matcher;
+import dev.langchain4j.example.codereview.eval.ModelRuntimeMetadata;
+import dev.langchain4j.example.codereview.eval.ModelRuntimeMetadataResolver;
 import dev.langchain4j.example.codereview.infra.JsonRepair;
 import dev.langchain4j.model.chat.ChatModel;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,8 +39,14 @@ public class AgentConfig {
     }
 
     @Bean
-    public EvaluationRunner evaluationRunner(CodeReviewAgent agent, Matcher matcher, ObjectMapper mapper) {
-        return new EvaluationRunner(agent, matcher, mapper);
+    public ModelRuntimeMetadata modelRuntimeMetadata(Environment environment) {
+        return new ModelRuntimeMetadataResolver(environment).resolve();
+    }
+
+    @Bean
+    public EvaluationRunner evaluationRunner(CodeReviewAgent agent, Matcher matcher, ObjectMapper mapper,
+                                             ModelRuntimeMetadata modelRuntime) {
+        return new EvaluationRunner(agent, matcher, mapper, modelRuntime);
     }
 
     @Bean

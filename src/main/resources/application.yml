@@ -23,7 +23,7 @@ code-review:
     reviewer-timeout: 60s
     parallelism: 3
   eval:
-    judge-model: moonshot-v1-8k
+    judge-model: ${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:moonshot-v1-8k}
     runs-per-sample: 1      # W1 keeps it 1; release uses 3
     samples-dir: eval/samples
     report-dir: eval/reports
