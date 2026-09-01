@@ -87,6 +87,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
         assertThat(unpublishedOutboxIndexExists()).isTrue();
         assertThat(unpublishedOutboxIndexColumns())
                 .containsExactly("occurred_at", "event_id");
+        assertThat(indexColumns("github_deliveries", "idx_github_deliveries_received_at"))
+                .containsExactly("received_at");
     }
 
     @Test
@@ -134,7 +136,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
             assertFlywayIsValid(latest);
             assertThat(businessIdentityConstraintName(isolated, schema))
                     .isEqualTo("uq_review_runs_business_identity");
@@ -685,6 +687,39 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                        AND index_definition.relname = 'idx_outbox_events_unpublished'
                      ORDER BY key_columns.ordinality
                      """)) {
+            try (var resultSet = statement.executeQuery()) {
+                List<String> columns = new ArrayList<>();
+                while (resultSet.next()) {
+                    columns.add(resultSet.getString("attname"));
+                }
+                return columns;
+            }
+        }
+    }
+
+    private List<String> indexColumns(String tableName, String indexName) throws SQLException {
+        try (var connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("""
+                     SELECT attribute.attname
+                     FROM pg_index index_metadata
+                     JOIN pg_class index_definition
+                       ON index_definition.oid = index_metadata.indexrelid
+                     JOIN pg_class table_definition
+                       ON table_definition.oid = index_metadata.indrelid
+                     JOIN pg_namespace schema_definition
+                       ON schema_definition.oid = table_definition.relnamespace
+                     CROSS JOIN unnest(index_metadata.indkey) WITH ORDINALITY
+                       AS key_columns(attribute_number, ordinality)
+                     JOIN pg_attribute attribute
+                       ON attribute.attrelid = table_definition.oid
+                      AND attribute.attnum = key_columns.attribute_number
+                     WHERE schema_definition.nspname = 'public'
+                       AND table_definition.relname = ?
+                       AND index_definition.relname = ?
+                     ORDER BY key_columns.ordinality
+                     """)) {
+            statement.setString(1, tableName);
+            statement.setString(2, indexName);
             try (var resultSet = statement.executeQuery()) {
                 List<String> columns = new ArrayList<>();
                 while (resultSet.next()) {
