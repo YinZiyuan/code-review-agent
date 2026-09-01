@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -46,20 +47,24 @@ public final class ReviewJobWorker {
         if (shutdown.get()) {
             return WorkerCycleResult.empty();
         }
-        Instant cycleTime = clock.instant();
-        int recovered = queue.recoverExpiredLeases(cycleTime);
+        Instant recoveryTime = clock.instant();
+        int recovered = queue.recoverExpiredLeases(
+                recoveryTime, settings.recoveryBatchSize());
         if (shutdown.get()) {
             return new WorkerCycleResult(recovered, 0, 0, 0, 0, 0, 0, 0, 0);
         }
+        Instant leaseTime = clock.instant();
         List<LeasedJob> leased = List.copyOf(queue.leaseDue(
-                settings.owner(), cycleTime, settings.leaseDuration(), settings.batchSize()));
+                settings.owner(), leaseTime, settings.leaseDuration(), settings.batchSize()));
         CycleCounts counts = new CycleCounts(recovered, leased.size());
-        for (int index = 0; index < leased.size(); index++) {
+        List<ActiveLease> activeLeases = startHeartbeats(leased, counts);
+        for (int index = 0; index < activeLeases.size(); index++) {
             if (shutdown.get()) {
-                counts.abandonedOnShutdown += leased.size() - index;
+                counts.abandonedOnShutdown += activeLeases.size() - index;
+                closeRemaining(activeLeases, index);
                 break;
             }
-            process(leased.get(index), counts);
+            process(activeLeases.get(index), counts);
         }
         return counts.result();
     }
@@ -68,12 +73,31 @@ public final class ReviewJobWorker {
         shutdown.set(true);
     }
 
-    private void process(LeasedJob job, CycleCounts counts) {
-        LeaseHeartbeat.Session session;
-        try {
-            session = Objects.requireNonNull(
-                    heartbeat.start(job, settings.owner()), "heartbeat session");
-        } catch (RuntimeException failure) {
+    private List<ActiveLease> startHeartbeats(List<LeasedJob> leased, CycleCounts counts) {
+        List<ActiveLease> active = new ArrayList<>(leased.size());
+        for (int index = 0; index < leased.size(); index++) {
+            if (shutdown.get()) {
+                counts.abandonedOnShutdown += leased.size() - index;
+                break;
+            }
+            LeasedJob job = leased.get(index);
+            try {
+                LeaseHeartbeat.Session session = Objects.requireNonNull(
+                        heartbeat.start(job, settings.owner()), "heartbeat session");
+                active.add(new ActiveLease(job, session));
+            } catch (RuntimeException failure) {
+                counts.ownershipLost++;
+                recordMetric(job, "ownership_lost");
+            }
+        }
+        return List.copyOf(active);
+    }
+
+    private void process(ActiveLease activeLease, CycleCounts counts) {
+        LeasedJob job = activeLease.job();
+        LeaseHeartbeat.Session session = activeLease.session();
+        if (!renewOwnership(session)) {
+            closeIgnoringFailure(session);
             counts.ownershipLost++;
             recordMetric(job, "ownership_lost");
             return;
@@ -152,6 +176,28 @@ public final class ReviewJobWorker {
         }
     }
 
+    private static boolean renewOwnership(LeaseHeartbeat.Session session) {
+        try {
+            return session.renewNow();
+        } catch (RuntimeException heartbeatFailure) {
+            return false;
+        }
+    }
+
+    private static void closeRemaining(List<ActiveLease> activeLeases, int first) {
+        for (int index = first; index < activeLeases.size(); index++) {
+            closeIgnoringFailure(activeLeases.get(index).session());
+        }
+    }
+
+    private static void closeIgnoringFailure(LeaseHeartbeat.Session session) {
+        try {
+            session.close();
+        } catch (RuntimeException ignored) {
+            // The lease remains recoverable; shutdown and lost-ownership paths must continue.
+        }
+    }
+
     private ReviewJobHandler.JobOutcome classify(RuntimeException failure) {
         GitHubFailureException github = findCause(failure, GitHubFailureException.class);
         if (github != null) {
@@ -197,7 +243,16 @@ public final class ReviewJobWorker {
             String owner,
             Duration leaseDuration,
             Duration heartbeatInterval,
-            int batchSize) {
+            int batchSize,
+            int recoveryBatchSize) {
+
+        public WorkerSettings(
+                String owner,
+                Duration leaseDuration,
+                Duration heartbeatInterval,
+                int batchSize) {
+            this(owner, leaseDuration, heartbeatInterval, batchSize, batchSize);
+        }
 
         public WorkerSettings {
             owner = requireNonBlank(owner, "owner");
@@ -214,6 +269,9 @@ public final class ReviewJobWorker {
             }
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive");
+            }
+            if (recoveryBatchSize <= 0) {
+                throw new IllegalArgumentException("recoveryBatchSize must be positive");
             }
         }
 
@@ -247,10 +305,20 @@ public final class ReviewJobWorker {
         Session start(LeasedJob job, String owner);
 
         interface Session extends AutoCloseable {
+            boolean renewNow();
+
             boolean ownershipValid();
 
             @Override
             void close();
+        }
+    }
+
+    private record ActiveLease(LeasedJob job, LeaseHeartbeat.Session session) {
+
+        private ActiveLease {
+            Objects.requireNonNull(job, "job");
+            Objects.requireNonNull(session, "session");
         }
     }
 

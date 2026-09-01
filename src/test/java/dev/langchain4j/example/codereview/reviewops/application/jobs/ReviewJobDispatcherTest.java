@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.application.jobs;
 
 import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun;
+import dev.langchain4j.example.codereview.reviewops.application.SupersedeObsoleteReviewRuns;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
@@ -141,6 +142,32 @@ class ReviewJobDispatcherTest {
                         "invalid_review_output"));
         assertThat(transientJob.handle(REVIEW_JOB))
                 .isEqualTo(ReviewJobHandler.JobOutcome.transientFailure("model_timeout"));
+    }
+
+    @Test
+    void supersessionHandlerRegistersThePersistedTypeAndMapsApplicationOutcome() {
+        SupersedeObsoleteReviewRunsJobHandler completed =
+                new SupersedeObsoleteReviewRunsJobHandler(id ->
+                        new SupersedeObsoleteReviewRuns.SupersessionOutcome(
+                                SupersedeObsoleteReviewRuns.SupersessionStatus.COMPLETED, 2));
+        SupersedeObsoleteReviewRunsJobHandler missing =
+                new SupersedeObsoleteReviewRunsJobHandler(id ->
+                        new SupersedeObsoleteReviewRuns.SupersessionOutcome(
+                                SupersedeObsoleteReviewRuns.SupersessionStatus.NOT_FOUND, 0));
+        LeasedJob supersessionJob = new LeasedJob(
+                REVIEW_JOB.id(),
+                "SUPERSEDE_OBSOLETE_RUNS",
+                REVIEW_JOB.payloadReference(),
+                REVIEW_JOB.attemptCount(),
+                REVIEW_JOB.maxAttempts(),
+                REVIEW_JOB.leaseExpiresAt());
+
+        assertThat(completed.jobType()).isEqualTo("SUPERSEDE_OBSOLETE_RUNS");
+        assertThat(completed.handle(supersessionJob))
+                .isEqualTo(ReviewJobHandler.JobOutcome.succeeded());
+        assertThat(missing.handle(supersessionJob))
+                .isEqualTo(ReviewJobHandler.JobOutcome.terminalFailure(
+                        "supersession_source_not_found"));
     }
 
     private static ReviewJobHandler handler(

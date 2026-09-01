@@ -26,6 +26,7 @@ public record ServerProperties(GitHub github, Worker worker) {
     public record Worker(
             Duration pollInterval,
             Integer batchSize,
+            Integer recoveryBatchSize,
             Duration leaseDuration,
             Duration heartbeatInterval,
             Duration initialBackoff,
@@ -38,6 +39,9 @@ public record ServerProperties(GitHub github, Worker worker) {
             }
             if (batchSize == null) {
                 batchSize = 10;
+            }
+            if (recoveryBatchSize == null) {
+                recoveryBatchSize = 10;
             }
             if (leaseDuration == null) {
                 leaseDuration = Duration.ofMinutes(3);
@@ -57,6 +61,9 @@ public record ServerProperties(GitHub github, Worker worker) {
             requirePositive(pollInterval, "pollInterval");
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive");
+            }
+            if (recoveryBatchSize <= 0) {
+                throw new IllegalArgumentException("recoveryBatchSize must be positive");
             }
             requirePositive(leaseDuration, "leaseDuration");
             requirePositive(heartbeatInterval, "heartbeatInterval");

@@ -37,4 +37,11 @@ public interface DurableJobQueue {
     }
 
     int recoverExpiredLeases(Instant now);
+
+    default int recoverExpiredLeases(Instant now, int limit) {
+        if (limit <= 0) {
+            throw new IllegalArgumentException("recovery limit must be positive");
+        }
+        return recoverExpiredLeases(now);
+    }
 }

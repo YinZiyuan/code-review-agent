@@ -7,6 +7,8 @@ import dev.langchain4j.example.codereview.reviewops.application.jobs.ExpiredJobL
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionOperations;
 
 import java.sql.ResultSet;
@@ -15,11 +17,19 @@ import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class PostgresDurableJobQueue implements DurableJobQueue {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(PostgresDurableJobQueue.class);
+    private static final int DEFAULT_RECOVERY_LIMIT = 100;
 
     private static final String LEASE_DUE = """
             WITH due AS (
@@ -202,38 +212,100 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
 
     @Override
     public int recoverExpiredLeases(Instant now) {
+        return recoverExpiredLeases(now, DEFAULT_RECOVERY_LIMIT);
+    }
+
+    @Override
+    public int recoverExpiredLeases(Instant now, int limit) {
         Objects.requireNonNull(now, "now");
-        Integer recovered = transactions.execute(status -> {
-            List<LeasedJob> exhausted = jdbcTemplate.query("""
-                            SELECT *
-                            FROM durable_jobs
-                            WHERE state = 'LEASED' AND lease_expires_at <= ?
-                              AND attempt_count >= max_attempts
-                            ORDER BY lease_expires_at, id
-                            FOR UPDATE
-                            """,
-                    PostgresDurableJobQueue::mapLeasedJob,
-                    timestamp(now));
-            int recoveredExhausted = 0;
-            for (LeasedJob expiredLease : exhausted) {
-                ExpiredJobLeaseRecovery.RecoveryAction action = Objects.requireNonNull(
-                        expiredLeaseRecovery.recover(expiredLease, now),
-                        "expired lease recovery action");
-                recoveredExhausted += settleExhaustedLease(expiredLease, action, now);
+        if (limit <= 0) {
+            throw new IllegalArgumentException("recovery limit must be positive");
+        }
+        int recovered = 0;
+        Set<UUID> failedThisCycle = new LinkedHashSet<>();
+        for (int attempted = 0; attempted < limit; attempted++) {
+            AtomicReference<UUID> selectedId = new AtomicReference<>();
+            try {
+                Boolean recoveredOne = transactions.execute(status -> {
+                    Optional<LeasedJob> selected = lockNextExpiredLease(
+                            now, failedThisCycle);
+                    if (selected.isEmpty()) {
+                        return false;
+                    }
+                    LeasedJob expiredLease = selected.orElseThrow();
+                    selectedId.set(expiredLease.id());
+                    recoverLockedLease(expiredLease, now);
+                    return true;
+                });
+                if (!Objects.requireNonNull(recoveredOne, "transaction result")) {
+                    break;
+                }
+                recovered++;
+            } catch (RuntimeException recoveryFailure) {
+                UUID failedId = selectedId.get();
+                if (failedId == null) {
+                    throw recoveryFailure;
+                }
+                failedThisCycle.add(failedId);
+                LOGGER.warn("Expired job lease recovery failed for job {}", failedId);
             }
-            int recoveredRetryable = jdbcTemplate.update("""
+        }
+        return recovered;
+    }
+
+    private Optional<LeasedJob> lockNextExpiredLease(
+            Instant now,
+            Set<UUID> excludedIds) {
+        String exclusion = "";
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(timestamp(now));
+        if (!excludedIds.isEmpty()) {
+            exclusion = " AND id NOT IN ("
+                    + String.join(", ", java.util.Collections.nCopies(
+                            excludedIds.size(), "?"))
+                    + ")";
+            arguments.addAll(excludedIds);
+        }
+        List<LeasedJob> selected = jdbcTemplate.query("""
+                        SELECT *
+                        FROM durable_jobs
+                        WHERE state = 'LEASED' AND lease_expires_at <= ?
+                        """ + exclusion + """
+                        ORDER BY lease_expires_at, id
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                        """,
+                PostgresDurableJobQueue::mapLeasedJob,
+                arguments.toArray());
+        return selected.stream().findFirst();
+    }
+
+    private void recoverLockedLease(LeasedJob expiredLease, Instant recoveredAt) {
+        int recovered;
+        if (expiredLease.deliveryAttempt() >= expiredLease.maxAttempts()) {
+            ExpiredJobLeaseRecovery.RecoveryAction action = Objects.requireNonNull(
+                    expiredLeaseRecovery.recover(expiredLease, recoveredAt),
+                    "expired lease recovery action");
+            recovered = settleExhaustedLease(expiredLease, action, recoveredAt);
+        } else {
+            recovered = jdbcTemplate.update("""
                             UPDATE durable_jobs
                             SET state = 'READY',
                                 lease_owner = NULL,
                                 lease_expires_at = NULL,
                                 updated_at = ?
-                            WHERE state = 'LEASED' AND lease_expires_at <= ?
-                              AND attempt_count < max_attempts
+                            WHERE id = ? AND state = 'LEASED' AND lease_sequence = ?
+                              AND lease_expires_at <= ?
                             """,
-                    timestamp(now), timestamp(now));
-            return recoveredExhausted + recoveredRetryable;
-        });
-        return Objects.requireNonNull(recovered, "transaction result");
+                    timestamp(recoveredAt),
+                    expiredLease.id(),
+                    expiredLease.attemptCount(),
+                    timestamp(recoveredAt));
+        }
+        if (recovered != 1) {
+            throw new IllegalStateException(
+                    "Expired lease could not be recovered for job " + expiredLease.id());
+        }
     }
 
     private int settleExhaustedLease(

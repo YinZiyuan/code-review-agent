@@ -19,6 +19,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,6 +38,7 @@ class ReviewJobWorkerTest {
     private static final String OWNER = "worker-task-7";
     private static final Duration LEASE_DURATION = Duration.ofMinutes(3);
     private static final int BATCH_SIZE = 4;
+    private static final int RECOVERY_BATCH_SIZE = 3;
 
     @Test
     void recoversExpiredLeasesBeforeLeasingOneBoundedBatch() {
@@ -52,8 +54,30 @@ class ReviewJobWorkerTest {
         assertThat(queue.leaseNow).isEqualTo(NOW);
         assertThat(queue.leaseDuration).isEqualTo(LEASE_DURATION);
         assertThat(queue.leaseLimit).isEqualTo(BATCH_SIZE);
+        assertThat(queue.recoveryLimit).isEqualTo(RECOVERY_BATCH_SIZE);
         assertThat(result.recovered()).isEqualTo(2);
         assertThat(result.leased()).isZero();
+    }
+
+    @Test
+    void leasesWithAFreshTimestampAfterRecoveryCompletes() {
+        MutableClock clock = new MutableClock(NOW);
+        FakeQueue queue = new FakeQueue();
+        queue.afterRecovery = () -> clock.set(NOW.plusSeconds(17));
+        ReviewJobWorker worker = new ReviewJobWorker(
+                queue,
+                new ReviewJobDispatcher(List.of()),
+                zeroJitterBackoff(),
+                new FakeHeartbeat(),
+                clock,
+                new SimpleMeterRegistry(),
+                new ReviewJobWorker.WorkerSettings(
+                        OWNER, LEASE_DURATION, Duration.ofSeconds(30), BATCH_SIZE,
+                        RECOVERY_BATCH_SIZE));
+
+        worker.runOnce();
+
+        assertThat(queue.leaseNow).isEqualTo(NOW.plusSeconds(17));
     }
 
     @Test
@@ -77,6 +101,26 @@ class ReviewJobWorkerTest {
         assertThat(queue.settlements).containsExactly(new Settlement(
                 job.id(), OWNER, 9, null, null, NOW));
         assertThat(result.succeeded()).isEqualTo(1);
+    }
+
+    @Test
+    void startsHeartbeatForEveryLeasedJobBeforeDispatchingTheFirstHandler() {
+        FakeQueue queue = new FakeQueue();
+        LeasedJob first = leased("FIRST", 1, 1);
+        LeasedJob waiting = leased("WAITING", 2, 1);
+        queue.leased = List.of(first, waiting);
+        FakeHeartbeat heartbeat = new FakeHeartbeat();
+        ReviewJobWorker worker = worker(queue, List.of(
+                        handler("FIRST", job -> {
+                            assertThat(heartbeat.startedJobs).containsExactly(first, waiting);
+                            return ReviewJobHandler.JobOutcome.succeeded();
+                        }),
+                        handler("WAITING", job -> ReviewJobHandler.JobOutcome.succeeded())),
+                zeroJitterBackoff(), heartbeat, new SimpleMeterRegistry());
+
+        worker.runOnce();
+
+        assertThat(queue.settlements).hasSize(2);
     }
 
     @Test
@@ -326,10 +370,13 @@ class ReviewJobWorkerTest {
         LeasedJob job = leased("REVIEW_EXECUTION", 13, 2);
 
         ReviewJobWorker.LeaseHeartbeat.Session session = heartbeat.start(job, OWNER);
-        heartbeatTask.get().run();
-
         assertThat(queue.renewals).containsExactly(new Renewal(
                 job.id(), OWNER, 13, NOW, LEASE_DURATION));
+        heartbeatTask.get().run();
+
+        assertThat(queue.renewals).containsExactly(
+                new Renewal(job.id(), OWNER, 13, NOW, LEASE_DURATION),
+                new Renewal(job.id(), OWNER, 13, NOW, LEASE_DURATION));
         assertThat(session.ownershipValid()).isTrue();
 
         session.close();
@@ -341,7 +388,6 @@ class ReviewJobWorkerTest {
     @Test
     void scheduledHeartbeatReportsLostOwnershipWithoutSettlingTheLease() {
         FakeQueue queue = new FakeQueue();
-        queue.renewFailure = new IllegalStateException("stale lease");
         ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
         @SuppressWarnings("unchecked")
         ScheduledFuture<Object> scheduled = mock(ScheduledFuture.class);
@@ -358,6 +404,7 @@ class ReviewJobWorkerTest {
 
         ReviewJobWorker.LeaseHeartbeat.Session session = heartbeat.start(
                 leased("REVIEW_EXECUTION", 14, 1), OWNER);
+        queue.renewFailure = new IllegalStateException("stale lease");
         heartbeatTask.get().run();
 
         assertThat(session.ownershipValid()).isFalse();
@@ -406,6 +453,9 @@ class ReviewJobWorkerTest {
         assertThatThrownBy(() -> new ReviewJobWorker.WorkerSettings(
                 OWNER, LEASE_DURATION, Duration.ofSeconds(30), 0))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ReviewJobWorker.WorkerSettings(
+                OWNER, LEASE_DURATION, Duration.ofSeconds(30), BATCH_SIZE, 0))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     private static ReviewJobWorker worker(
@@ -422,7 +472,8 @@ class ReviewJobWorkerTest {
                 CLOCK,
                 metrics,
                 new ReviewJobWorker.WorkerSettings(
-                        OWNER, LEASE_DURATION, Duration.ofSeconds(30), BATCH_SIZE));
+                        OWNER, LEASE_DURATION, Duration.ofSeconds(30), BATCH_SIZE,
+                        RECOVERY_BATCH_SIZE));
     }
 
     private static BackoffPolicy zeroJitterBackoff() {
@@ -472,6 +523,7 @@ class ReviewJobWorkerTest {
     private static final class FakeHeartbeat implements ReviewJobWorker.LeaseHeartbeat {
         private final AtomicBoolean active = new AtomicBoolean();
         private LeasedJob startedJob;
+        private final List<LeasedJob> startedJobs = new ArrayList<>();
         private String startedOwner;
         private boolean ownershipValid = true;
         private UUID closeFailureJobId;
@@ -479,9 +531,15 @@ class ReviewJobWorkerTest {
         @Override
         public Session start(LeasedJob job, String owner) {
             startedJob = job;
+            startedJobs.add(job);
             startedOwner = owner;
             active.set(true);
             return new Session() {
+                @Override
+                public boolean renewNow() {
+                    return ownershipValid;
+                }
+
                 @Override
                 public boolean ownershipValid() {
                     return ownershipValid;
@@ -505,7 +563,10 @@ class ReviewJobWorkerTest {
         private List<LeasedJob> leased = List.of();
         private RuntimeException renewFailure;
         private UUID settlementFailureJobId;
+        private Runnable afterRecovery = () -> {
+        };
         private int recovered;
+        private int recoveryLimit;
         private String leaseOwner;
         private Instant leaseNow;
         private Duration leaseDuration;
@@ -561,7 +622,14 @@ class ReviewJobWorkerTest {
         @Override
         public int recoverExpiredLeases(Instant now) {
             operations.add("recover");
+            afterRecovery.run();
             return recovered;
+        }
+
+        @Override
+        public int recoverExpiredLeases(Instant now, int limit) {
+            recoveryLimit = limit;
+            return recoverExpiredLeases(now);
         }
 
         private void failSettlementIfConfigured(UUID jobId) {
@@ -586,5 +654,35 @@ class ReviewJobWorkerTest {
             int fence,
             Instant renewedAt,
             Duration leaseDuration) {
+    }
+
+    private static final class MutableClock extends Clock {
+        private final AtomicReference<Instant> now;
+
+        private MutableClock(Instant now) {
+            this.now = new AtomicReference<>(now);
+        }
+
+        private void set(Instant now) {
+            this.now.set(now);
+        }
+
+        @Override
+        public ZoneOffset getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            if (!ZoneOffset.UTC.equals(zone)) {
+                throw new UnsupportedOperationException("test clock uses UTC");
+            }
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now.get();
+        }
     }
 }

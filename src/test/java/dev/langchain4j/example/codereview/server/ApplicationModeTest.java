@@ -50,6 +50,7 @@ class ApplicationModeTest {
         contextRunner.withPropertyValues(
                         "code-review.server.worker.poll-interval=2s",
                         "code-review.server.worker.batch-size=7",
+                        "code-review.server.worker.recovery-batch-size=5",
                         "code-review.server.worker.lease-duration=4m",
                         "code-review.server.worker.heartbeat-interval=30s",
                         "code-review.server.worker.initial-backoff=11s",
@@ -60,6 +61,7 @@ class ApplicationModeTest {
                     ServerProperties.Worker worker = context.getBean(ServerProperties.class).worker();
                     assertThat(worker.pollInterval()).isEqualTo(Duration.ofSeconds(2));
                     assertThat(worker.batchSize()).isEqualTo(7);
+                    assertThat(worker.recoveryBatchSize()).isEqualTo(5);
                     assertThat(worker.leaseDuration()).isEqualTo(Duration.ofMinutes(4));
                     assertThat(worker.heartbeatInterval()).isEqualTo(Duration.ofSeconds(30));
                     assertThat(worker.initialBackoff()).isEqualTo(Duration.ofSeconds(11));
@@ -79,6 +81,8 @@ class ApplicationModeTest {
         contextRunner.withPropertyValues(
                         "code-review.server.worker.initial-backoff=2m",
                         "code-review.server.worker.max-backoff=1m")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues("code-review.server.worker.recovery-batch-size=0")
                 .run(context -> assertThat(context).hasFailed());
     }
 

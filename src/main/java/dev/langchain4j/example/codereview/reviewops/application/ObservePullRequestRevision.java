@@ -16,7 +16,6 @@ import java.util.Objects;
 public final class ObservePullRequestRevision {
 
     private static final String PULL_REQUEST_EVENT = "pull_request";
-    private static final String SUPERSESSION_JOB_TYPE = "SUPERSEDE_OBSOLETE_RUNS";
     private final PullRequestObservationStore observations;
     private final Clock clock;
     private final ReviewConfigurationSnapshot configuration;
@@ -50,7 +49,7 @@ public final class ObservePullRequestRevision {
                 admittedAt,
                 "review-execution:" + reviewRunId.value());
         DurableJobRequest supersessionJob = new DurableJobRequest(
-                SUPERSESSION_JOB_TYPE,
+                SupersedeObsoleteReviewRuns.JOB_TYPE,
                 reviewRunId.value(),
                 configuration.maxReviewAttempts(),
                 admittedAt,

@@ -33,6 +33,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -564,6 +565,160 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
         assertThat(first.deliveryAttempt()).isEqualTo(1);
         assertThat(second.attemptCount()).isEqualTo(2);
         assertThat(second.deliveryAttempt()).isEqualTo(1);
+    }
+
+    @Test
+    void expiredLeaseRecoveryStopsAtTheConfiguredBound() {
+        for (int index = 0; index < 3; index++) {
+            queue.enqueue(request(
+                    "BOUNDED_RECOVERY",
+                    "bounded-recovery-" + index,
+                    UUID.fromString("00000000-0000-0000-0000-%012d".formatted(index + 40)),
+                    3,
+                    DUE_AT));
+        }
+        queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 3);
+        Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
+
+        int recovered = queue.recoverExpiredLeases(expiredAt, 2);
+
+        assertThat(recovered).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM durable_jobs WHERE state = 'READY'", Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM durable_jobs WHERE state = 'LEASED'", Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void concurrentRecoveryWorkersClaimDisjointBoundedRows() throws Exception {
+        for (int index = 0; index < 4; index++) {
+            queue.enqueue(request(
+                    "CONCURRENT_RECOVERY",
+                    "concurrent-recovery-" + index,
+                    UUID.fromString("00000000-0000-0000-0000-%012d".formatted(index + 50)),
+                    3,
+                    DUE_AT));
+        }
+        queue.leaseDue("crashed-worker", LEASED_AT, LEASE_DURATION, 4);
+        Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
+        PostgresDurableJobQueue first = queueUsing(dataSource, Clock.fixed(CREATED_AT, ZoneOffset.UTC));
+        PostgresDurableJobQueue second = queueUsing(dataSource, Clock.fixed(CREATED_AT, ZoneOffset.UTC));
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Integer> firstRecovered = executor.submit(() -> {
+                await(start);
+                return first.recoverExpiredLeases(expiredAt, 2);
+            });
+            Future<Integer> secondRecovered = executor.submit(() -> {
+                await(start);
+                return second.recoverExpiredLeases(expiredAt, 2);
+            });
+            start.countDown();
+
+            assertThat(firstRecovered.get(5, TimeUnit.SECONDS)
+                    + secondRecovered.get(5, TimeUnit.SECONDS)).isEqualTo(4);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM durable_jobs WHERE state = 'READY'", Integer.class))
+                    .isEqualTo(4);
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    void recoverySkipsALockedExpiredRowAndClaimsTheNextRow() throws Exception {
+        UUID lockedId = queue.enqueue(request(
+                "LOCKED_RECOVERY",
+                "locked-recovery-first",
+                UUID.fromString("00000000-0000-0000-0000-000000000060"),
+                3,
+                DUE_AT));
+        UUID availableId = queue.enqueue(request(
+                "LOCKED_RECOVERY",
+                "locked-recovery-second",
+                UUID.fromString("00000000-0000-0000-0000-000000000061"),
+                3,
+                DUE_AT));
+        queue.leaseDue("crashed-worker", LEASED_AT, LEASE_DURATION, 2);
+        Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
+        jdbcTemplate.update(
+                "UPDATE durable_jobs SET lease_expires_at = ? WHERE id = ?",
+                Timestamp.from(expiredAt.minusSeconds(1)), lockedId);
+
+        try (Connection lockingConnection = dataSource.getConnection()) {
+            lockingConnection.setAutoCommit(false);
+            try (PreparedStatement lock = lockingConnection.prepareStatement(
+                    "SELECT id FROM durable_jobs WHERE id = ? FOR UPDATE")) {
+                lock.setObject(1, lockedId);
+                assertThat(lock.executeQuery().next()).isTrue();
+            }
+            PostgresDurableJobQueue independent = queueUsing(
+                    dataSource, Clock.fixed(CREATED_AT, ZoneOffset.UTC));
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<Integer> recovered = executor.submit(() ->
+                        independent.recoverExpiredLeases(expiredAt, 1));
+
+                assertThat(recovered.get(2, TimeUnit.SECONDS)).isEqualTo(1);
+                assertThat(jobRow(lockedId)).containsEntry("state", "LEASED");
+                assertThat(jobRow(availableId)).containsEntry("state", "READY");
+            } finally {
+                lockingConnection.rollback();
+                executor.shutdownNow();
+                assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
+    @Test
+    void failingRecoveryCallbackDoesNotRollBackAnotherRowOrBlockDueLeasing() {
+        UUID poisonPayload = UUID.fromString("00000000-0000-0000-0000-000000000070");
+        AtomicInteger callbacks = new AtomicInteger();
+        PostgresDurableJobQueue recoveringQueue = new PostgresDurableJobQueue(
+                jdbcTemplate,
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+                Clock.fixed(CREATED_AT, ZoneOffset.UTC),
+                (lease, recoveredAt) -> {
+                    callbacks.incrementAndGet();
+                    if (lease.payloadReference().equals(poisonPayload)) {
+                        throw new IllegalStateException("poison aggregate");
+                    }
+                    return ExpiredJobLeaseRecovery.RecoveryAction.UNHANDLED;
+                });
+        UUID poisonId = recoveringQueue.enqueue(request(
+                "REVIEW_EXECUTION", "poison-recovery", poisonPayload, 1, DUE_AT));
+        UUID healthyId = recoveringQueue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "healthy-recovery",
+                UUID.fromString("00000000-0000-0000-0000-000000000071"),
+                1,
+                DUE_AT));
+        recoveringQueue.leaseDue("crashed-worker", LEASED_AT, LEASE_DURATION, 2);
+        Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
+        jdbcTemplate.update(
+                "UPDATE durable_jobs SET lease_expires_at = ? WHERE id = ?",
+                Timestamp.from(expiredAt.minusSeconds(1)), poisonId);
+        UUID unrelatedDueId = recoveringQueue.enqueue(request(
+                "UNRELATED_DUE",
+                "unrelated-due-after-poison",
+                UUID.fromString("00000000-0000-0000-0000-000000000072"),
+                3,
+                DUE_AT));
+
+        int recovered = recoveringQueue.recoverExpiredLeases(expiredAt, 2);
+        List<LeasedJob> unrelated = recoveringQueue.leaseDue(
+                "healthy-worker", expiredAt, LEASE_DURATION, 1);
+
+        assertThat(recovered).isEqualTo(1);
+        assertThat(callbacks).hasValue(2);
+        assertThat(jobRow(poisonId)).containsEntry("state", "LEASED");
+        assertThat(jobRow(healthyId)).containsEntry("state", "DEAD");
+        assertThat(unrelated).extracting(LeasedJob::id).containsExactly(unrelatedDueId);
     }
 
     @Test

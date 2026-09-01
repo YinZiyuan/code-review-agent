@@ -40,27 +40,14 @@ public final class ScheduledLeaseHeartbeat implements ReviewJobWorker.LeaseHeart
         if (closed.get()) {
             throw new IllegalStateException("lease heartbeat is shut down");
         }
-        AtomicBoolean ownershipValid = new AtomicBoolean(true);
-        String leaseOwner = owner;
-        Runnable renew = () -> {
-            if (!ownershipValid.get() || closed.get()) {
-                return;
-            }
-            try {
-                queue.renewLease(
-                        job.id(),
-                        leaseOwner,
-                        job.attemptCount(),
-                        clock.instant(),
-                        leaseDuration);
-            } catch (RuntimeException lostOwnership) {
-                ownershipValid.set(false);
-            }
-        };
+        HeartbeatState state = new HeartbeatState(job, owner);
+        if (!state.renewNow()) {
+            throw new IllegalStateException("lease ownership could not be confirmed");
+        }
         long intervalNanos = interval.toNanos();
         ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(
-                renew, intervalNanos, intervalNanos, TimeUnit.NANOSECONDS);
-        return new HeartbeatSession(ownershipValid, future);
+                state::renewNow, intervalNanos, intervalNanos, TimeUnit.NANOSECONDS);
+        return new HeartbeatSession(state, future);
     }
 
     @Override
@@ -86,26 +73,62 @@ public final class ScheduledLeaseHeartbeat implements ReviewJobWorker.LeaseHeart
         return value;
     }
 
+    private final class HeartbeatState {
+        private final LeasedJob job;
+        private final String owner;
+        private final AtomicBoolean ownershipValid = new AtomicBoolean(true);
+        private final AtomicBoolean stopped = new AtomicBoolean();
+
+        private HeartbeatState(LeasedJob job, String owner) {
+            this.job = job;
+            this.owner = owner;
+        }
+
+        private boolean renewNow() {
+            if (!ownershipValid.get() || stopped.get() || closed.get()) {
+                return false;
+            }
+            try {
+                queue.renewLease(
+                        job.id(), owner, job.attemptCount(), clock.instant(), leaseDuration);
+                return true;
+            } catch (RuntimeException lostOwnership) {
+                ownershipValid.set(false);
+                return false;
+            }
+        }
+
+        private void stop() {
+            stopped.set(true);
+        }
+    }
+
     private static final class HeartbeatSession implements Session {
-        private final AtomicBoolean ownershipValid;
+        private final HeartbeatState state;
         private final ScheduledFuture<?> future;
         private final AtomicBoolean closed = new AtomicBoolean();
 
         private HeartbeatSession(
-                AtomicBoolean ownershipValid,
+                HeartbeatState state,
                 ScheduledFuture<?> future) {
-            this.ownershipValid = ownershipValid;
+            this.state = Objects.requireNonNull(state, "state");
             this.future = Objects.requireNonNull(future, "future");
         }
 
         @Override
+        public boolean renewNow() {
+            return state.renewNow();
+        }
+
+        @Override
         public boolean ownershipValid() {
-            return ownershipValid.get();
+            return state.ownershipValid.get();
         }
 
         @Override
         public void close() {
             if (closed.compareAndSet(false, true)) {
+                state.stop();
                 future.cancel(false);
             }
         }
