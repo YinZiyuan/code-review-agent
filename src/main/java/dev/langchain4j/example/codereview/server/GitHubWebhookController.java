@@ -6,6 +6,7 @@ import dev.langchain4j.example.codereview.reviewops.infrastructure.github.GitHub
 import dev.langchain4j.example.codereview.reviewops.infrastructure.github.PullRequestWebhookParser;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 
 @RestController
+@ConditionalOnProperty(name = "code-review.runtime", havingValue = "server")
 @Conditional(WebhookSecretConfiguredCondition.class)
 public final class GitHubWebhookController {
 

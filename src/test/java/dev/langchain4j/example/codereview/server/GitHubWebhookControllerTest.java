@@ -39,7 +39,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(GitHubWebhookController.class)
 @Import({WebhookExceptionHandler.class, GitHubWebhookControllerTest.TestBeans.class})
-@TestPropertySource(properties = "code-review.server.github.webhook-secret=test's-webhook-secret")
+@TestPropertySource(properties = {
+        "code-review.runtime=server",
+        "code-review.server.github.webhook-secret=test's-webhook-secret"
+})
 class GitHubWebhookControllerTest {
 
     private static final String DELIVERY_ID = "delivery-123";

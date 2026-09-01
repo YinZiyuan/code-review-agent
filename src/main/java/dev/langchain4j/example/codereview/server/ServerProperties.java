@@ -11,9 +11,12 @@ public record ServerProperties(GitHub github, Worker worker) {
             long appId,
             String privateKey,
             String webhookSecret,
-            int maxWebhookBytes
+            Integer maxWebhookBytes
     ) {
         public GitHub {
+            if (maxWebhookBytes == null) {
+                maxWebhookBytes = 1_048_576;
+            }
             if (maxWebhookBytes <= 0) {
                 throw new IllegalArgumentException("maxWebhookBytes must be positive");
             }

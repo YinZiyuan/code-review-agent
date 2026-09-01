@@ -17,6 +17,9 @@ public final class WebhookExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ResponseEntity<String> handleUnreadableBody(HttpMessageNotReadableException exception) {
+        if (causedByPayloadOverflow(exception)) {
+            return fixedCode(HttpStatus.PAYLOAD_TOO_LARGE, "WEBHOOK_PAYLOAD_TOO_LARGE");
+        }
         return fixedCode(HttpStatus.BAD_REQUEST, "MALFORMED_WEBHOOK_REQUEST");
     }
 
@@ -29,6 +32,15 @@ public final class WebhookExceptionHandler {
         return ResponseEntity.status(status)
                 .contentType(MediaType.TEXT_PLAIN)
                 .body(code);
+    }
+
+    private static boolean causedByPayloadOverflow(Throwable exception) {
+        for (Throwable current = exception; current != null; current = current.getCause()) {
+            if (current instanceof WebhookPayloadTooLargeException) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 

@@ -34,6 +34,19 @@ class CodeReviewApplicationCliStartupTest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void cliHelpIgnoresAConfiguredServerWebhookSecret() throws Exception {
+        CliResult result = runCli(
+                "root-help-with-server-secret.log",
+                Map.of("CODE_REVIEW_SERVER_GITHUB_WEBHOOK_SECRET", "server's-secret"),
+                "--help");
+
+        assertThat(result.completed()).as("CLI output:%n%s", result.output()).isTrue();
+        assertThat(result.exitCode()).as("CLI output:%n%s", result.output()).isZero();
+        assertThat(result.output()).contains("Usage: code-review-agent");
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void reviewSubcommandHelpExitsWithoutInvokingExternalReviewWork() throws Exception {
         CliResult result = runCli("review-help.log", "review", "--help");
 
@@ -70,6 +83,11 @@ class CodeReviewApplicationCliStartupTest {
     }
 
     private CliResult runCli(String outputFileName, String... arguments) throws Exception {
+        return runCli(outputFileName, Map.of(), arguments);
+    }
+
+    private CliResult runCli(String outputFileName, Map<String, String> environment, String... arguments)
+            throws Exception {
         Path outputFile = temporaryDirectory.resolve(outputFileName);
         List<String> command = new ArrayList<>(List.of(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
@@ -81,6 +99,7 @@ class CodeReviewApplicationCliStartupTest {
         processBuilder.redirectErrorStream(true);
         processBuilder.redirectOutput(outputFile.toFile());
         removeDatasourceConfiguration(processBuilder.environment());
+        processBuilder.environment().putAll(environment);
 
         Process process = processBuilder.start();
         boolean completed = process.waitFor(45, TimeUnit.SECONDS);
