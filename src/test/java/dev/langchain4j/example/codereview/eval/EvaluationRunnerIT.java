@@ -1,5 +1,6 @@
 package dev.langchain4j.example.codereview.eval;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
@@ -71,6 +72,114 @@ class EvaluationRunnerIT {
         assertThat(failMetrics.falseNegatives()).isEqualTo(1);
         assertThat(Files.exists(reports.resolve("v0-test.json"))).isTrue();
         assertThat(report.allowedInputs()).contains("diff.patch", "source-before/");
+    }
+
+    @Test
+    void reportPersistsFindingsAndMatchDecisionsForEverySample() throws Exception {
+        Path samples = workDir.resolve("samples-trace");
+        Path reports = workDir.resolve("reports-trace");
+        Files.createDirectories(samples);
+        copyFixture("sample-pass", samples);
+        copyFixture("sample-fail", samples);
+
+        ObjectMapper mapper = new ObjectMapper()
+                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        CodeReviewAgent agent = (request, sourceRoot) -> new ReviewResult(
+                "1 finding",
+                List.of(new ReviewFinding(
+                        "F-001", "User.java", 11, new int[]{11, 11},
+                        Severity.CRITICAL, Category.SECURITY,
+                        "Hardcoded credential", "Found hardcoded password",
+                        "Move to environment variable", "pwd = hardcoded",
+                        List.of(), "llm_reviewer")),
+                List.of());
+        Matcher matcher = new Matcher((expected, finding) ->
+                new LlmJudge.JudgeVerdict(
+                        expected.file().equals(finding.file()) && expected.category() == finding.category(),
+                        0.9, "same issue"), 5);
+
+        new EvaluationRunner(agent, matcher, mapper)
+                .run(samples, reports, "v-trace", Map.of("pipeline", "test"));
+
+        JsonNode root = mapper.readTree(reports.resolve("v-trace.json").toFile());
+        JsonNode traces = root.path("traces");
+        assertThat(traces.isArray()).isTrue();
+        assertThat(traces).hasSize(2);
+
+        JsonNode pass = findTrace(traces, "sample-pass");
+        assertThat(pass.path("findings")).hasSize(1);
+        assertThat(pass.path("findings").get(0).path("title").asText())
+                .isEqualTo("Hardcoded credential");
+        assertThat(pass.path("matches")).hasSize(1);
+        assertThat(pass.path("matches").get(0).path("matched").asBoolean()).isTrue();
+        assertThat(pass.path("matches").get(0).path("judge_reason").asText()).isEqualTo("same issue");
+        assertThat(pass.path("unmatched_findings")).isEmpty();
+
+        JsonNode fail = findTrace(traces, "sample-fail");
+        assertThat(fail.path("matches")).hasSize(1);
+        assertThat(fail.path("matches").get(0).path("matched").asBoolean()).isFalse();
+        assertThat(fail.path("matches").get(0).path("expected").path("id").asText()).isEqualTo("I-001");
+        assertThat(fail.path("unmatched_findings")).hasSize(1);
+        assertThat(fail.path("unmatched_findings").get(0).path("id").asText()).isEqualTo("F-001");
+    }
+
+    @Test
+    void reportPersistsSafeRuntimeMetadataAndRedactsSensitiveConfig() throws Exception {
+        Path samples = workDir.resolve("samples-metadata");
+        Path reports = workDir.resolve("reports-metadata");
+        Files.createDirectories(samples);
+        copyFixture("sample-pass", samples);
+
+        String secret = "test-secret-that-must-not-reach-the-report";
+        ObjectMapper mapper = new ObjectMapper()
+                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        CodeReviewAgent agent = (request, sourceRoot) -> ReviewResult.empty("none");
+        Matcher matcher = new Matcher((expected, finding) ->
+                new LlmJudge.JudgeVerdict(false, 0.0, "no"), 5);
+        ModelRuntimeMetadata metadata = new ModelRuntimeMetadata(
+                "openai-compatible", "sub2api.apemind.ai",
+                "gpt-5.6-luna", "gpt-5.6-luna", "gpt-5.6-luna");
+
+        new EvaluationRunner(agent, matcher, mapper, metadata)
+                .run(samples, reports, "v-metadata", Map.of(
+                        "pipeline", "test",
+                        "environment", Map.of("HARMLESS_NAME", secret),
+                        "headers", Map.of("cookie", secret),
+                        "unrecognized_config", secret,
+                        "api_key", secret,
+                        "authorization", "Bearer " + secret));
+
+        JsonNode root = mapper.readTree(reports.resolve("v-metadata.json").toFile());
+        assertThat(root.path("model_runtime").path("provider").asText())
+                .isEqualTo("openai-compatible");
+        assertThat(root.path("model_runtime").path("base_url_host").asText())
+                .isEqualTo("sub2api.apemind.ai");
+        assertThat(root.path("model_runtime").path("judge_model").asText())
+                .isEqualTo("gpt-5.6-luna");
+        assertThat(root.path("trace_policy").path("audience").asText())
+                .isEqualTo("evaluator-only");
+        assertThat(root.path("trace_policy").path("excluded_fields"))
+                .containsExactlyInAnyOrder(
+                        mapper.getNodeFactory().textNode("api_keys"),
+                        mapper.getNodeFactory().textNode("authorization_headers"),
+                        mapper.getNodeFactory().textNode("environment_variables"),
+                        mapper.getNodeFactory().textNode("agent_prompts"));
+        assertThat(root.path("trace_policy").path("persisted_fields"))
+                .containsExactlyInAnyOrder(
+                        mapper.getNodeFactory().textNode("traces.findings"),
+                        mapper.getNodeFactory().textNode("traces.matches"),
+                        mapper.getNodeFactory().textNode("traces.unmatched_findings"),
+                        mapper.getNodeFactory().textNode("model_runtime"));
+        assertThat(root.path("config").path("pipeline").asText()).isEqualTo("test");
+        assertThat(root.path("config").path("judge_model").asText()).isEqualTo("gpt-5.6-luna");
+        assertThat(root.path("config").has("api_key")).isFalse();
+        assertThat(root.path("config").has("authorization")).isFalse();
+        assertThat(root.path("config").has("environment")).isFalse();
+        assertThat(root.path("config").has("headers")).isFalse();
+        assertThat(root.path("config").has("unrecognized_config")).isFalse();
+        assertThat(root.toString())
+                .doesNotContain(secret)
+                .doesNotContain("Bearer " + secret);
     }
 
     @Test
@@ -157,6 +266,15 @@ class EvaluationRunnerIT {
         Files.createDirectories(target.resolve("source-before"));
         copy("eval-fixtures/" + name + "/diff.patch", target.resolve("diff.patch"));
         copy("eval-fixtures/" + name + "/annotation.json", target.resolve("annotation.json"));
+    }
+
+    private JsonNode findTrace(JsonNode traces, String sampleId) {
+        for (JsonNode trace : traces) {
+            if (sampleId.equals(trace.path("sample_id").asText())) {
+                return trace;
+            }
+        }
+        throw new AssertionError("Missing trace for " + sampleId);
     }
 
     private void copy(String classpath, Path dst) throws Exception {

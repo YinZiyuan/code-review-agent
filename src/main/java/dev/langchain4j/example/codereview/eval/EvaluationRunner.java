@@ -16,6 +16,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,15 +26,24 @@ import java.util.Set;
 public class EvaluationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationRunner.class);
+    private static final Set<String> REPORTABLE_CONFIG_FIELDS = Set.of(
+            "judge_model", "runs_per_sample", "pipeline", "suite");
 
     private final CodeReviewAgent agent;
     private final Matcher matcher;
     private final ObjectMapper mapper;
+    private final ModelRuntimeMetadata modelRuntime;
 
     public EvaluationRunner(CodeReviewAgent agent, Matcher matcher, ObjectMapper mapper) {
+        this(agent, matcher, mapper, ModelRuntimeMetadata.unknown());
+    }
+
+    public EvaluationRunner(CodeReviewAgent agent, Matcher matcher, ObjectMapper mapper,
+                            ModelRuntimeMetadata modelRuntime) {
         this.agent = agent;
         this.matcher = matcher;
         this.mapper = mapper;
+        this.modelRuntime = modelRuntime == null ? ModelRuntimeMetadata.unknown() : modelRuntime;
     }
 
     public EvalReport run(Path samplesDir, Path reportsDir, String version, Map<String, Object> config) throws IOException {
@@ -54,6 +65,7 @@ public class EvaluationRunner {
                     .toList();
         }
         List<SampleMetrics> flattened = new ArrayList<>();
+        List<SampleTrace> traces = new ArrayList<>();
         List<Map<String, Double>> perRunMetrics = new ArrayList<>();
 
         for (int r = 0; r < runCount; r++) {
@@ -61,27 +73,38 @@ public class EvaluationRunner {
             for (Path dir : sampleDirs) {
                 Sample sample = Sample.load(dir, mapper);
                 log.info("Evaluating sample {} (run {}/{})", sample.id(), r + 1, runCount);
-                SampleMetrics m = evaluateOne(sample);
+                EvaluatedSample evaluated = evaluateOne(sample);
+                SampleMetrics m = evaluated.metrics();
                 thisRun.add(m);
                 flattened.add(runCount > 1 ? withRunSuffix(m, r + 1) : m);
+                traces.add(runCount > 1
+                        ? withRunSuffix(evaluated.trace(), r + 1)
+                        : evaluated.trace());
             }
             perRunMetrics.add(aggregate(thisRun));
         }
 
         Map<String, Double> meanMetrics = meanAcrossRuns(perRunMetrics);
         Map<String, Double> stdDevMetrics = stdDevAcrossRuns(perRunMetrics, meanMetrics);
+        Map<String, Object> safeConfig = sanitizeConfig(config);
+        if (!"unknown".equals(modelRuntime.judgeModel())) {
+            safeConfig.put("judge_model", modelRuntime.judgeModel());
+        }
 
         EvalReport report = new EvalReport(
                 version,
                 currentCommit(),
                 currentTag(),
                 Instant.now().toString(),
-                config,
+                safeConfig,
                 List.of("diff.patch", "source-before/"),
                 meanMetrics,
                 flattened,
                 perRunMetrics,
-                stdDevMetrics
+                stdDevMetrics,
+                modelRuntime,
+                EvalTracePolicy.evaluatorOnly(),
+                traces
         );
 
         Files.createDirectories(reportsDir);
@@ -103,6 +126,23 @@ public class EvaluationRunner {
         agg.put("avg_output_tokens", Metrics.avgOutputTokens(perSample));
         agg.put("tool_success_rate", Metrics.toolSuccessRate(perSample));
         return agg;
+    }
+
+    private static Map<String, Object> sanitizeConfig(Map<String, Object> config) {
+        Map<String, Object> safe = new LinkedHashMap<>();
+        if (config == null) {
+            return safe;
+        }
+        config.forEach((key, value) -> {
+            if (REPORTABLE_CONFIG_FIELDS.contains(key) && isSafeScalar(value)) {
+                safe.put(key, value);
+            }
+        });
+        return safe;
+    }
+
+    private static boolean isSafeScalar(Object value) {
+        return value instanceof String || value instanceof Number || value instanceof Boolean;
     }
 
     private static Map<String, Double> meanAcrossRuns(List<Map<String, Double>> runs) {
@@ -138,7 +178,12 @@ public class EvaluationRunner {
                 m.inputTokens(), m.outputTokens(), m.toolCallsTotal(), m.toolCallsFailed(), m.toolStatuses());
     }
 
-    private SampleMetrics evaluateOne(Sample sample) {
+    private static SampleTrace withRunSuffix(SampleTrace trace, int run) {
+        return new SampleTrace(trace.sampleId() + "#run" + run, trace.findings(),
+                trace.matches(), trace.unmatchedFindings());
+    }
+
+    private EvaluatedSample evaluateOne(Sample sample) {
         long start = System.currentTimeMillis();
         ReviewResult result;
         try {
@@ -156,7 +201,6 @@ public class EvaluationRunner {
 
         int tp = (int) matches.stream().filter(MatchResult::matched).count();
         int fn = matches.size() - tp;
-        int fp = Math.max(0, findings.size() - tp);
         int severityMatches = 0;
         int severityComparisons = 0;
         for (MatchResult match : matches) {
@@ -176,9 +220,24 @@ public class EvaluationRunner {
                 .filter(s -> s.state() == ToolRunState.FAILED)
                 .count();
 
-        return new SampleMetrics(sample.id(), tp, fp, fn, severityMatches, severityComparisons,
-                latency, 0L, 0L, toolTotal, toolFailed, statuses);
+        Set<ReviewFinding> matchedFindings = Collections.newSetFromMap(new IdentityHashMap<>());
+        matches.stream()
+                .filter(MatchResult::matched)
+                .map(MatchResult::agentFinding)
+                .forEach(matchedFindings::add);
+        List<ReviewFinding> unmatchedFindings = findings.stream()
+                .filter(finding -> !matchedFindings.contains(finding))
+                .toList();
+        int fp = unmatchedFindings.size();
+
+        SampleMetrics metrics = new SampleMetrics(sample.id(), tp, fp, fn,
+                severityMatches, severityComparisons, latency, 0L, 0L,
+                toolTotal, toolFailed, statuses);
+        SampleTrace trace = new SampleTrace(sample.id(), findings, matches, unmatchedFindings);
+        return new EvaluatedSample(metrics, trace);
     }
+
+    private record EvaluatedSample(SampleMetrics metrics, SampleTrace trace) { }
 
     private ReviewResult callAgentWithRetry(String request, Path sourceRoot, String sampleId) {
         try {
