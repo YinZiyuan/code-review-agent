@@ -1,8 +1,10 @@
 package dev.langchain4j.example.codereview;
 
+import dev.langchain4j.example.codereview.cli.CliRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,6 +43,32 @@ class CodeReviewApplicationCliStartupTest {
         assertThat(result.output()).doesNotContain("Repository :");
     }
 
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void serveKeepsTheServletProcessAliveAfterTomcatStarts() throws Exception {
+        Path outputFile = temporaryDirectory.resolve("serve.log");
+        Process process = startServer(outputFile);
+        try {
+            assertThat(awaitTomcatStartup(process, outputFile))
+                    .as("Server output:%n%s", Files.readString(outputFile))
+                    .isTrue();
+            assertThat(process.waitFor(3, TimeUnit.SECONDS))
+                    .as("Server output:%n%s", Files.readString(outputFile))
+                    .isFalse();
+            assertThat(process.isAlive()).as("Server output:%n%s", Files.readString(outputFile)).isTrue();
+        } finally {
+            stop(process);
+        }
+    }
+
+    @Test
+    void serverRuntimeContextDoesNotCreateCliRunner() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(CliRunner.class)
+                .withPropertyValues("code-review.runtime=server")
+                .run(context -> assertThat(context).doesNotHaveBean(CliRunner.class));
+    }
+
     private CliResult runCli(String outputFileName, String... arguments) throws Exception {
         Path outputFile = temporaryDirectory.resolve(outputFileName);
         List<String> command = new ArrayList<>(List.of(
@@ -62,6 +90,49 @@ class CodeReviewApplicationCliStartupTest {
         }
         String output = Files.readString(outputFile);
         return new CliResult(completed, process.exitValue(), output);
+    }
+
+    private Process startServer(Path outputFile) throws Exception {
+        List<String> command = new ArrayList<>(List.of(
+                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp",
+                testClassPath(),
+                CodeReviewApplication.class.getName(),
+                "serve",
+                "--server.port=0"));
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
+        processBuilder.redirectErrorStream(true);
+        processBuilder.redirectOutput(outputFile.toFile());
+        processBuilder.environment().put("SPRING_AUTOCONFIGURE_EXCLUDE", String.join(",",
+                "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
+                "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"));
+        removeDatasourceConfiguration(processBuilder.environment());
+        return processBuilder.start();
+    }
+
+    private static boolean awaitTomcatStartup(Process process, Path outputFile) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime() < deadline) {
+            if (!process.isAlive()) {
+                return false;
+            }
+            if (Files.readString(outputFile).contains("Tomcat started on port")) {
+                return true;
+            }
+            Thread.sleep(100);
+        }
+        return false;
+    }
+
+    private static void stop(Process process) throws InterruptedException {
+        if (!process.isAlive()) {
+            return;
+        }
+        process.destroy();
+        if (!process.waitFor(5, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            process.waitFor(5, TimeUnit.SECONDS);
+        }
     }
 
     private static String testClassPath() {

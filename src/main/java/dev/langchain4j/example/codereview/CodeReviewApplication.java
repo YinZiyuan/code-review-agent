@@ -7,6 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.context.ConfigurableApplicationContext;
 
 import java.util.Map;
 
@@ -28,6 +29,9 @@ public class CodeReviewApplication {
         if (selection.serverMode()) {
             application.setAdditionalProfiles("server");
         }
-        System.exit(SpringApplication.exit(application.run(selection.applicationArgs())));
+        ConfigurableApplicationContext context = application.run(selection.applicationArgs());
+        if (!selection.serverMode()) {
+            System.exit(SpringApplication.exit(context));
+        }
     }
 }
