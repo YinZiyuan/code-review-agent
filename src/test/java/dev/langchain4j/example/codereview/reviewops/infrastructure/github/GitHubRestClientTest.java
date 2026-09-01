@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpStatusCode;
@@ -218,6 +219,129 @@ class GitHubRestClientTest {
     }
 
     @Test
+    void mapsAUsableRetryAfterOnForbiddenToARateLimitEvenWithRemainingQuota() {
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "secondary-rate-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                        .header("X-RateLimit-Remaining", "42")
+                        .header(HttpHeaders.RETRY_AFTER, "90")
+                        .body("secondary-rate-secret"));
+
+        assertThatThrownBy(() -> client.requireExactPullRequestHead(revision()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.RATE_LIMITED);
+                    assertThat(exception.retryAt()).contains(START.plusSeconds(90));
+                    assertThat(exception.toString()).doesNotContain("secondary-rate-secret");
+                });
+        server.verify();
+    }
+
+    @Test
+    void treatsForbiddenWithPositiveRemainingQuotaAndResetAsAuthorization() {
+        long resetEpoch = START.plusSeconds(300).getEpochSecond();
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "ordinary-forbidden-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                        .header("X-RateLimit-Remaining", "42")
+                        .header("X-RateLimit-Reset", Long.toString(resetEpoch))
+                        .body("ordinary-forbidden-secret"));
+
+        assertAuthorizationFailure(
+                () -> client.requireExactPullRequestHead(revision()),
+                "ordinary-forbidden-secret");
+        server.verify();
+    }
+
+    @Test
+    void treatsForbiddenWithResetButMissingRemainingQuotaAsAuthorization() {
+        long resetEpoch = START.plusSeconds(300).getEpochSecond();
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "missing-remaining-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                        .header("X-RateLimit-Reset", Long.toString(resetEpoch))
+                        .body("missing-remaining-secret"));
+
+        assertAuthorizationFailure(
+                () -> client.requireExactPullRequestHead(revision()),
+                "missing-remaining-secret");
+        server.verify();
+    }
+
+    @Test
+    void treatsForbiddenWithMalformedRemainingQuotaAndResetAsAuthorization() {
+        long resetEpoch = START.plusSeconds(300).getEpochSecond();
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "malformed-remaining-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                        .header("X-RateLimit-Remaining", "not-a-number")
+                        .header("X-RateLimit-Reset", Long.toString(resetEpoch))
+                        .body("malformed-remaining-secret"));
+
+        assertAuthorizationFailure(
+                () -> client.requireExactPullRequestHead(revision()),
+                "malformed-remaining-secret");
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"missing", "not-an-epoch"})
+    void treatsForbiddenWithZeroRemainingButNoUsableResetAsAuthorization(String resetValue) {
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "unusable-reset-token", START.plusSeconds(600));
+        var forbidden = withStatus(HttpStatus.FORBIDDEN)
+                .header("X-RateLimit-Remaining", "0")
+                .body("unusable-reset-secret");
+        if (!"missing".equals(resetValue)) {
+            forbidden.header("X-RateLimit-Reset", resetValue);
+        }
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(forbidden);
+
+        assertAuthorizationFailure(
+                () -> client.requireExactPullRequestHead(revision()),
+                "unusable-reset-secret");
+        server.verify();
+    }
+
+    @Test
+    void treatsForbiddenWithMalformedRetryAfterAsAuthorization() {
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "malformed-retry-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                        .header(HttpHeaders.RETRY_AFTER, "not-a-delay")
+                        .body("malformed-retry-secret"));
+
+        assertAuthorizationFailure(
+                () -> client.requireExactPullRequestHead(revision()),
+                "malformed-retry-secret");
+        server.verify();
+    }
+
+    @Test
     void mapsNetworkIoFailuresToTransientWithoutRetainingTheTransportMessage() {
         MutableClock clock = new MutableClock(START);
         RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
@@ -358,6 +482,19 @@ class GitHubRestClientTest {
                 return headers;
             }
         };
+    }
+
+    private static void assertAuthorizationFailure(
+            org.assertj.core.api.ThrowableAssert.ThrowingCallable operation,
+            String responseSecret) {
+        assertThatThrownBy(operation)
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.AUTHORIZATION);
+                    assertThat(exception.retryAt()).isEmpty();
+                    assertThat(exception).hasMessage("GitHub authorization failed");
+                    assertThat(exception.toString()).doesNotContain(responseSecret);
+                });
     }
 
     private static final class MutableClock extends Clock {

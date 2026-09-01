@@ -378,7 +378,7 @@ public final class GitHubRestClient implements GitHubInstallationGateway {
             HttpHeaders headers,
             FailureTarget target,
             String transientMessage) {
-        if (status == 429 || status == 403 && hasRateLimitSignal(headers)) {
+        if (status == 429 || status == 403 && hasReliableRateLimitSignal(headers)) {
             return new GitHubFailureException(
                     RATE_LIMITED,
                     "GitHub API rate limit exceeded",
@@ -397,10 +397,17 @@ public final class GitHubRestClient implements GitHubInstallationGateway {
         return transientFailure(transientMessage);
     }
 
-    private static boolean hasRateLimitSignal(HttpHeaders headers) {
-        return headers.containsKey(HttpHeaders.RETRY_AFTER)
-                || headers.containsKey("X-RateLimit-Reset")
-                || "0".equals(headers.getFirst("X-RateLimit-Remaining"));
+    private boolean hasReliableRateLimitSignal(HttpHeaders headers) {
+        Instant now = clock.instant();
+        boolean usableRetryAfter = parseRetryAfter(headers.getFirst(HttpHeaders.RETRY_AFTER))
+                .filter(retryAt -> !retryAt.isBefore(now))
+                .isPresent();
+        boolean exhaustedPrimaryLimitWithUsableReset =
+                "0".equals(headers.getFirst("X-RateLimit-Remaining"))
+                        && parseEpochSeconds(headers.getFirst("X-RateLimit-Reset"))
+                                .filter(retryAt -> !retryAt.isBefore(now))
+                                .isPresent();
+        return usableRetryAfter || exhaustedPrimaryLimitWithUsableReset;
     }
 
     private Optional<Instant> retryInstant(HttpHeaders headers) {
