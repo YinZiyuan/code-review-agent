@@ -87,6 +87,17 @@ public final class ReviewRun {
         }
     }
 
+    public void recoverInterruptedAttempt(ReviewFailure failure, Instant recoveredAt) {
+        requireState(ReviewRunState.RUNNING);
+        if (failure == null || failure.classification() != FailureClass.TRANSIENT) {
+            throw new IllegalArgumentException("failure classification must be TRANSIENT");
+        }
+        ReviewFailure safeFailure = new ReviewFailure(
+                failure.code(), FailureClass.TRANSIENT, "review worker was interrupted");
+        recordTransientAttemptFailure(
+                safeFailure, new ExecutionMeasurements(0, 0, 0, Map.of()), recoveredAt);
+    }
+
     public void recordTerminalAttemptFailure(ReviewFailure failure,
                                              ExecutionMeasurements measurements, Instant endedAt) {
         requireState(ReviewRunState.RUNNING);

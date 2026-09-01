@@ -31,6 +31,55 @@ class ReviewRunTest {
     }
 
     @Test
+    void interruptedAttemptIsRecoveredForAnotherBoundedAttemptWithOnlySafeEvidence() {
+        ReviewRun run = requested(2);
+        run.startAttempt(T0);
+
+        run.recoverInterruptedAttempt(
+                new ReviewFailure("worker_interrupted", FailureClass.TRANSIENT,
+                        "unsafe worker detail that must not be stored"),
+                T0.plusSeconds(1));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.REQUESTED);
+        assertThat(run.attempts().get(0).state())
+                .isEqualTo(ReviewAttemptState.TRANSIENT_FAILURE);
+        assertThat(run.attempts().get(0).failure()).contains(
+                new ReviewFailure("worker_interrupted", FailureClass.TRANSIENT,
+                        "review worker was interrupted"));
+        assertThat(run.attempts().get(0).measurements()).contains(
+                new ExecutionMeasurements(0, 0, 0, Map.of()));
+    }
+
+    @Test
+    void interruptedFinalAttemptExhaustsTheConfiguredAttemptAllowance() {
+        ReviewRun run = requested(1);
+        run.startAttempt(T0);
+
+        run.recoverInterruptedAttempt(
+                new ReviewFailure("worker_interrupted", FailureClass.TRANSIENT, "unsafe detail"),
+                T0.plusSeconds(1));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(
+                new ReviewFailure("worker_interrupted", FailureClass.TERMINAL,
+                        "review attempts exhausted: review worker was interrupted"));
+        assertThatThrownBy(() -> run.startAttempt(T0.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void interruptedAttemptRecoveryIsRejectedOutsideRunningState() {
+        ReviewRun run = requested(2);
+        ReviewFailure interrupted = new ReviewFailure(
+                "worker_interrupted", FailureClass.TRANSIENT, "unsafe detail");
+
+        assertThatThrownBy(() -> run.recoverInterruptedAttempt(interrupted, T0.plusSeconds(1)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(run.state()).isEqualTo(ReviewRunState.REQUESTED);
+        assertThat(run.attempts()).isEmpty();
+    }
+
+    @Test
     void completingReviewFreezesFindingsAndRecordsOneEvent() {
         ReviewRun run = requested(3);
         run.startAttempt(T0);
