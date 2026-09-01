@@ -580,4 +580,3 @@ git commit -m "feat(github): complete production review loop"
 - [ ] **Step 8: Update Issue #4 and create a focused pull request**
 
 Comment on Issue #4 with test counts, E2E evidence, safe failure demonstrations, and the PR URL. The PR description must state that feedback reconciliation and real-PR benchmarking remain in their dedicated later issues.
-
