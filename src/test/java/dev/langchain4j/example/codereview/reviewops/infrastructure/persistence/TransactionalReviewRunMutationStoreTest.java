@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.example.codereview.reviewops.application.DecideReviewPublication;
 import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunMutationStore;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
@@ -16,6 +17,8 @@ import dev.langchain4j.example.codereview.reviewops.domain.FindingContent;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingEvidence;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprintFactory;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingSeverity;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFinding;
@@ -35,6 +38,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -163,6 +167,50 @@ class TransactionalReviewRunMutationStoreTest extends PostgresIntegrationSupport
         assertPriorRunningStateRemains(running.run().id(), running.version());
     }
 
+    @Test
+    void publicationIntentIsRejectedUntilPersistedFindingsHaveLegalDecisions() {
+        RunningRun running = persistedRunningRun();
+        running.run().completeReview(List.of(finding()), measurements(), T0.plusSeconds(2));
+
+        assertThatThrownBy(() -> store(jobs, outbox).saveAndEnqueue(
+                running.run(), running.version(),
+                List.of(publishReviewJob(running.run())), List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("publication decisions");
+
+        assertPriorRunningStateRemains(running.run().id(), running.version());
+    }
+
+    @Test
+    void publicationDecisionsAndIdempotentPublicationIntentCommitTogether() {
+        RunningRun running = persistedRunningRun();
+        ReviewFinding finding = finding();
+        running.run().completeReview(List.of(finding), measurements(), T0.plusSeconds(2));
+        running.run().acceptPublicationDecisions(Map.of(
+                finding.fingerprint(),
+                new PublicationDecision(PublicationTier.CHECK_SUMMARY, "policy-v1")));
+
+        long nextVersion = store(jobs, outbox).saveAndEnqueue(
+                running.run(), running.version(),
+                List.of(publishReviewJob(running.run())), List.of());
+
+        assertThat(nextVersion).isEqualTo(2);
+        ReviewRun persisted = reviewRuns.find(running.run().id()).orElseThrow().reviewRun();
+        assertThat(persisted.state()).isEqualTo(ReviewRunState.COMPLETED);
+        assertThat(persisted.findings()).singleElement().satisfies(savedFinding ->
+                assertThat(savedFinding.publicationDecision()).contains(
+                        new PublicationDecision(PublicationTier.CHECK_SUMMARY, "policy-v1")));
+        assertThat(jdbcTemplate.queryForMap("""
+                        SELECT job_type, payload_reference, idempotency_key
+                        FROM durable_jobs
+                        """))
+                .containsEntry("job_type", DecideReviewPublication.PUBLISH_REVIEW_JOB_TYPE)
+                .containsEntry("payload_reference", running.run().id().value())
+                .containsEntry("idempotency_key",
+                        "publish-review:" + running.run().id().value());
+        assertThat(count("outbox_events")).isZero();
+    }
+
     private TransactionalReviewRunMutationStore store(
             DurableJobQueue durableJobs, OutboxStore outboxStore) {
         return new TransactionalReviewRunMutationStore(
@@ -229,6 +277,15 @@ class TransactionalReviewRunMutationStoreTest extends PostgresIntegrationSupport
                 run.configuration().maxReviewAttempts(),
                 T0.plusSeconds(2),
                 "decide-publication:" + run.id().value());
+    }
+
+    private static DurableJobRequest publishReviewJob(ReviewRun run) {
+        return new DurableJobRequest(
+                DecideReviewPublication.PUBLISH_REVIEW_JOB_TYPE,
+                run.id().value(),
+                run.configuration().maxReviewAttempts(),
+                T0.plusSeconds(2),
+                "publish-review:" + run.id().value());
     }
 
     private static OutboxEvent event(ReviewRun run, String eventId, long seconds) {

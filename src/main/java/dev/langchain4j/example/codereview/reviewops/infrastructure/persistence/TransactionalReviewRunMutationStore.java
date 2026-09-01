@@ -1,5 +1,6 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 
+import dev.langchain4j.example.codereview.reviewops.application.DecideReviewPublication;
 import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunJobMismatchException;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunMutationStore;
@@ -82,6 +83,17 @@ public final class TransactionalReviewRunMutationStore implements ReviewRunMutat
                     && run.state() != ReviewRunState.COMPLETED) {
                 throw new IllegalArgumentException(
                         "DECIDE_PUBLICATION requires a COMPLETED review run");
+            }
+            if (DecideReviewPublication.PUBLISH_REVIEW_JOB_TYPE.equals(job.jobType())) {
+                if (run.state() != ReviewRunState.COMPLETED) {
+                    throw new IllegalArgumentException(
+                            "PUBLISH_REVIEW requires a COMPLETED review run");
+                }
+                if (run.findings().stream()
+                        .anyMatch(finding -> finding.publicationDecision().isEmpty())) {
+                    throw new IllegalArgumentException(
+                            "PUBLISH_REVIEW requires complete publication decisions");
+                }
             }
         }
         for (OutboxEvent event : events) {
