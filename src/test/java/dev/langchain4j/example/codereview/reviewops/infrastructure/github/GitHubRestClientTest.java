@@ -1,19 +1,27 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubInstallationGateway.InstallationToken;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.KeyPairGenerator;
 import java.time.Clock;
 import java.time.Duration;
@@ -21,6 +29,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,6 +47,7 @@ class GitHubRestClientTest {
     private static final Instant START = Instant.parse("2026-09-01T08:00:00Z");
     private static final String PRIVATE_KEY_MARKER = "-----BEGIN PRIVATE KEY-----";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
 
     private static String privateKeyPem;
 
@@ -109,16 +119,185 @@ class GitHubRestClientTest {
                         .body("{\"message\":\"" + responseSecret + "\"}"));
 
         assertThatThrownBy(() -> client.token(41L))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub installation token request failed")
-                .satisfies(exception -> assertThat(exception.toString())
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.AUTHORIZATION);
+                    assertThat(exception.retryAt()).isEmpty();
+                    assertThat(exception).hasMessage("GitHub authorization failed");
+                    assertThat(exception.toString())
                         .doesNotContain(responseSecret)
                         .doesNotContain(PRIVATE_KEY_MARKER)
-                        .doesNotContain("Bearer"));
+                        .doesNotContain("Bearer");
+                });
         assertThat(output.getAll())
                 .doesNotContain(responseSecret)
                 .doesNotContain(PRIVATE_KEY_MARKER)
                 .doesNotContain("Bearer");
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "500, TRANSIENT",
+            "502, TRANSIENT",
+            "408, TRANSIENT",
+            "401, AUTHORIZATION",
+            "403, AUTHORIZATION",
+            "404, DETERMINISTIC_INPUT",
+            "409, DETERMINISTIC_INPUT",
+            "422, DETERMINISTIC_INPUT"
+    })
+    void classifiesRevisionHttpFailuresWithoutRetainingTheirBodies(
+            int status, GitHubFailureException.Classification classification) {
+        String responseSecret = "status-body-secret-" + status;
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "status-matrix-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatusCode.valueOf(status))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"message\":\"" + responseSecret + "\"}"));
+
+        assertThatThrownBy(() -> client.requireExactPullRequestHead(revision()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification()).isEqualTo(classification);
+                    assertThat(exception.retryAt()).isEmpty();
+                    assertThat(exception.toString())
+                            .doesNotContain(responseSecret)
+                            .doesNotContain("status-matrix-token");
+                });
+        server.verify();
+    }
+
+    @Test
+    void mapsRetryAfterSecondsToARateLimitRetryInstant() {
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "rate-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS)
+                        .header(HttpHeaders.RETRY_AFTER, "120")
+                        .body("rate-limit-body-must-not-survive"));
+
+        assertThatThrownBy(() -> client.requireExactPullRequestHead(revision()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.RATE_LIMITED);
+                    assertThat(exception.retryAt()).contains(START.plusSeconds(120));
+                    assertThat(exception).hasMessage("GitHub API rate limit exceeded");
+                    assertThat(exception.toString()).doesNotContain("rate-limit-body-must-not-survive");
+                });
+        server.verify();
+    }
+
+    @Test
+    void mapsRateLimitResetOnAForbiddenResponseButKeepsOrdinaryForbiddenAsAuthorization() {
+        long resetEpoch = START.plusSeconds(300).getEpochSecond();
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "rate-reset-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                        .header("X-RateLimit-Remaining", "0")
+                        .header("X-RateLimit-Reset", Long.toString(resetEpoch))
+                        .body("rate-limit-secret"));
+
+        assertThatThrownBy(() -> client.requireExactPullRequestHead(revision()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.RATE_LIMITED);
+                    assertThat(exception.retryAt()).contains(START.plusSeconds(300));
+                });
+        server.verify();
+    }
+
+    @Test
+    void mapsNetworkIoFailuresToTransientWithoutRetainingTheTransportMessage() {
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "network-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(request -> {
+                    throw new IOException("network-secret-must-not-survive");
+                });
+
+        assertThatThrownBy(() -> client.requireExactPullRequestHead(revision()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.TRANSIENT);
+                    assertThat(exception.retryAt()).isEmpty();
+                    assertThat(exception.toString()).doesNotContain("network-secret-must-not-survive");
+                });
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"503, TRANSIENT", "401, AUTHORIZATION", "404, AUTHORIZATION"})
+    void classifiesInstallationTokenHttpFailures(
+            int status, GitHubFailureException.Classification classification) {
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        server.expect(once(), requestTo(API_BASE_URL + "/app/installations/41/access_tokens"))
+                .andRespond(withStatus(HttpStatusCode.valueOf(status)).body("token-error-secret"));
+
+        assertThatThrownBy(() -> client.token(41L))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification()).isEqualTo(classification);
+                    assertThat(exception.retryAt()).isEmpty();
+                    assertThat(exception.toString()).doesNotContain("token-error-secret");
+                });
+        server.verify();
+    }
+
+    @Test
+    void boundsSuccessfulInstallationTokenResponsesBeforeJsonParsing() {
+        String secretMarker = "oversized-success-token-secret";
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        server.expect(once(), requestTo(API_BASE_URL + "/app/installations/41/access_tokens"))
+                .andRespond(withSuccess(
+                        secretMarker + "x".repeat(70_000), MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.token(41L))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.TRANSIENT);
+                    assertThat(exception).hasMessage(
+                            "GitHub installation token response size limit exceeded");
+                    assertThat(exception.toString()).doesNotContain(secretMarker);
+                });
+        server.verify();
+    }
+
+    @Test
+    void neverReadsAnOversizedInstallationTokenErrorBody() {
+        AtomicBoolean bodyRead = new AtomicBoolean();
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        server.expect(once(), requestTo(API_BASE_URL + "/app/installations/41/access_tokens"))
+                .andRespond(request -> responseWhoseBodyMustNotBeRead(bodyRead));
+
+        assertThatThrownBy(() -> client.token(41L))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.AUTHORIZATION);
+                    assertThat(exception).hasMessage("GitHub authorization failed");
+                });
+        assertThat(bodyRead).isFalse();
         server.verify();
     }
 
@@ -140,6 +319,45 @@ class GitHubRestClientTest {
                 .andRespond(withSuccess("""
                         {"token":"%s","expires_at":"%s","permissions":{"contents":"read"}}
                         """.formatted(token, expiresAt), MediaType.APPLICATION_JSON));
+    }
+
+    private static dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision revision() {
+        return new dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision(
+                41L, 73L, 12, HEAD_SHA);
+    }
+
+    private static ClientHttpResponse responseWhoseBodyMustNotBeRead(AtomicBoolean bodyRead) {
+        return new ClientHttpResponse() {
+            private final HttpHeaders headers = new HttpHeaders();
+            {
+                headers.setContentLength(1_000_000);
+            }
+
+            @Override
+            public HttpStatusCode getStatusCode() {
+                return HttpStatus.UNAUTHORIZED;
+            }
+
+            @Override
+            public String getStatusText() {
+                return "Unauthorized";
+            }
+
+            @Override
+            public void close() {
+            }
+
+            @Override
+            public InputStream getBody() {
+                bodyRead.set(true);
+                return new ByteArrayInputStream("must-not-be-read".getBytes());
+            }
+
+            @Override
+            public HttpHeaders getHeaders() {
+                return headers;
+            }
+        };
     }
 
     private static final class MutableClock extends Clock {

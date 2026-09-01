@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import org.junit.jupiter.api.BeforeAll;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.assertj.core.api.ThrowableAssert;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpHeaders;
@@ -37,6 +39,7 @@ import java.util.zip.ZipOutputStream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.ExpectedCount.once;
+import static org.springframework.test.web.client.ExpectedCount.times;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -115,9 +118,9 @@ class GitHubArchiveSourceProviderTest {
         expectHead(remote.server(), OTHER_SHA);
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub pull request head does not match requested revision");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub pull request head does not match requested revision");
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -133,9 +136,9 @@ class GitHubArchiveSourceProviderTest {
         expectHead(remote.server(), OTHER_SHA);
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub pull request head does not match requested revision");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub pull request head does not match requested revision");
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -146,9 +149,9 @@ class GitHubArchiveSourceProviderTest {
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
         PullRequestRevision branchRevision = new PullRequestRevision(41L, 73L, 12, "main");
 
-        assertThatThrownBy(() -> provider.prepare(branchRevision))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("headSha must be a full hexadecimal commit SHA");
+        assertDeterministicFailure(
+                () -> provider.prepare(branchRevision),
+                "headSha must be a full hexadecimal commit SHA");
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -170,9 +173,9 @@ class GitHubArchiveSourceProviderTest {
         expectSuccessfulSource(remote.server(), DIFF, zip(entries));
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub archive contains an unsafe entry");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub archive contains an unsafe entry");
         assertThat(tempParent).isEmptyDirectory();
         assertThat(tempParent.resolve("escaped.txt")).doesNotExist();
         remote.server().verify();
@@ -184,9 +187,9 @@ class GitHubArchiveSourceProviderTest {
         expectSuccessfulSource(remote.server(), DIFF, zip(Map.of("../escaped.txt", "must not escape")));
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub archive contains an unsafe entry");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub archive contains an unsafe entry");
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -201,9 +204,9 @@ class GitHubArchiveSourceProviderTest {
         expectSuccessfulSource(remote.server(), DIFF, archive);
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub archive contains an unsafe entry");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub archive contains an unsafe entry");
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -216,9 +219,9 @@ class GitHubArchiveSourceProviderTest {
                 "root/b.txt", "67890")));
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 9, 10);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub archive expanded size limit exceeded");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub archive expanded size limit exceeded");
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -231,9 +234,9 @@ class GitHubArchiveSourceProviderTest {
                 "root/b.txt", "b")));
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 1);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub archive entry count limit exceeded");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub archive entry count limit exceeded");
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -273,11 +276,14 @@ class GitHubArchiveSourceProviderTest {
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 32, 16_384, 10);
 
         assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub archive download size limit exceeded")
-                .satisfies(exception -> assertThat(exception.toString())
-                        .doesNotContain(responseSecret)
-                        .doesNotContain(INSTALLATION_TOKEN));
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.DETERMINISTIC_INPUT);
+                    assertThat(exception).hasMessage("GitHub archive download size limit exceeded");
+                    assertThat(exception.toString())
+                            .doesNotContain(responseSecret)
+                            .doesNotContain(INSTALLATION_TOKEN);
+                });
         assertThat(output.getAll())
                 .doesNotContain(responseSecret)
                 .doesNotContain(INSTALLATION_TOKEN);
@@ -293,10 +299,107 @@ class GitHubArchiveSourceProviderTest {
         expectDiff(remote.server(), DIFF);
         GitHubArchiveSourceProvider provider = provider(remote.client(), 32, 65_536, 16_384, 10);
 
-        assertThatThrownBy(() -> provider.prepare(REVISION))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("GitHub pull request diff size limit exceeded");
+        assertDeterministicFailure(
+                () -> provider.prepare(REVISION),
+                "GitHub pull request diff size limit exceeded");
         assertThat(tempParent).isEmptyDirectory();
+        remote.server().verify();
+    }
+
+    @Test
+    void followsTheGitHubArchiveRedirectWithoutForwardingInstallationCredentials() throws Exception {
+        byte[] archive = zip(Map.of("root/file.txt", "content"));
+        String downloadUrl = "https://codeload.github.com/octo/repo/legacy.zip/" + HEAD_SHA;
+        Remote remote = remote();
+        expectToken(remote.server());
+        expectArchiveRedirect(remote.server(), downloadUrl);
+        remote.server().expect(once(), requestTo(downloadUrl))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(GitHubArchiveSourceProviderTest::assertNoAuthorization)
+                .andRespond(withSuccess(archive, MediaType.APPLICATION_OCTET_STREAM));
+
+        assertThat(remote.client().repositoryArchive(REVISION, 65_536)).isEqualTo(archive);
+        remote.server().verify();
+    }
+
+    @Test
+    void rejectsAnArchiveRedirectWithoutALocation() {
+        Remote remote = remote();
+        expectToken(remote.server());
+        remote.server().expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/zipball/" + HEAD_SHA))
+                .andRespond(withStatus(HttpStatus.FOUND));
+
+        assertThatThrownBy(() -> remote.client().repositoryArchive(REVISION, 65_536))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.DETERMINISTIC_INPUT);
+                    assertThat(exception).hasMessage("GitHub archive redirect was invalid");
+                });
+        remote.server().verify();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://attacker.invalid/archive.zip",
+            "http://codeload.github.com/octo/repo/archive.zip",
+            "https://user@codeload.github.com/octo/repo/archive.zip",
+            "https://codeload.github.com:8443/octo/repo/archive.zip"
+    })
+    void rejectsUntrustedArchiveRedirectLocations(String location) {
+        Remote remote = remote();
+        expectToken(remote.server());
+        expectArchiveRedirect(remote.server(), location);
+
+        assertThatThrownBy(() -> remote.client().repositoryArchive(REVISION, 65_536))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.DETERMINISTIC_INPUT);
+                    assertThat(exception).hasMessage("GitHub archive redirect was invalid");
+                });
+        remote.server().verify();
+    }
+
+    @Test
+    void boundsArchiveRedirectLoopsAndNeverForwardsCredentials() {
+        String loopUrl = "https://codeload.github.com/octo/repo/loop.zip";
+        Remote remote = remote();
+        expectToken(remote.server());
+        expectArchiveRedirect(remote.server(), loopUrl);
+        remote.server().expect(times(3), requestTo(loopUrl))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(GitHubArchiveSourceProviderTest::assertNoAuthorization)
+                .andRespond(withStatus(HttpStatus.FOUND)
+                        .header(HttpHeaders.LOCATION, loopUrl));
+
+        assertThatThrownBy(() -> remote.client().repositoryArchive(REVISION, 65_536))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.TRANSIENT);
+                    assertThat(exception).hasMessage("GitHub archive redirect limit exceeded");
+                });
+        remote.server().verify();
+    }
+
+    @Test
+    void enforcesTheArchiveByteCapOnTheCredentialFreeRedirectedResponse() {
+        String responseSecret = "redirected-archive-secret";
+        String downloadUrl = "https://codeload.github.com/octo/repo/oversized.zip";
+        Remote remote = remote();
+        expectToken(remote.server());
+        expectArchiveRedirect(remote.server(), downloadUrl);
+        remote.server().expect(once(), requestTo(downloadUrl))
+                .andExpect(GitHubArchiveSourceProviderTest::assertNoAuthorization)
+                .andRespond(withSuccess(
+                        responseSecret.repeat(10), MediaType.APPLICATION_OCTET_STREAM));
+
+        assertThatThrownBy(() -> remote.client().repositoryArchive(REVISION, 32))
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.DETERMINISTIC_INPUT);
+                    assertThat(exception).hasMessage("GitHub archive download size limit exceeded");
+                    assertThat(exception.toString()).doesNotContain(responseSecret);
+                });
         remote.server().verify();
     }
 
@@ -365,6 +468,32 @@ class GitHubArchiveSourceProviderTest {
                 .andExpect(header(HttpHeaders.ACCEPT, "application/vnd.github+json"))
                 .andExpect(header("X-GitHub-Api-Version", "2022-11-28"))
                 .andRespond(withSuccess(archive, MediaType.APPLICATION_OCTET_STREAM));
+    }
+
+    private static void expectArchiveRedirect(MockRestServiceServer server, String location) {
+        server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/zipball/" + HEAD_SHA))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + INSTALLATION_TOKEN))
+                .andExpect(header(HttpHeaders.ACCEPT, "application/vnd.github+json"))
+                .andExpect(header("X-GitHub-Api-Version", "2022-11-28"))
+                .andRespond(withStatus(HttpStatus.FOUND)
+                        .header(HttpHeaders.LOCATION, location));
+    }
+
+    private static void assertNoAuthorization(org.springframework.http.HttpRequest request) {
+        assertThat(request.getHeaders()).doesNotContainKey(HttpHeaders.AUTHORIZATION);
+    }
+
+    private static void assertDeterministicFailure(
+            ThrowableAssert.ThrowingCallable operation, String safeMessage) {
+        assertThatThrownBy(operation)
+                .isInstanceOfSatisfying(GitHubFailureException.class, exception -> {
+                    assertThat(exception.classification())
+                            .isEqualTo(GitHubFailureException.Classification.DETERMINISTIC_INPUT);
+                    assertThat(exception.retryAt()).isEmpty();
+                    assertThat(exception).hasMessage(safeMessage);
+                });
     }
 
     private static byte[] zip(Map<String, String> entries) throws IOException {

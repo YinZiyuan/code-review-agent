@@ -1,5 +1,6 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
 import dev.langchain4j.example.codereview.reviewops.application.github.ReviewSourceProvider;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
@@ -94,8 +95,8 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
             cleanupAfterFailure(cleanupRoot, exception);
             throw exception;
         } catch (IOException exception) {
-            SafeArchiveException safeFailure =
-                    new SafeArchiveException("Could not prepare GitHub review source");
+            GitHubFailureException safeFailure =
+                    transientFailure("Could not prepare GitHub review source");
             cleanupAfterFailure(cleanupRoot, safeFailure);
             throw safeFailure;
         }
@@ -132,7 +133,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
                 }
                 extractedEntries++;
                 if (extractedEntries > maxEntries) {
-                    throw new SafeArchiveException("GitHub archive entry count limit exceeded");
+                    throw deterministicFailure("GitHub archive entry count limit exceeded");
                 }
                 if (!explicitPaths.add(validated.relativePath())) {
                     throw unsafeEntry();
@@ -151,7 +152,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
                     }
                     long declaredSize = entry.getSize();
                     if (declaredSize > maxExpandedBytes - expandedBytes) {
-                        throw new SafeArchiveException(
+                        throw deterministicFailure(
                                 "GitHub archive expanded size limit exceeded");
                     }
                     try (OutputStream output = Files.newOutputStream(
@@ -170,7 +171,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
         }
 
         if (archiveEntries == 0 || commonRoot == null || archiveEntries != metadata.entryCount()) {
-            throw new SafeArchiveException("GitHub archive is malformed");
+            throw deterministicFailure("GitHub archive is malformed");
         }
     }
 
@@ -181,7 +182,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
         long total = expandedBytes;
         while ((read = zip.read(buffer)) != -1) {
             if (read > maxExpandedBytes - total) {
-                throw new SafeArchiveException("GitHub archive expanded size limit exceeded");
+                throw deterministicFailure("GitHub archive expanded size limit exceeded");
             }
             output.write(buffer, 0, read);
             total += read;
@@ -283,7 +284,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
     private static ArchiveMetadata inspectCentralDirectory(byte[] archive) {
         int endOffset = findEndOfCentralDirectory(archive);
         if (endOffset < 0) {
-            throw new SafeArchiveException("GitHub archive is malformed");
+            throw deterministicFailure("GitHub archive is malformed");
         }
         int diskNumber = unsignedShort(archive, endOffset + 4);
         int centralDisk = unsignedShort(archive, endOffset + 6);
@@ -297,7 +298,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
                 || centralOffset == 0xffff_ffffL
                 || endOffset + ZIP_END_MIN_SIZE + commentLength != archive.length
                 || centralOffset + centralSize != endOffset) {
-            throw new SafeArchiveException("GitHub archive is malformed");
+            throw deterministicFailure("GitHub archive is malformed");
         }
 
         long cursor = centralOffset;
@@ -305,7 +306,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
         for (int index = 0; index < entryCount; index++) {
             if (cursor < 0 || cursor + ZIP_CENTRAL_HEADER_SIZE > centralEnd
                     || littleEndianInt(archive, (int) cursor) != ZIP_CENTRAL_FILE_HEADER) {
-                throw new SafeArchiveException("GitHub archive is malformed");
+                throw deterministicFailure("GitHub archive is malformed");
             }
             int header = (int) cursor;
             int versionMadeBy = unsignedShort(archive, header + 4);
@@ -316,7 +317,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
             long next = cursor + ZIP_CENTRAL_HEADER_SIZE
                     + nameLength + extraLength + entryCommentLength;
             if (nameLength == 0 || nameLength > MAX_ENTRY_NAME_BYTES || next > centralEnd) {
-                throw new SafeArchiveException("GitHub archive is malformed");
+                throw deterministicFailure("GitHub archive is malformed");
             }
             decodeUtf8EntryName(archive, header + ZIP_CENTRAL_HEADER_SIZE, nameLength);
             int platform = versionMadeBy >>> 8;
@@ -328,7 +329,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
             cursor = next;
         }
         if (cursor != centralEnd) {
-            throw new SafeArchiveException("GitHub archive is malformed");
+            throw deterministicFailure("GitHub archive is malformed");
         }
         return new ArchiveMetadata(entryCount);
     }
@@ -340,7 +341,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(archive, offset, length));
         } catch (CharacterCodingException exception) {
-            throw new SafeArchiveException("GitHub archive is malformed");
+            throw deterministicFailure("GitHub archive is malformed");
         }
     }
 
@@ -356,7 +357,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
 
     private static int unsignedShort(byte[] bytes, int offset) {
         if (offset < 0 || offset + 2 > bytes.length) {
-            throw new SafeArchiveException("GitHub archive is malformed");
+            throw deterministicFailure("GitHub archive is malformed");
         }
         return Byte.toUnsignedInt(bytes[offset]) | Byte.toUnsignedInt(bytes[offset + 1]) << 8;
     }
@@ -367,13 +368,13 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
 
     private static int littleEndianInt(byte[] bytes, int offset) {
         if (offset < 0 || offset + 4 > bytes.length) {
-            throw new SafeArchiveException("GitHub archive is malformed");
+            throw deterministicFailure("GitHub archive is malformed");
         }
         return ByteBuffer.wrap(bytes, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
     }
 
-    private static SafeArchiveException unsafeEntry() {
-        return new SafeArchiveException("GitHub archive contains an unsafe entry");
+    private static GitHubFailureException unsafeEntry() {
+        return deterministicFailure("GitHub archive contains an unsafe entry");
     }
 
     private static void cleanupAfterFailure(Path cleanupRoot, RuntimeException failure) {
@@ -383,7 +384,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
         try {
             deleteRecursively(cleanupRoot);
         } catch (IOException cleanupFailure) {
-            failure.addSuppressed(new SafeArchiveException(
+            failure.addSuppressed(transientFailure(
                     "Could not remove failed prepared review source"));
         }
     }
@@ -454,7 +455,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
                 deleteRecursively(cleanupRoot);
                 closed.set(true);
             } catch (IOException exception) {
-                throw new SafeArchiveException("Could not remove prepared review source");
+                throw transientFailure("Could not remove prepared review source");
             }
         }
 
@@ -464,9 +465,13 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
         }
     }
 
-    private static final class SafeArchiveException extends IllegalStateException {
-        private SafeArchiveException(String message) {
-            super(message);
-        }
+    private static GitHubFailureException deterministicFailure(String safeMessage) {
+        return new GitHubFailureException(
+                GitHubFailureException.Classification.DETERMINISTIC_INPUT, safeMessage);
+    }
+
+    private static GitHubFailureException transientFailure(String safeMessage) {
+        return new GitHubFailureException(
+                GitHubFailureException.Classification.TRANSIENT, safeMessage);
     }
 }
