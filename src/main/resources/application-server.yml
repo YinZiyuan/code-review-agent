@@ -19,6 +19,10 @@ spring:
         tcpKeepAlive: true
   flyway:
     enabled: true
+    postgresql:
+      # CREATE INDEX CONCURRENTLY must not wait on Flyway's own transaction-scoped lock.
+      # Flyway still serializes migration processes with its PostgreSQL session advisory lock.
+      transactional-lock: false
   transaction:
     default-timeout: ${code-review.server.database.transaction-timeout}
 

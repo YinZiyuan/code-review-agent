@@ -35,6 +35,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -104,6 +106,117 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void v7DeclaresNonTransactionalConcurrentRestartSafeIndexBuilds() throws Exception {
+        String script = classpathText(
+                "db/migration/V7__bound_review_operations_maintenance.sql");
+        String scriptConfiguration = classpathText(
+                "db/migration/V7__bound_review_operations_maintenance.sql.conf");
+
+        assertThat(scriptConfiguration).contains("executeInTransaction=false");
+        assertThat(script)
+                .contains("SET statement_timeout")
+                .contains("SET lock_timeout")
+                .contains("DROP INDEX CONCURRENTLY IF EXISTS")
+                .contains("CREATE INDEX CONCURRENTLY");
+        assertThat(indexesAreValid("public", Set.of(
+                "idx_durable_jobs_expired_lease",
+                "idx_durable_jobs_terminal_retention",
+                "idx_outbox_events_published_retention",
+                "idx_github_deliveries_handled_retention")))
+                .as("public index state: %s", indexState("public"))
+                .isTrue();
+    }
+
+    @Test
+    void v7OnlineUpgradeLetsANewWriterFinishWhileAnOlderWriterRemainsOpen() throws Exception {
+        String schema = "online_v7_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try {
+            var isolatedDataSource = isolatedDataSource("online-v7-writer-test");
+            Flyway v6 = flyway(isolatedDataSource, schema, "6");
+            assertThat(v6.migrate().migrationsExecuted).isEqualTo(6);
+            JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
+            populateMaintenanceTables(isolated, schema, 2_000);
+
+            try (var olderWriter = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+                olderWriter.setAutoCommit(false);
+                olderWriter.createStatement().execute("SET search_path TO " + schema);
+                olderWriter.createStatement().execute(
+                        "LOCK TABLE durable_jobs IN ROW EXCLUSIVE MODE");
+
+                Flyway latest = flyway(isolatedDataSource, schema, null);
+                CompletableFuture<Integer> migration = CompletableFuture.supplyAsync(
+                        () -> latest.migrate().migrationsExecuted);
+                awaitMigrationStart(migration);
+
+                assertThat(org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                        Duration.ofSeconds(2),
+                        () -> isolated.update("""
+                                INSERT INTO durable_jobs (
+                                    id, job_type, payload_reference, state, attempt_count,
+                                    max_attempts, next_attempt_at, initial_next_attempt_at,
+                                    idempotency_key, created_at, updated_at)
+                                VALUES (?, 'REVIEW_EXECUTION', ?, 'READY', 0, 3,
+                                        now(), now(), ?, now(), now())
+                                """,
+                                UUID.randomUUID(), UUID.randomUUID(),
+                                "writer-during-online-index-" + UUID.randomUUID())))
+                        .isEqualTo(1);
+
+                olderWriter.commit();
+                assertThat(migration.get(15, TimeUnit.SECONDS)).isEqualTo(1);
+                assertThat(indexesAreValid(schema, Set.of(
+                        "idx_durable_jobs_expired_lease",
+                        "idx_durable_jobs_terminal_retention",
+                        "idx_outbox_events_published_retention",
+                        "idx_github_deliveries_handled_retention"))).isTrue();
+            }
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
+    void failedV7LockAcquisitionCanBeRepairedAndRetriedToValidIndexes() throws Exception {
+        String schema = "retry_v7_" + UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.execute("CREATE SCHEMA " + schema);
+        try {
+            var isolatedDataSource = isolatedDataSource("retry-v7-test");
+            Flyway v6 = flyway(isolatedDataSource, schema, "6");
+            assertThat(v6.migrate().migrationsExecuted).isEqualTo(6);
+
+            Flyway latest = flyway(isolatedDataSource, schema, null);
+            CompletableFuture<Integer> failedMigration;
+            try (var blocker = DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+                blocker.setAutoCommit(false);
+                blocker.createStatement().execute("SET search_path TO " + schema);
+                blocker.createStatement().execute("LOCK TABLE durable_jobs IN ACCESS EXCLUSIVE MODE");
+                failedMigration = CompletableFuture.supplyAsync(
+                        () -> latest.migrate().migrationsExecuted);
+
+                assertThatThrownBy(() -> failedMigration.get(5, TimeUnit.SECONDS))
+                        .isInstanceOf(ExecutionException.class)
+                        .hasCauseInstanceOf(FlywayException.class)
+                        .hasStackTraceContaining("lock timeout");
+                blocker.rollback();
+            }
+
+            latest.repair();
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertFlywayIsValid(latest);
+            assertThat(indexesAreValid(schema, Set.of(
+                    "idx_durable_jobs_expired_lease",
+                    "idx_durable_jobs_terminal_retention",
+                    "idx_outbox_events_published_retention",
+                    "idx_github_deliveries_handled_retention"))).isTrue();
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE");
+        }
+    }
+
+    @Test
     void v5PreservesPreexistingDeliveriesWithAnExplicitNullLegacyAssociation() throws Exception {
         String schema = "delivery_association_" + UUID.randomUUID().toString().replace("-", "");
         jdbcTemplate.execute("CREATE SCHEMA " + schema);
@@ -112,7 +225,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             connection.setSchema(schema);
             SingleConnectionDataSource isolatedDataSource =
                     new SingleConnectionDataSource(connection, true);
-            Flyway v4 = Flyway.configure()
+            Flyway v4 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -131,7 +244,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     Timestamp.from(Instant.parse("2026-09-01T01:00:00Z")),
                     Timestamp.from(Instant.parse("2026-09-01T01:00:01Z")));
 
-            Flyway latest = Flyway.configure()
+            Flyway latest = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -156,7 +269,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             connection.setSchema(schema);
             SingleConnectionDataSource isolatedDataSource =
                     new SingleConnectionDataSource(connection, true);
-            Flyway v5 = Flyway.configure()
+            Flyway v5 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -184,7 +297,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     Timestamp.from(leasedAt.minusSeconds(60)),
                     Timestamp.from(leasedAt));
 
-            Flyway latest = Flyway.configure()
+            Flyway latest = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -213,7 +326,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     new SingleConnectionDataSource(connection, true);
 
             // This fixture is byte-for-byte V1 from b8bb54d, the version that may already be deployed.
-            Flyway deployedV1 = Flyway.configure()
+            Flyway deployedV1 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -225,7 +338,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             assertThat(businessIdentityConstraintName(isolated, schema))
                     .isEqualTo("review_runs_installation_id_repository_id_pull_request_numb_key");
 
-            Flyway deployedV2 = Flyway.configure()
+            Flyway deployedV2 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -235,7 +348,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             assertThat(deployedV2.migrate().migrationsExecuted).isEqualTo(1);
             assertFlywayIsValid(deployedV2);
 
-            Flyway latest = Flyway.configure()
+            Flyway latest = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -273,7 +386,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             connection.setSchema(schema);
             SingleConnectionDataSource isolatedDataSource =
                     new SingleConnectionDataSource(connection, true);
-            Flyway v1 = Flyway.configure()
+            Flyway v1 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -295,7 +408,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     Timestamp.from(originalSchedule.minusSeconds(1)),
                     Timestamp.from(originalSchedule.minusSeconds(1)));
 
-            Flyway v2 = Flyway.configure()
+            Flyway v2 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -327,7 +440,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             connection.setSchema(schema);
             SingleConnectionDataSource isolatedDataSource =
                     new SingleConnectionDataSource(connection, true);
-            Flyway v1 = Flyway.configure()
+            Flyway v1 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -351,7 +464,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     Timestamp.from(createdAt),
                     Timestamp.from(createdAt.plusSeconds(30)));
 
-            Flyway latest = Flyway.configure()
+            Flyway latest = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -376,7 +489,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             connection.setSchema(schema);
             SingleConnectionDataSource isolatedDataSource =
                     new SingleConnectionDataSource(connection, true);
-            Flyway v1 = Flyway.configure()
+            Flyway v1 = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -399,7 +512,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     Timestamp.from(createdAt),
                     Timestamp.from(createdAt.plusSeconds(30)));
 
-            Flyway latest = Flyway.configure()
+            Flyway latest = flywayConfiguration()
                     .dataSource(isolatedDataSource)
                     .schemas(schema)
                     .defaultSchema(schema)
@@ -673,6 +786,111 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
         assertThat(validation.validationSuccessful)
                 .as(validation.getAllErrorMessages())
                 .isTrue();
+    }
+
+    private javax.sql.DataSource isolatedDataSource(String applicationName) {
+        String separator = POSTGRES.getJdbcUrl().contains("?") ? "&" : "?";
+        return new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                POSTGRES.getJdbcUrl() + separator + "ApplicationName=" + applicationName,
+                POSTGRES.getUsername(), POSTGRES.getPassword());
+    }
+
+    private static Flyway flyway(
+            javax.sql.DataSource isolatedDataSource,
+            String schema,
+            String target) {
+        var configuration = flywayConfiguration()
+                .dataSource(isolatedDataSource)
+                .schemas(schema)
+                .defaultSchema(schema)
+                .locations("classpath:db/migration");
+        if (target != null) {
+            configuration.target(target);
+        }
+        return configuration.load();
+    }
+
+    private static org.flywaydb.core.api.configuration.FluentConfiguration flywayConfiguration() {
+        return Flyway.configure().configuration(Map.of(
+                "flyway.postgresql.transactional.lock", "false"));
+    }
+
+    private static void populateMaintenanceTables(
+            JdbcTemplate isolated,
+            String schema,
+            int rowCount) {
+        isolated.execute("""
+                INSERT INTO %s.durable_jobs (
+                    id, job_type, payload_reference, state, attempt_count, max_attempts,
+                    next_attempt_at, initial_next_attempt_at, lease_sequence,
+                    idempotency_key, created_at, updated_at)
+                SELECT md5('job-' || value)::uuid, 'REVIEW_EXECUTION',
+                       md5('payload-' || value)::uuid,
+                       CASE WHEN value %% 2 = 0 THEN 'LEASED' ELSE 'SUCCEEDED' END,
+                       0, 3, now(), now(), 0, 'job-' || value, now(), now()
+                FROM generate_series(1, %d) value
+                """.formatted(schema, rowCount));
+        isolated.execute("""
+                INSERT INTO %s.outbox_events (
+                    event_id, aggregate_type, aggregate_id, event_type, payload,
+                    occurred_at, published_at)
+                SELECT md5('event-' || value)::uuid, 'ReviewRun',
+                       md5('aggregate-' || value)::uuid, 'ReviewRequested', '{}'::jsonb,
+                       now(), CASE WHEN value %% 2 = 0 THEN now() ELSE NULL END
+                FROM generate_series(1, %d) value
+                """.formatted(schema, rowCount));
+        isolated.execute("""
+                INSERT INTO %s.github_deliveries (
+                    delivery_id, event_name, payload_sha256, received_at, handled_at)
+                SELECT 'delivery-' || value, 'pull_request', repeat('a', 64), now(),
+                       CASE WHEN value %% 2 = 0 THEN now() ELSE NULL END
+                FROM generate_series(1, %d) value
+                """.formatted(schema, rowCount));
+    }
+
+    private static void awaitMigrationStart(CompletableFuture<?> migration) throws Exception {
+        long deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+        while (migration.isDone() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        Thread.sleep(250);
+    }
+
+    private boolean indexesAreValid(String schema, Set<String> indexNames) {
+        Integer valid = jdbcTemplate.queryForObject("""
+                        SELECT count(*)
+                        FROM pg_index index_state
+                        JOIN pg_class index_definition ON index_definition.oid = index_state.indexrelid
+                        JOIN pg_namespace schema_definition ON schema_definition.oid = index_definition.relnamespace
+                        WHERE schema_definition.nspname = ?
+                          AND index_definition.relname = ANY (?)
+                          AND index_state.indisvalid AND index_state.indisready
+                        """,
+                Integer.class,
+                schema,
+                indexNames.toArray(String[]::new));
+        return valid != null && valid == indexNames.size();
+    }
+
+    private List<Map<String, Object>> indexState(String schema) {
+        return jdbcTemplate.queryForList("""
+                SELECT index_definition.relname, index_state.indisvalid, index_state.indisready
+                FROM pg_index index_state
+                JOIN pg_class index_definition ON index_definition.oid = index_state.indexrelid
+                JOIN pg_namespace schema_definition ON schema_definition.oid = index_definition.relnamespace
+                WHERE schema_definition.nspname = ?
+                ORDER BY index_definition.relname
+                """, schema);
+    }
+
+    private static String classpathText(String resource) throws IOException {
+        try (InputStream input = ReviewOperationsMigrationTest.class
+                .getClassLoader().getResourceAsStream(resource)) {
+            if (input == null) {
+                throw new IOException("Missing classpath resource " + resource);
+            }
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
     private static ReviewRun requestedRun(ReviewRunId id) {

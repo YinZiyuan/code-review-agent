@@ -38,7 +38,11 @@ public abstract class PostgresIntegrationSupport {
             dataSource = new DriverManagerDataSource(
                     POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
 
-            flyway = Flyway.configure().dataSource(dataSource).load();
+            flyway = Flyway.configure()
+                    .dataSource(dataSource)
+                    .configuration(java.util.Map.of(
+                            "flyway.postgresql.transactional.lock", "false"))
+                    .load();
             flyway.migrate();
             started = true;
         } finally {
