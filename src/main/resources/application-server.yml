@@ -50,6 +50,9 @@ code-review:
       retention-age: ${REVIEW_OPERATIONS_RETENTION_AGE:30d}
       batch-size: ${REVIEW_OPERATIONS_RETENTION_BATCH_SIZE:500}
       interval: ${REVIEW_OPERATIONS_RETENTION_INTERVAL:1h}
+    observability:
+      refresh-interval: ${REVIEW_OBSERVABILITY_REFRESH_INTERVAL:15s}
+      stale-threshold: ${REVIEW_OBSERVABILITY_STALE_THRESHOLD:15m}
 
 management:
   endpoints:
@@ -60,3 +63,6 @@ management:
     health:
       show-components: never
       show-details: never
+
+logging:
+  config: classpath:logback-server.xml

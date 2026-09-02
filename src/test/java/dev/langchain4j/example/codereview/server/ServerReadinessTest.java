@@ -6,6 +6,7 @@ import dev.langchain4j.example.codereview.reviewops.application.PresentReviewFai
 import dev.langchain4j.example.codereview.reviewops.application.SettleReviewJobFailure;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewFailurePresentationJobHandler;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresReviewOperationsRetention;
+import dev.langchain4j.example.codereview.reviewops.infrastructure.observability.ReviewOperationsMetrics;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -112,6 +113,9 @@ class ServerReadinessTest {
         assertThat(context.getBeansOfType(ReviewFailurePresentationJobHandler.class)).hasSize(1);
         assertThat(context.getBeansOfType(PostgresReviewOperationsRetention.class)).hasSize(1);
         assertThat(context.getBeansOfType(ScheduledReviewOperationsRetention.class)).hasSize(1);
+        assertThat(context.getBeansOfType(ReviewOperationsMetrics.class)).hasSize(1);
+        assertThat(context.getBeansOfType(ScheduledReviewOperationsMetrics.class)).hasSize(1);
+        assertThat(context.getBeansOfType(ReviewOperationLogger.class)).hasSize(1);
     }
 
     private HttpResult awaitReadinessUnavailable() throws Exception {

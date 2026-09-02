@@ -46,6 +46,7 @@ import dev.langchain4j.example.codereview.reviewops.infrastructure.github.Inline
 import dev.langchain4j.example.codereview.reviewops.infrastructure.github.PullRequestWebhookParser;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.jobs.PostgresDurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.metrics.MicrometerReviewOperationsTelemetry;
+import dev.langchain4j.example.codereview.reviewops.infrastructure.observability.ReviewOperationsMetrics;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JdbcOutboxStore;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JdbcPullRequestObservationStore;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JdbcReviewRunRepository;
@@ -110,6 +111,28 @@ public class ServerConfiguration {
             PostgresReviewOperationsRetention retention,
             ReviewOperationsMaintenanceProperties properties) {
         return new ScheduledReviewOperationsRetention(retention, properties);
+    }
+
+    @Bean
+    ReviewOperationLogger reviewOperationLogger() {
+        return new ReviewOperationLogger();
+    }
+
+    @Bean
+    ReviewOperationsMetrics reviewOperationsMetrics(
+            JdbcTemplate jdbcTemplate,
+            MeterRegistry registry,
+            Clock clock,
+            ReviewObservabilityProperties properties) {
+        return new ReviewOperationsMetrics(
+                jdbcTemplate, registry, clock, properties.staleThreshold());
+    }
+
+    @Bean
+    ScheduledReviewOperationsMetrics scheduledReviewOperationsMetrics(
+            ReviewOperationsMetrics metrics,
+            ReviewOperationLogger operations) {
+        return new ScheduledReviewOperationsMetrics(metrics, operations);
     }
 
     @Bean
@@ -484,6 +507,17 @@ public class ServerConfiguration {
                 serverProperties.github().maxWebhookBytes()));
         registration.addUrlPatterns("/webhooks/github");
         registration.setOrder(Integer.MIN_VALUE);
+        return registration;
+    }
+
+    @Bean
+    FilterRegistrationBean<ReviewCorrelationFilter> reviewCorrelationFilter(
+            ReviewOperationLogger operations,
+            ReviewConfigurationSnapshot configuration) {
+        FilterRegistrationBean<ReviewCorrelationFilter> registration = new FilterRegistrationBean<>();
+        registration.setFilter(new ReviewCorrelationFilter(operations, configuration));
+        registration.addUrlPatterns("/webhooks/github");
+        registration.setOrder(Integer.MIN_VALUE + 1);
         return registration;
     }
 

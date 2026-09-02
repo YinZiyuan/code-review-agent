@@ -140,10 +140,32 @@ class ApplicationModeTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void bindsBoundedObservabilityRefreshAndStalenessSettings() {
+        contextRunner.withPropertyValues(
+                        "code-review.server.observability.refresh-interval=20s",
+                        "code-review.server.observability.stale-threshold=12m")
+                .run(context -> {
+                    ReviewObservabilityProperties observability =
+                            context.getBean(ReviewObservabilityProperties.class);
+                    assertThat(observability.refreshInterval()).isEqualTo(Duration.ofSeconds(20));
+                    assertThat(observability.staleThreshold()).isEqualTo(Duration.ofMinutes(12));
+                });
+    }
+
+    @Test
+    void rejectsObservabilitySettingsThatWouldBusySpinOrMisclassifyEveryRun() {
+        contextRunner.withPropertyValues("code-review.server.observability.refresh-interval=0s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues("code-review.server.observability.stale-threshold=0s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties({
             ServerProperties.class,
-            ReviewOperationsMaintenanceProperties.class
+            ReviewOperationsMaintenanceProperties.class,
+            ReviewObservabilityProperties.class
     })
     static class ServerPropertiesConfiguration {
     }
