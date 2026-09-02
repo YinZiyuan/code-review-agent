@@ -36,6 +36,7 @@ class ReviewWorkBudgetTest {
             assertThat(budget.input().maxArchiveEntries()).isEqualTo(50_000);
             assertThat(budget.prompt().modelContextTokens()).isEqualTo(8_192);
             assertThat(budget.prompt().completionReserveTokens()).isEqualTo(2_048);
+            assertThat(budget.prompt().inputFramingReserveTokens()).isEqualTo(16);
             assertThat(budget.prompt().maxDiffTokens()).isEqualTo(4_096);
             assertThat(budget.process().maxOutputBytes()).isEqualTo(64 * 1024);
             assertThat(budget.process().compilerMaxHeapMb()).isEqualTo(256);
@@ -78,7 +79,7 @@ class ReviewWorkBudgetTest {
         assertThatThrownBy(() -> new ReviewWorkBudget(
                 "v1",
                 new ReviewWorkBudget.InputLimits(1, 1, 1, 1, 1, 1, 1, 1, 1),
-                new ReviewWorkBudget.PromptLimits(10, 100, 100),
+                new ReviewWorkBudget.PromptLimits(10, 100, 100, 1),
                 new ReviewWorkBudget.ProcessLimits(1, 1, 1),
                 positiveDeadlines(),
                 new ReviewWorkBudget.WorkspaceLimits(Duration.ofSeconds(1))))
@@ -88,7 +89,7 @@ class ReviewWorkBudgetTest {
         assertThatThrownBy(() -> new ReviewWorkBudget(
                 "v1",
                 new ReviewWorkBudget.InputLimits(1, 1, 1, 1, 1, 1, 1, 0, 1),
-                new ReviewWorkBudget.PromptLimits(1, 2, 1),
+                new ReviewWorkBudget.PromptLimits(1, 3, 1, 1),
                 new ReviewWorkBudget.ProcessLimits(1, 1, 1),
                 positiveDeadlines(),
                 new ReviewWorkBudget.WorkspaceLimits(Duration.ofSeconds(1))))

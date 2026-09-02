@@ -43,7 +43,9 @@ public record ReviewWorkBudget(
     }
 
     public int maxPromptTokens() {
-        return prompt.modelContextTokens() - prompt.completionReserveTokens();
+        return prompt.modelContextTokens()
+                - prompt.completionReserveTokens()
+                - prompt.inputFramingReserveTokens();
     }
 
     public record InputLimits(
@@ -83,24 +85,30 @@ public record ReviewWorkBudget(
     public record PromptLimits(
             int maxDiffTokens,
             int modelContextTokens,
-            int completionReserveTokens) {
+            int completionReserveTokens,
+            int inputFramingReserveTokens) {
 
         public PromptLimits {
             positive(maxDiffTokens, "maxDiffTokens");
             positive(modelContextTokens, "modelContextTokens");
             positive(completionReserveTokens, "completionReserveTokens");
-            if (completionReserveTokens >= modelContextTokens) {
+            positive(inputFramingReserveTokens, "inputFramingReserveTokens");
+            if ((long) completionReserveTokens + inputFramingReserveTokens
+                    >= modelContextTokens) {
                 throw new IllegalArgumentException(
-                        "completionReserveTokens must be less than modelContextTokens");
+                        "completionReserveTokens and inputFramingReserveTokens "
+                                + "must fit below modelContextTokens");
             }
-            if (maxDiffTokens > modelContextTokens - completionReserveTokens) {
+            if (maxDiffTokens > modelContextTokens
+                    - completionReserveTokens - inputFramingReserveTokens) {
                 throw new IllegalArgumentException(
                         "maxDiffTokens must fit inside the reserved model context");
             }
         }
 
         private String canonical() {
-            return maxDiffTokens + ":" + modelContextTokens + ":" + completionReserveTokens;
+            return maxDiffTokens + ":" + modelContextTokens + ":"
+                    + completionReserveTokens + ":" + inputFramingReserveTokens;
         }
     }
 

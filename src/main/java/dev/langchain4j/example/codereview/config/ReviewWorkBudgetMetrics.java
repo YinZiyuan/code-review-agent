@@ -29,6 +29,8 @@ public final class ReviewWorkBudgetMetrics {
         limit(metrics, budget, "model_context_tokens", budget.prompt().modelContextTokens());
         limit(metrics, budget, "completion_reserve_tokens",
                 budget.prompt().completionReserveTokens());
+        limit(metrics, budget, "input_framing_reserve_tokens",
+                budget.prompt().inputFramingReserveTokens());
         limit(metrics, budget, "max_process_output_bytes", budget.process().maxOutputBytes());
         limit(metrics, budget, "compiler_max_heap_mb", budget.process().compilerMaxHeapMb());
         limit(metrics, budget, "analyzer_max_heap_mb", budget.process().analyzerMaxHeapMb());

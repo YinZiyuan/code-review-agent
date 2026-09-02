@@ -10,6 +10,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
@@ -89,25 +90,27 @@ public final class SourceCompiler {
                 || Files.isSymbolicLink(sourceDirectory)) {
             return List.of();
         }
-        List<Path> sources;
+        List<Path> sources = new java.util.ArrayList<>();
+        long bytes = 0;
         try (Stream<Path> walk = Files.walk(sourceDirectory)) {
-            sources = walk
+            Iterator<Path> javaFiles = walk
                     .filter(path -> path.getFileName().toString().endsWith(".java"))
                     .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                    .sorted(Comparator.comparing(path -> sourceDirectory.relativize(path).toString()))
-                    .toList();
-        }
-        if (sources.size() > budget.input().maxJavaSourceFiles()) {
-            return null;
-        }
-        long bytes = 0;
-        for (Path source : sources) {
-            long size = Files.size(source);
-            if (size > budget.input().maxJavaSourceBytes() - bytes) {
-                return null;
+                    .iterator();
+            while (javaFiles.hasNext()) {
+                Path source = javaFiles.next();
+                if (sources.size() >= budget.input().maxJavaSourceFiles()) {
+                    return null;
+                }
+                long size = Files.size(source);
+                if (size > budget.input().maxJavaSourceBytes() - bytes) {
+                    return null;
+                }
+                sources.add(source);
+                bytes += size;
             }
-            bytes += size;
         }
+        sources.sort(Comparator.comparing(path -> sourceDirectory.relativize(path).toString()));
         return sources;
     }
 

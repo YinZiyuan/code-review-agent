@@ -36,7 +36,7 @@ class ReviewPromptAssemblerTest {
                 null, null, null, null, null, null).toBudget();
         ReviewWorkBudget budget = new ReviewWorkBudget(
                 defaults.version(), defaults.input(),
-                new ReviewWorkBudget.PromptLimits(420, 900, 200),
+                new ReviewWorkBudget.PromptLimits(420, 900, 200, 16),
                 defaults.process(), defaults.stages(), defaults.workspace());
         PromptTokenizer tokenizer = new JTokkitPromptTokenizer();
         ReviewPromptAssembler assembler = new ReviewPromptAssembler(tokenizer, budget);
@@ -51,6 +51,10 @@ class ReviewPromptAssemblerTest {
         assertThat(first).isEqualTo(second);
         assertThat(first.tokenCount()).isEqualTo(tokenizer.count(first.text()));
         assertThat(first.tokenCount()).isLessThanOrEqualTo(budget.maxPromptTokens());
+        assertThat(first.tokenCount()
+                + budget.prompt().inputFramingReserveTokens()
+                + budget.prompt().completionReserveTokens())
+                .isLessThanOrEqualTo(budget.prompt().modelContextTokens());
         assertThat(first.text()).contains(firstHunk.strip());
         assertThat(first.text()).contains("[diff truncated by review work budget]");
         assertThat(first.text()).doesNotContain("TAIL_SENTINEL_MUST_BE_OMITTED");

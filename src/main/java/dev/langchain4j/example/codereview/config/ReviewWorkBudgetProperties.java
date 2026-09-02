@@ -16,7 +16,7 @@ public record ReviewWorkBudgetProperties(
     public ReviewWorkBudget toBudget() {
         Input resolvedInput = input == null ? new Input(null, null, null, null, null, null,
                 null, null, null) : input;
-        Prompt resolvedPrompt = prompt == null ? new Prompt(null, null, null) : prompt;
+        Prompt resolvedPrompt = prompt == null ? new Prompt(null, null, null, null) : prompt;
         Process resolvedProcess = process == null ? new Process(null, null, null) : process;
         Stages resolvedStages = stages == null
                 ? new Stages(null, null, null, null, null, null) : stages;
@@ -58,13 +58,15 @@ public record ReviewWorkBudgetProperties(
     public record Prompt(
             Integer maxDiffTokens,
             Integer modelContextTokens,
-            Integer completionReserveTokens) {
+            Integer completionReserveTokens,
+            Integer inputFramingReserveTokens) {
 
         ReviewWorkBudget.PromptLimits toLimits() {
             return new ReviewWorkBudget.PromptLimits(
                     defaultValue(maxDiffTokens, 4_096),
                     defaultValue(modelContextTokens, 8_192),
-                    defaultValue(completionReserveTokens, 2_048));
+                    defaultValue(completionReserveTokens, 2_048),
+                    defaultValue(inputFramingReserveTokens, 16));
         }
     }
 
