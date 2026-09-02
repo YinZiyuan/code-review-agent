@@ -50,9 +50,16 @@ public final class ReviewJobWorker {
             return WorkerCycleResult.empty();
         }
         Instant recoveryTime = clock.instant();
-        int recovered = queue.recoverExpiredLeases(
+        DurableJobQueue.LeaseRecoveryBatch recovery = queue.recoverExpiredLeaseBatch(
                 recoveryTime, settings.recoveryBatchSize());
+        int recovered = recovery.recovered();
         metrics.counter(LEASE_RECOVERY_METRIC).increment(recovered);
+        recovery.outcomes().forEach(outcome -> recordMetric(
+                outcome.jobType(), switch (outcome.disposition()) {
+                    case RETRY_SCHEDULED -> "retried";
+                    case DEAD -> "dead";
+                    case SUCCEEDED -> "succeeded";
+                }));
         if (shutdown.get()) {
             return new WorkerCycleResult(recovered, 0, 0, 0, 0, 0, 0, 0, 0);
         }
@@ -263,7 +270,11 @@ public final class ReviewJobWorker {
     }
 
     private void recordMetric(LeasedJob job, String outcome) {
-        String jobType = dispatcher.handles(job.jobType()) ? job.jobType() : "UNKNOWN";
+        recordMetric(job.jobType(), outcome);
+    }
+
+    private void recordMetric(String recoveredJobType, String outcome) {
+        String jobType = dispatcher.handles(recoveredJobType) ? recoveredJobType : "UNKNOWN";
         metrics.counter(
                 JOB_METRIC,
                 "job.type", jobType,

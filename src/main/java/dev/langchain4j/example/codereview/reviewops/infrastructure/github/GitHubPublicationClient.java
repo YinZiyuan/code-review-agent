@@ -23,6 +23,7 @@ import org.springframework.web.client.RestClientException;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZonedDateTime;
@@ -287,7 +288,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         String commentId = requireArtifactId(reference.externalId());
         try {
             fence.requireCurrent();
-            exchange(
+            exchangeMutation(
                     request.revision(),
                     HttpMethod.DELETE,
                     spec -> spec.uri(
@@ -296,7 +297,8 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                     null,
                     MAX_MUTATION_RESPONSE_BYTES,
                     FailureTarget.COMMENT_DELETE,
-                    "GitHub inline comment retraction failed");
+                    "GitHub inline comment retraction failed",
+                    fence);
         } catch (MissingArtifactException missing) {
             // A missing comment confirms the desired terminal cleanup state.
         }
@@ -382,6 +384,9 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 || !body.textValue().endsWith(marker)
                 || !request.revision().headSha().equals(optionalText(comment, "commit_id"))
                 || !request.revision().headSha().equals(optionalText(comment, "original_commit_id"))
+                || !matchesPullRequestRoute(
+                        optionalText(comment, "pull_request_url"),
+                        request.revision().pullRequestNumber())
                 || !normalizedPath(comment.path("path")).equals(request.finding().location().file())
                 || !line.isIntegralNumber()
                 || line.asInt() != request.finding().location().line()
@@ -392,6 +397,20 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         return remoteAppId.isIntegralNumber()
                 && remoteAppId.canConvertToLong()
                 && remoteAppId.longValue() == appId;
+    }
+
+    private static boolean matchesPullRequestRoute(String value, int pullRequestNumber) {
+        try {
+            URI route = URI.create(value);
+            String path = route.getPath();
+            return route.isAbsolute()
+                    && route.getRawQuery() == null
+                    && route.getRawFragment() == null
+                    && path != null
+                    && path.endsWith("/pulls/" + pullRequestNumber);
+        } catch (IllegalArgumentException invalidRoute) {
+            return false;
+        }
     }
 
     private static String normalizedPath(JsonNode path) {
@@ -413,7 +432,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         Map<String, Object> payload = checkPayload(request, formatted);
         payload.put("head_sha", request.revision().headSha());
         fence.requireCurrent();
-        byte[] response = exchange(
+        byte[] response = exchangeMutation(
                 request.revision(),
                 HttpMethod.POST,
                 spec -> spec.uri(
@@ -422,7 +441,8 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 serializedPayload(payload),
                 MAX_MUTATION_RESPONSE_BYTES,
                 FailureTarget.CHECK_CREATE,
-                "GitHub Check creation failed");
+                "GitHub Check creation failed",
+                fence);
         return new CheckRunArtifact(
                 requiredArtifactId(readJson(
                         response, "GitHub Check creation response was invalid")),
@@ -435,7 +455,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
             String checkId,
             OperationFence fence) {
         fence.requireCurrent();
-        byte[] response = exchange(
+        byte[] response = exchangeMutation(
                 request.revision(),
                 HttpMethod.PATCH,
                 spec -> spec.uri(
@@ -444,7 +464,8 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 serializedPayload(checkPayload(request, formatted)),
                 MAX_MUTATION_RESPONSE_BYTES,
                 FailureTarget.CHECK_UPDATE,
-                "GitHub Check update failed");
+                "GitHub Check update failed",
+                fence);
         String confirmedId = requiredArtifactId(readJson(
                 response, "GitHub Check update response was invalid"));
         if (!checkId.equals(confirmedId)) {
@@ -465,7 +486,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         payload.put("line", request.finding().location().line());
         payload.put("side", "RIGHT");
         fence.requireCurrent();
-        byte[] response = exchange(
+        byte[] response = exchangeMutation(
                 request.revision(),
                 HttpMethod.POST,
                 spec -> spec.uri(
@@ -475,7 +496,8 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 serializedPayload(payload),
                 MAX_MUTATION_RESPONSE_BYTES,
                 FailureTarget.COMMENT_CREATE,
-                "GitHub inline comment creation failed");
+                "GitHub inline comment creation failed",
+                fence);
         return new InlineCommentArtifact(
                 request.finding().fingerprint(),
                 requiredArtifactId(readJson(
@@ -520,6 +542,46 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
             int maxResponseBytes,
             FailureTarget failureTarget,
             String transientMessage) {
+        return exchange(
+                revision,
+                method,
+                requestConfigurer,
+                payload,
+                maxResponseBytes,
+                failureTarget,
+                transientMessage,
+                OperationFence.unfenced());
+    }
+
+    private byte[] exchangeMutation(
+            PullRequestRevision revision,
+            HttpMethod method,
+            RequestConfigurer requestConfigurer,
+            byte[] payload,
+            int maxResponseBytes,
+            FailureTarget failureTarget,
+            String transientMessage,
+            OperationFence fence) {
+        return exchange(
+                revision,
+                method,
+                requestConfigurer,
+                payload,
+                maxResponseBytes,
+                failureTarget,
+                transientMessage,
+                fence);
+    }
+
+    private byte[] exchange(
+            PullRequestRevision revision,
+            HttpMethod method,
+            RequestConfigurer requestConfigurer,
+            byte[] payload,
+            int maxResponseBytes,
+            FailureTarget failureTarget,
+            String transientMessage,
+            OperationFence fence) {
         GitHubInstallationGateway.InstallationToken token =
                 installations.token(revision.installationId());
         try {
@@ -528,6 +590,10 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
             if (payload != null) {
                 request.contentType(MediaType.APPLICATION_JSON).body(payload);
             }
+            // Installation-token creation is a bounded credential operation, not a review
+            // artifact mutation. Renew the database-backed lease after it completes so the
+            // permit covers the actual Check/comment request.
+            fence.requireCurrent();
             return request.exchange((httpRequest, response) -> {
                 int status = response.getStatusCode().value();
                 if (!response.getStatusCode().is2xxSuccessful()) {

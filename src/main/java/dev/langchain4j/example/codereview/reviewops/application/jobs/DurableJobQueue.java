@@ -71,9 +71,38 @@ public interface DurableJobQueue {
         return recoverExpiredLeases(now);
     }
 
+    /**
+     * Recovers a bounded batch and exposes each committed disposition for job metrics.
+     * Adapters that cannot provide detail retain the legacy recovered total.
+     */
+    default LeaseRecoveryBatch recoverExpiredLeaseBatch(Instant now, int limit) {
+        return new LeaseRecoveryBatch(recoverExpiredLeases(now, limit), List.of());
+    }
+
     enum FailureDisposition {
         RETRY_SCHEDULED,
         DEAD,
         SUCCEEDED
+    }
+
+    record LeaseRecovery(String jobType, FailureDisposition disposition) {
+        public LeaseRecovery {
+            if (jobType == null || jobType.isBlank()) {
+                throw new IllegalArgumentException("jobType must not be blank");
+            }
+            Objects.requireNonNull(disposition, "disposition");
+        }
+    }
+
+    record LeaseRecoveryBatch(int recovered, List<LeaseRecovery> outcomes) {
+        public LeaseRecoveryBatch {
+            if (recovered < 0) {
+                throw new IllegalArgumentException("recovered must be non-negative");
+            }
+            outcomes = List.copyOf(Objects.requireNonNull(outcomes, "outcomes"));
+            if (outcomes.size() > recovered) {
+                throw new IllegalArgumentException("outcomes cannot exceed recovered count");
+            }
+        }
     }
 }

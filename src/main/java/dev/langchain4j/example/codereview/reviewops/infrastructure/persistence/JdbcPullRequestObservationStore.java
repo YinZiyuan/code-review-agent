@@ -117,6 +117,9 @@ public final class JdbcPullRequestObservationStore implements PullRequestObserva
                           AND head_sha = ?
                           AND pipeline_version = ?
                           AND configuration_version = ?
+                          AND state <> 'SUPERSEDED'
+                        ORDER BY requested_at DESC, id
+                        LIMIT 1
                         """,
                 (resultSet, rowNumber) -> resultSet.getObject("id", UUID.class),
                 proposed.revision().installationId(),

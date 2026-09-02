@@ -853,6 +853,9 @@ class GitHubReviewLoopE2ETest {
                 response.put("line", line);
                 response.put("side", side);
                 response.put("body", body);
+                response.put(
+                        "pull_request_url",
+                        "https://api.github.test/repos/octo/repo/pulls/12");
                 response.put("performed_via_github_app", Map.of("id", 123));
                 return response;
             }

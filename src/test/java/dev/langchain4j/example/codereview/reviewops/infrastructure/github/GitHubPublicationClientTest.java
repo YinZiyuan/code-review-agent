@@ -45,6 +45,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -234,6 +236,58 @@ class GitHubPublicationClientTest {
     }
 
     @Test
+    void leaseLostWhileObtainingTokenPreventsPersistedCheckUpdate() {
+        LeaseLossFixture lease = leaseLossFixture(1);
+
+        assertThatThrownBy(() -> lease.fixture.client.upsertCheck(
+                checkRequest(Optional.of("91"), List.of()), lease.fence))
+                .isInstanceOf(OperationFence.Lost.class);
+
+        lease.fixture.server.verify();
+    }
+
+    @Test
+    void leaseLostWhileObtainingMutationTokenPreventsCheckCreation() {
+        LeaseLossFixture lease = leaseLossFixture(2);
+        expectCheckList(lease.fixture.server, 1, "{\"total_count\":0,\"check_runs\":[]}");
+
+        assertThatThrownBy(() -> lease.fixture.client.upsertCheck(
+                checkRequest(Optional.empty(), List.of()), lease.fence))
+                .isInstanceOf(OperationFence.Lost.class);
+
+        lease.fixture.server.verify();
+    }
+
+    @Test
+    void leaseLostWhileObtainingMutationTokenPreventsCommentCreation() {
+        LeaseLossFixture lease = leaseLossFixture(2);
+        expectCommentPage(lease.fixture.server, 1, "[]");
+
+        assertThatThrownBy(() -> lease.fixture.client.reconcileInlineComment(
+                inlineRequest(inlineFinding(Optional.empty())), lease.fence))
+                .isInstanceOf(OperationFence.Lost.class);
+
+        lease.fixture.server.verify();
+    }
+
+    @Test
+    void leaseLostWhileObtainingTokenPreventsCommentDeletion() {
+        LeaseLossFixture lease = leaseLossFixture(1);
+        GitHubPublicationGateway.InlineCommentRetractionRequest request =
+                new GitHubPublicationGateway.InlineCommentRetractionRequest(
+                        RUN_ID,
+                        REVISION,
+                        new FindingFingerprint("a".repeat(64)),
+                        new PublicationReference("github_review_comment", "503"));
+
+        assertThatThrownBy(() -> lease.fixture.client.retractInlineComment(
+                request, lease.fence))
+                .isInstanceOf(OperationFence.Lost.class);
+
+        lease.fixture.server.verify();
+    }
+
+    @Test
     void uncertainCheckCreationIsReconciledByExternalIdBeforeAnyRetryPost() {
         Fixture fixture = fixture();
         expectCheckList(fixture.server, 1, "{\"total_count\":0,\"check_runs\":[]}");
@@ -359,6 +413,32 @@ class GitHubPublicationClientTest {
                     assertThat(failure).hasMessage(
                             "Persisted GitHub comment reference was invalid");
                 });
+        fixture.server.verify();
+    }
+
+    @Test
+    void persistedCommentIdForAnotherPullRequestFailsClosed() {
+        Fixture fixture = fixture();
+        Map<String, Object> wrongRoute = reviewComment(
+                501, MARKER, HEAD_SHA, HEAD_SHA,
+                "src/Foo.java", 12, "RIGHT", APP_ID);
+        wrongRoute.put(
+                "pull_request_url",
+                "https://api.github.test/repos/octo/repo/pulls/99");
+        fixture.server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/pulls/comments/501"))
+                .andRespond(withSuccess(
+                        commentsJson(List.of(wrongRoute))
+                                .replaceFirst("^\\[", "")
+                                .replaceFirst("]$", ""),
+                        MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> fixture.client.reconcileInlineComment(
+                inlineRequest(inlineFinding(Optional.of(
+                        new PublicationReference("github_review_comment", "501"))))))
+                .isInstanceOfSatisfying(GitHubFailureException.class, failure ->
+                        assertThat(failure.classification()).isEqualTo(
+                                GitHubFailureException.Classification.DETERMINISTIC_INPUT));
         fixture.server.verify();
     }
 
@@ -578,11 +658,13 @@ class GitHubPublicationClientTest {
     }
 
     private static Fixture fixture() {
+        return fixture(installationId -> new GitHubInstallationGateway.InstallationToken(
+                TOKEN, NOW.plusSeconds(600)));
+    }
+
+    private static Fixture fixture(GitHubInstallationGateway installations) {
         RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        GitHubInstallationGateway installations = installationId ->
-                new GitHubInstallationGateway.InstallationToken(
-                        TOKEN, NOW.plusSeconds(600));
         SimpleMeterRegistry metrics = new SimpleMeterRegistry();
         GitHubPublicationClient client = new GitHubPublicationClient(
                 builder.build(),
@@ -595,6 +677,24 @@ class GitHubPublicationClientTest {
                 new InlineCommentFormatter(),
                 new MicrometerReviewOperationsTelemetry(metrics));
         return new Fixture(server, client, metrics);
+    }
+
+    private static LeaseLossFixture leaseLossFixture(int loseOnTokenCall) {
+        AtomicBoolean lost = new AtomicBoolean();
+        AtomicInteger tokenCalls = new AtomicInteger();
+        Fixture fixture = fixture(installationId -> {
+            if (tokenCalls.incrementAndGet() == loseOnTokenCall) {
+                lost.set(true);
+            }
+            return new GitHubInstallationGateway.InstallationToken(
+                    TOKEN, NOW.plusSeconds(600));
+        });
+        OperationFence fence = () -> {
+            if (lost.get()) {
+                throw new OperationFence.Lost();
+            }
+        };
+        return new LeaseLossFixture(fixture, fence);
     }
 
     private static void assertRateLimitedAt(
@@ -767,6 +867,9 @@ class GitHubPublicationClientTest {
         comment.put("path", path);
         comment.put("line", line);
         comment.put("side", side);
+        comment.put(
+                "pull_request_url",
+                "https://api.github.test/repos/octo/repo/pulls/12");
         comment.put("user", Map.of("id", 88, "login", "code-review-agent[bot]", "type", "Bot"));
         if (appId != null) {
             comment.put("performed_via_github_app", Map.of("id", appId));
@@ -786,5 +889,8 @@ class GitHubPublicationClientTest {
             MockRestServiceServer server,
             GitHubPublicationClient client,
             SimpleMeterRegistry metrics) {
+    }
+
+    private record LeaseLossFixture(Fixture fixture, OperationFence fence) {
     }
 }

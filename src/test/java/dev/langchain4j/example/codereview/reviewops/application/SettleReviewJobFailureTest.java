@@ -16,6 +16,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFinding;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SettleReviewJobFailureTest {
 
     private static final Instant NOW = Instant.parse("2026-09-01T06:00:00Z");
+    private static final Instant FAILED_AT = NOW.minusSeconds(17);
 
     @Test
     void exhaustedPublicationAtomicallyFailsActiveRunAndRequestsNeutralPresentation() {
@@ -134,6 +136,55 @@ class SettleReviewJobFailureTest {
         assertThat(result.followUpJobs()).hasSize(1);
     }
 
+    @Test
+    void everyFailedOwningJobKindReusesTheImmutableFailurePresentationIntent() {
+        for (String jobType : List.of(
+                ReviewRunAdmissionStore.REVIEW_EXECUTION_JOB_TYPE,
+                ExecuteReviewRun.DECIDE_PUBLICATION_JOB_TYPE,
+                DecideReviewPublication.PUBLISH_REVIEW_JOB_TYPE,
+                SupersedeObsoleteReviewRuns.JOB_TYPE)) {
+            ReviewRun run = failedRun();
+            SettleReviewJobFailure settlement = new SettleReviewJobFailure(
+                    new RecordingRepository(run, 9));
+
+            var first = settlement.settleFinalFailure(
+                    finalLease(jobType, run.id()),
+                    FailureClass.TRANSIENT,
+                    "job_handler_failed",
+                    NOW);
+            var repeated = settlement.settleFinalFailure(
+                    finalLease(jobType, run.id()),
+                    FailureClass.TRANSIENT,
+                    "job_handler_failed",
+                    NOW.plusSeconds(31));
+
+            assertThat(first.disposition()).as(jobType)
+                    .isEqualTo(DurableJobQueue.FailureDisposition.DEAD);
+            assertThat(repeated.disposition()).as(jobType)
+                    .isEqualTo(DurableJobQueue.FailureDisposition.DEAD);
+            assertThat(first.followUpJobs()).singleElement().satisfies(intent ->
+                    assertThat(intent.nextAttemptAt()).isEqualTo(FAILED_AT));
+            assertThat(repeated.followUpJobs()).containsExactlyElementsOf(
+                    first.followUpJobs());
+        }
+    }
+
+    @Test
+    void exhaustedFailurePresentationDoesNotRecursivelyCreateAnotherIntent() {
+        ReviewRun run = failedRun();
+        SettleReviewJobFailure settlement = new SettleReviewJobFailure(
+                new RecordingRepository(run, 9));
+
+        var result = settlement.settleFinalFailure(
+                finalLease(ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE, run.id()),
+                FailureClass.TRANSIENT,
+                "github_transient",
+                NOW);
+
+        assertThat(result.disposition()).isEqualTo(DurableJobQueue.FailureDisposition.DEAD);
+        assertThat(result.followUpJobs()).isEmpty();
+    }
+
     private static LeasedJob finalLease(String type, ReviewRunId runId) {
         return new LeasedJob(UUID.randomUUID(), type, runId.value(), 7, 3, 3, NOW.plusSeconds(30));
     }
@@ -181,6 +232,15 @@ class SettleReviewJobFailureTest {
         run.acceptPublicationDecisions(Map.of());
         run.authorizePublication(new AuthoritativeRevision(run.revision().headSha()),
                 NOW.minusSeconds(10));
+        return run;
+    }
+
+    private static ReviewRun failedRun() {
+        ReviewRun run = requestedRun();
+        run.recordJobSystemFailure(new ReviewFailure(
+                "job_handler_failed",
+                FailureClass.TERMINAL,
+                "review job failed terminally"), FAILED_AT);
         return run;
     }
 

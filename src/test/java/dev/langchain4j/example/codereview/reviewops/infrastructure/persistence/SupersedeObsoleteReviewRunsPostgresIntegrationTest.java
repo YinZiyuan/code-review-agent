@@ -132,6 +132,40 @@ class SupersedeObsoleteReviewRunsPostgresIntegrationTest extends PostgresIntegra
     }
 
     @Test
+    void forcePushBackToAnEarlierShaAdmitsANewAuthorityGeneration() {
+        ReviewRunId firstA = observe("delivery-a-1", "head-a", T0);
+        ReviewRunId headB = observe("delivery-b", "head-b", T0.plusSeconds(1));
+        PostgresObsoleteReviewRunStore obsolete = new PostgresObsoleteReviewRunStore(
+                jdbcTemplate, reviewRuns, transactions);
+
+        new SupersedeObsoleteReviewRuns(
+                reviewRuns, obsolete, githubHead("head-b"),
+                Clock.fixed(T0.plusSeconds(2), ZoneOffset.UTC))
+                .execute(headB);
+        ReviewRunId secondA = observe("delivery-a-2", "head-a", T0.plusSeconds(3));
+        new SupersedeObsoleteReviewRuns(
+                reviewRuns, obsolete, githubHead("head-a"),
+                Clock.fixed(T0.plusSeconds(4), ZoneOffset.UTC))
+                .execute(secondA);
+
+        assertThat(secondA).isNotEqualTo(firstA);
+        assertThat(reviewRuns.find(firstA).orElseThrow().reviewRun().state())
+                .isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThat(reviewRuns.find(headB).orElseThrow().reviewRun().state())
+                .isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThat(reviewRuns.find(secondA).orElseThrow().reviewRun().state())
+                .isEqualTo(ReviewRunState.REQUESTED);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*)
+                FROM review_runs
+                WHERE installation_id = 10
+                  AND repository_id = 20
+                  AND pull_request_number = 30
+                  AND state IN ('REQUESTED', 'RUNNING', 'COMPLETED', 'PUBLISHING')
+                """, Integer.class)).isOne();
+    }
+
+    @Test
     void eachObsoleteRunCommitsInItsOwnTransaction() {
         ReviewRun first = requested("old-head-one", T0);
         ReviewRun second = requested("old-head-two", T0.plusSeconds(1));

@@ -37,6 +37,12 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -243,6 +249,113 @@ class LeaseFencedGitHubPublicationPostgresIntegrationTest extends PostgresIntegr
         assertThat(jdbc.queryForObject(
                 "SELECT state FROM durable_jobs WHERE id = ?", String.class, jobId))
                 .isEqualTo("SUCCEEDED");
+        server.verify();
+    }
+
+    @Test
+    void workerRecoveredDuringBlockedTokenAcquisitionIsTheOnlyRemoteCheckMutator()
+            throws Exception {
+        Instant databaseNow = jdbc.queryForObject(
+                "SELECT CURRENT_TIMESTAMP", Timestamp.class).toInstant();
+        ReviewRunId runId = ReviewRunId.newId();
+        UUID jobId = jobs.enqueue(new DurableJobRequest(
+                "PUBLISH_REVIEW",
+                runId.value(),
+                3,
+                databaseNow.minusSeconds(1),
+                "blocked-token-publication"));
+        LeasedJob first = jobs.leaseDue(
+                "worker-a", databaseNow, LEASE_DURATION, 1).get(0);
+
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        String listUrl = API_BASE_URL
+                + "/repositories/73/commits/" + HEAD_SHA
+                + "/check-runs?check_name=Code%20Review%20Agent&app_id=1234"
+                + "&filter=all&per_page=100&page=1";
+        server.expect(once(), requestTo(listUrl))
+                .andRespond(withSuccess(
+                        "{\"total_count\":0,\"check_runs\":[]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(listUrl))
+                .andRespond(withSuccess(
+                        "{\"total_count\":0,\"check_runs\":[]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/check-runs"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withStatus(HttpStatus.CREATED)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"id\":903}"));
+        CountDownLatch mutationTokenRequested = new CountDownLatch(1);
+        CountDownLatch releaseMutationToken = new CountDownLatch(1);
+        AtomicInteger tokenCalls = new AtomicInteger();
+        GitHubInstallationGateway installations = installationId -> {
+            if (tokenCalls.incrementAndGet() == 2) {
+                mutationTokenRequested.countDown();
+                try {
+                    if (!releaseMutationToken.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("token test timed out");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("token test interrupted", interrupted);
+                }
+            }
+            return new GitHubInstallationGateway.InstallationToken(
+                    "installation-token", databaseNow.plusSeconds(600));
+        };
+        GitHubPublicationClient github = new GitHubPublicationClient(
+                builder.build(),
+                installations,
+                new ObjectMapper(),
+                Clock.systemUTC(),
+                1234,
+                "Code Review Agent",
+                new CheckRunFormatter(),
+                new InlineCommentFormatter());
+        GitHubPublicationGateway.CheckRunRequest request =
+                new GitHubPublicationGateway.CheckRunRequest(
+                        runId,
+                        REVISION,
+                        GitHubPublicationGateway.CheckPresentation.success("Review completed."),
+                        List.of(),
+                        Optional.empty());
+        OperationFence firstFence = () -> jobs.renewLease(
+                jobId, "worker-a", first.attemptCount(), databaseNow, LEASE_DURATION);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            var firstMutation = executor.submit(() -> github.upsertCheck(request, firstFence));
+            assertThat(mutationTokenRequested.await(5, TimeUnit.SECONDS)).isTrue();
+            jdbc.update("""
+                    UPDATE durable_jobs
+                    SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                    WHERE id = ?
+                    """, jobId);
+            assertThat(jobs.recoverExpiredLeases(databaseNow)).isOne();
+            LeasedJob second = jobs.leaseDue(
+                    "worker-b", databaseNow, LEASE_DURATION, 1).get(0);
+            releaseMutationToken.countDown();
+
+            assertThatThrownBy(() -> firstMutation.get(5, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .hasCauseInstanceOf(IllegalStateException.class);
+            OperationFence secondFence = () -> jobs.renewLease(
+                    jobId,
+                    "worker-b",
+                    second.attemptCount(),
+                    databaseNow,
+                    LEASE_DURATION);
+            assertThat(github.upsertCheck(request, secondFence).githubArtifactId())
+                    .isEqualTo("903");
+            jobs.markSucceeded(
+                    jobId, "worker-b", second.attemptCount(), databaseNow);
+        } finally {
+            releaseMutationToken.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(tokenCalls).hasValue(4);
         server.verify();
     }
 }

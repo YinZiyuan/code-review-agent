@@ -65,17 +65,13 @@ public final class RecoverExpiredReviewExecution implements ExpiredJobLeaseRecov
             }
         }
         if (run.state() == ReviewRunState.FAILED) {
-            List<DurableJobRequest> followUps =
-                    ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE.equals(expiredLease.jobType())
-                            || run.checkRunExternalId().isPresent()
-                            ? List.of()
-                            : List.of(failurePresentation(run, recoveredAt));
-            RecoveryAction action =
-                    ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE.equals(expiredLease.jobType())
-                            && run.checkRunExternalId().isEmpty()
-                            ? RecoveryAction.RETRY_WITHOUT_CHARGE
-                            : RecoveryAction.SUCCEEDED;
-            return new RecoverySettlement(action, followUps);
+            if (ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE.equals(
+                    expiredLease.jobType())) {
+                return settlement(RecoveryAction.RETRY_WITHOUT_CHARGE);
+            }
+            return new RecoverySettlement(
+                    RecoveryAction.SUCCEEDED,
+                    List.of(failurePresentation(run)));
         }
         if (run.state() == ReviewRunState.PUBLISHED
                 || run.state() == ReviewRunState.SUPERSEDED) {
@@ -100,12 +96,13 @@ public final class RecoverExpiredReviewExecution implements ExpiredJobLeaseRecov
                 || ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE.equals(jobType);
     }
 
-    private static DurableJobRequest failurePresentation(ReviewRun run, Instant recoveredAt) {
+    private static DurableJobRequest failurePresentation(ReviewRun run) {
         return new DurableJobRequest(
                 ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE,
                 run.id().value(),
                 run.configuration().maxReviewAttempts(),
-                recoveredAt,
+                run.finishedAt().orElseThrow(() -> new IllegalStateException(
+                        "failed review run must have a completion timestamp")),
                 "present-review-failure:" + run.id().value());
     }
 

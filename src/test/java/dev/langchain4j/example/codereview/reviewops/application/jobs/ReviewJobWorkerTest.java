@@ -65,6 +65,50 @@ class ReviewJobWorkerTest {
     }
 
     @Test
+    void recoveredLeaseDispositionsContributeToPerJobOutcomeMetrics() {
+        FakeQueue queue = new FakeQueue();
+        queue.recoveryBatch = new DurableJobQueue.LeaseRecoveryBatch(5, List.of(
+                new DurableJobQueue.LeaseRecovery("REVIEW_EXECUTION",
+                        DurableJobQueue.FailureDisposition.SUCCEEDED),
+                new DurableJobQueue.LeaseRecovery("DECIDE_REVIEW_PUBLICATION",
+                        DurableJobQueue.FailureDisposition.RETRY_SCHEDULED),
+                new DurableJobQueue.LeaseRecovery("PUBLISH_REVIEW",
+                        DurableJobQueue.FailureDisposition.DEAD),
+                new DurableJobQueue.LeaseRecovery("SUPERSEDE_OBSOLETE_RUNS",
+                        DurableJobQueue.FailureDisposition.SUCCEEDED),
+                new DurableJobQueue.LeaseRecovery("PRESENT_REVIEW_FAILURE",
+                        DurableJobQueue.FailureDisposition.RETRY_SCHEDULED)));
+        List<ReviewJobHandler> handlers = List.of(
+                handler("REVIEW_EXECUTION", ignored -> ReviewJobHandler.JobOutcome.succeeded()),
+                handler("DECIDE_REVIEW_PUBLICATION", ignored -> ReviewJobHandler.JobOutcome.succeeded()),
+                handler("PUBLISH_REVIEW", ignored -> ReviewJobHandler.JobOutcome.succeeded()),
+                handler("SUPERSEDE_OBSOLETE_RUNS", ignored -> ReviewJobHandler.JobOutcome.succeeded()),
+                handler("PRESENT_REVIEW_FAILURE", ignored -> ReviewJobHandler.JobOutcome.succeeded()));
+        SimpleMeterRegistry metrics = new SimpleMeterRegistry();
+        ReviewJobWorker worker = worker(
+                queue, handlers, zeroJitterBackoff(), new FakeHeartbeat(), metrics);
+
+        ReviewJobWorker.WorkerCycleResult result = worker.runOnce();
+
+        assertThat(result.recovered()).isEqualTo(5);
+        assertThat(metrics.get("code.review.jobs")
+                .tags("job.type", "REVIEW_EXECUTION", "outcome", "succeeded")
+                .counter().count()).isOne();
+        assertThat(metrics.get("code.review.jobs")
+                .tags("job.type", "DECIDE_REVIEW_PUBLICATION", "outcome", "retried")
+                .counter().count()).isOne();
+        assertThat(metrics.get("code.review.jobs")
+                .tags("job.type", "PUBLISH_REVIEW", "outcome", "dead")
+                .counter().count()).isOne();
+        assertThat(metrics.get("code.review.jobs")
+                .tags("job.type", "SUPERSEDE_OBSOLETE_RUNS", "outcome", "succeeded")
+                .counter().count()).isOne();
+        assertThat(metrics.get("code.review.jobs")
+                .tags("job.type", "PRESENT_REVIEW_FAILURE", "outcome", "retried")
+                .counter().count()).isOne();
+    }
+
+    @Test
     void leasesWithAFreshTimestampAfterRecoveryCompletes() {
         MutableClock clock = new MutableClock(NOW);
         FakeQueue queue = new FakeQueue();
@@ -669,6 +713,7 @@ class ReviewJobWorkerTest {
         private Runnable afterRecovery = () -> {
         };
         private int recovered;
+        private DurableJobQueue.LeaseRecoveryBatch recoveryBatch;
         private int recoveryLimit;
         private String leaseOwner;
         private Instant leaseNow;
@@ -733,6 +778,18 @@ class ReviewJobWorkerTest {
         public int recoverExpiredLeases(Instant now, int limit) {
             recoveryLimit = limit;
             return recoverExpiredLeases(now);
+        }
+
+        @Override
+        public DurableJobQueue.LeaseRecoveryBatch recoverExpiredLeaseBatch(
+                Instant now, int limit) {
+            if (recoveryBatch == null) {
+                return DurableJobQueue.super.recoverExpiredLeaseBatch(now, limit);
+            }
+            operations.add("recover");
+            recoveryLimit = limit;
+            afterRecovery.run();
+            return recoveryBatch;
         }
 
         private void failSettlementIfConfigured(UUID jobId) {

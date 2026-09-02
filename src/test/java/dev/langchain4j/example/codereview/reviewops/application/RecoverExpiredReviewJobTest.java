@@ -66,6 +66,36 @@ class RecoverExpiredReviewJobTest {
         }
     }
 
+    @Test
+    void failedRunWithPersistedSuccessCheckStillSchedulesOrRetriesNeutralPresentation() {
+        ReviewRun run = publishingRun();
+        run.recordPublicationProgress("success-check", Map.of());
+        run.recordJobSystemFailure(
+                new dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure(
+                        "github_transient",
+                        dev.langchain4j.example.codereview.reviewops.domain.FailureClass.TERMINAL,
+                        "review job attempts exhausted"),
+                NOW.minusSeconds(2));
+        RecoverExpiredReviewExecution recovery = new RecoverExpiredReviewExecution(
+                new RecordingRepository(run, 3));
+
+        ExpiredJobLeaseRecovery.RecoverySettlement publication =
+                recovery.recoverWithIntents(finalLease(
+                        DecideReviewPublication.PUBLISH_REVIEW_JOB_TYPE, run.id()), NOW);
+        ExpiredJobLeaseRecovery.RecoverySettlement presentation =
+                recovery.recoverWithIntents(finalLease(
+                        ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE, run.id()),
+                        NOW.plusSeconds(10));
+
+        assertThat(publication.action())
+                .isEqualTo(ExpiredJobLeaseRecovery.RecoveryAction.SUCCEEDED);
+        assertThat(publication.followUpJobs()).singleElement().satisfies(intent ->
+                assertThat(intent.nextAttemptAt()).isEqualTo(run.finishedAt().orElseThrow()));
+        assertThat(presentation.action())
+                .isEqualTo(ExpiredJobLeaseRecovery.RecoveryAction.RETRY_WITHOUT_CHARGE);
+        assertThat(presentation.followUpJobs()).isEmpty();
+    }
+
     private static LeasedJob finalLease(String type, ReviewRunId runId) {
         return new LeasedJob(UUID.randomUUID(), type, runId.value(), 9, 3, 3,
                 NOW.minusSeconds(1));

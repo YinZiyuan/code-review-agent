@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.jobs;
 
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobIntentConflictException;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ExpiredJobLeaseRecovery;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.FinalJobFailureSettlement;
@@ -901,6 +902,58 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("lease_owner", null)
                 .containsEntry("lease_expires_at", null);
         assertThat(queue.leaseDue("worker-b", expiredAt, LEASE_DURATION, 1)).isEmpty();
+    }
+
+    @Test
+    void finalLeaseRecoveryReportsCommittedDispositionsForAllReviewJobKinds() {
+        PostgresDurableJobQueue recoveringQueue = new PostgresDurableJobQueue(
+                jdbcTemplate,
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+                Clock.fixed(CREATED_AT, ZoneOffset.UTC),
+                (lease, recoveredAt) -> switch (lease.jobType()) {
+                    case "REVIEW_EXECUTION", "SUPERSEDE_OBSOLETE_RUNS" ->
+                            ExpiredJobLeaseRecovery.RecoveryAction.SUCCEEDED;
+                    case "DECIDE_REVIEW_PUBLICATION", "PRESENT_REVIEW_FAILURE" ->
+                            ExpiredJobLeaseRecovery.RecoveryAction.RETRY_WITHOUT_CHARGE;
+                    default -> ExpiredJobLeaseRecovery.RecoveryAction.UNHANDLED;
+                });
+        List<String> jobTypes = List.of(
+                "REVIEW_EXECUTION",
+                "DECIDE_REVIEW_PUBLICATION",
+                "PUBLISH_REVIEW",
+                "SUPERSEDE_OBSOLETE_RUNS",
+                "PRESENT_REVIEW_FAILURE");
+        for (int index = 0; index < jobTypes.size(); index++) {
+            recoveringQueue.enqueue(request(
+                    jobTypes.get(index),
+                    "recovery-outcome-" + index,
+                    UUID.randomUUID(),
+                    1,
+                    DUE_AT));
+        }
+        assertThat(recoveringQueue.leaseDue(
+                "worker-a", LEASED_AT, LEASE_DURATION, 5)).hasSize(5);
+        expireAllLeases();
+
+        DurableJobQueue.LeaseRecoveryBatch result =
+                recoveringQueue.recoverExpiredLeaseBatch(
+                        LEASED_AT.plus(LEASE_DURATION), 5);
+
+        assertThat(result.recovered()).isEqualTo(5);
+        assertThat(result.outcomes()).containsExactlyInAnyOrder(
+                new DurableJobQueue.LeaseRecovery(
+                        "REVIEW_EXECUTION", DurableJobQueue.FailureDisposition.SUCCEEDED),
+                new DurableJobQueue.LeaseRecovery(
+                        "DECIDE_REVIEW_PUBLICATION",
+                        DurableJobQueue.FailureDisposition.RETRY_SCHEDULED),
+                new DurableJobQueue.LeaseRecovery(
+                        "PUBLISH_REVIEW", DurableJobQueue.FailureDisposition.DEAD),
+                new DurableJobQueue.LeaseRecovery(
+                        "SUPERSEDE_OBSOLETE_RUNS",
+                        DurableJobQueue.FailureDisposition.SUCCEEDED),
+                new DurableJobQueue.LeaseRecovery(
+                        "PRESENT_REVIEW_FAILURE",
+                        DurableJobQueue.FailureDisposition.RETRY_SCHEDULED));
     }
 
     @Test

@@ -62,22 +62,17 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 "finding_feedback",
                 "durable_jobs",
                 "outbox_events");
-        assertThat(constraintColumns("review_runs", "u"))
-                .contains(List.of(
+        assertThat(indexColumns("review_runs", "uq_review_runs_business_identity"))
+                .containsExactly(
                         "installation_id",
                         "repository_id",
                         "pull_request_number",
                         "head_sha",
                         "pipeline_version",
-                        "configuration_version"));
-        assertThat(constraintColumnsByName("review_runs", "u"))
-                .containsEntry("uq_review_runs_business_identity", List.of(
-                        "installation_id",
-                        "repository_id",
-                        "pull_request_number",
-                        "head_sha",
-                        "pipeline_version",
-                        "configuration_version"));
+                        "configuration_version");
+        assertThat(businessIdentityIndexDefinition(jdbcTemplate, "public"))
+                .contains("UNIQUE INDEX")
+                .contains("WHERE (state <> 'SUPERSEDED'::text)");
         assertThat(constraintColumns("review_attempts", "p"))
                 .contains(List.of("review_run_id", "attempt_number"));
         assertThat(constraintColumns("review_findings", "p"))
@@ -132,7 +127,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(3);
             assertFlywayIsValid(latest);
             assertThat(isolated.queryForObject(
                     "SELECT review_run_id FROM github_deliveries WHERE delivery_id = 'legacy-delivery'",
@@ -185,7 +180,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
             assertFlywayIsValid(latest);
             assertThat(isolated.queryForObject(
                     "SELECT lease_sequence FROM durable_jobs WHERE id = ?",
@@ -236,10 +231,11 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(4);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(5);
             assertFlywayIsValid(latest);
-            assertThat(businessIdentityConstraintName(isolated, schema))
-                    .isEqualTo("uq_review_runs_business_identity");
+            assertThat(businessIdentityIndexDefinition(isolated, schema))
+                    .contains("UNIQUE INDEX")
+                    .contains("WHERE (state <> 'SUPERSEDED'::text)");
 
             JdbcReviewRunRepository repository = new JdbcReviewRunRepository(
                     isolated,
@@ -649,6 +645,17 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                                ARRAY['installation_id', 'repository_id', 'pull_request_number',
                                      'head_sha', 'pipeline_version', 'configuration_version']::name[]
                         """, String.class, schema);
+    }
+
+    private static String businessIdentityIndexDefinition(
+            JdbcTemplate jdbcTemplate, String schema) {
+        return jdbcTemplate.queryForObject("""
+                SELECT indexdef
+                FROM pg_indexes
+                WHERE schemaname = ?
+                  AND tablename = 'review_runs'
+                  AND indexname = 'uq_review_runs_business_identity'
+                """, String.class, schema);
     }
 
     private static void assertFlywayIsValid(Flyway flyway) {

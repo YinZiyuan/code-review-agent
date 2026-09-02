@@ -72,7 +72,7 @@ public final class SettleReviewJobFailure implements FinalJobFailureSettlement {
         }
         return new FinalJobFailureSettlement.FinalFailureSettlement(
                 DurableJobQueue.FailureDisposition.DEAD,
-                List.of(failurePresentation(run, settledAt)));
+                List.of(failurePresentation(run)));
     }
 
     private static boolean knownReviewJob(String jobType) {
@@ -104,18 +104,18 @@ public final class SettleReviewJobFailure implements FinalJobFailureSettlement {
         }
         if (SupersedeObsoleteReviewRuns.JOB_TYPE.equals(jobType)) {
             return state == ReviewRunState.PUBLISHED
-                    || state == ReviewRunState.FAILED
                     || state == ReviewRunState.SUPERSEDED;
         }
         return false;
     }
 
-    private static DurableJobRequest failurePresentation(ReviewRun run, Instant nextAttemptAt) {
+    private static DurableJobRequest failurePresentation(ReviewRun run) {
         return new DurableJobRequest(
                 ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE,
                 run.id().value(),
                 run.configuration().maxReviewAttempts(),
-                nextAttemptAt,
+                run.finishedAt().orElseThrow(() -> new IllegalStateException(
+                        "failed review run must have a completion timestamp")),
                 "present-review-failure:" + run.id().value());
     }
 

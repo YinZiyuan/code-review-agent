@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubInstallationGateway;
+import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
+import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -117,8 +119,10 @@ public final class GitHubRestClient implements GitHubInstallationGateway {
         try {
             JsonNode json = objectMapper.readTree(response);
             String authoritativeHead = requiredText(json.path("head"), "sha");
+            validateFullCommitSha(authoritativeHead);
+            AuthoritativeRevision authoritative = new AuthoritativeRevision(authoritativeHead);
             if (!revision.headSha().equals(authoritativeHead)) {
-                throw deterministic("GitHub pull request head does not match requested revision");
+                throw new StaleReviewRevisionException(authoritative);
             }
         } catch (GitHubFailureException exception) {
             throw exception;

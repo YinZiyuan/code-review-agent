@@ -3,6 +3,8 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
+import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
+import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -118,9 +120,10 @@ class GitHubArchiveSourceProviderTest {
         expectHead(remote.server(), OTHER_SHA);
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
 
-        assertDeterministicFailure(
-                () -> provider.prepare(REVISION),
-                "GitHub pull request head does not match requested revision");
+        assertThatThrownBy(() -> provider.prepare(REVISION))
+                .isInstanceOfSatisfying(StaleReviewRevisionException.class, failure ->
+                        assertThat(failure.authoritativeRevision())
+                                .isEqualTo(new AuthoritativeRevision(OTHER_SHA)));
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }
@@ -136,9 +139,10 @@ class GitHubArchiveSourceProviderTest {
         expectHead(remote.server(), OTHER_SHA);
         GitHubArchiveSourceProvider provider = provider(remote.client(), 16_384, 65_536, 16_384, 10);
 
-        assertDeterministicFailure(
-                () -> provider.prepare(REVISION),
-                "GitHub pull request head does not match requested revision");
+        assertThatThrownBy(() -> provider.prepare(REVISION))
+                .isInstanceOfSatisfying(StaleReviewRevisionException.class, failure ->
+                        assertThat(failure.authoritativeRevision())
+                                .isEqualTo(new AuthoritativeRevision(OTHER_SHA)));
         assertThat(tempParent).isEmptyDirectory();
         remote.server().verify();
     }

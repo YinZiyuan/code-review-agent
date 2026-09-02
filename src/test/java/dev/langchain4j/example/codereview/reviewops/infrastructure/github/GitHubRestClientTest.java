@@ -3,6 +3,8 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubInstallationGateway.InstallationToken;
+import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
+import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -134,6 +136,26 @@ class GitHubRestClientTest {
                 .doesNotContain(responseSecret)
                 .doesNotContain(PRIVATE_KEY_MARKER)
                 .doesNotContain("Bearer");
+        server.verify();
+    }
+
+    @Test
+    void exactHeadMismatchCarriesTheValidatedAuthoritativeRevision() {
+        String authoritativeSha = "abcdef0123456789abcdef0123456789abcdef01";
+        MutableClock clock = new MutableClock(START);
+        RestClient.Builder builder = RestClient.builder().baseUrl(API_BASE_URL);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        GitHubRestClient client = client(builder, clock, Duration.ofMinutes(2), 8);
+        expectTokenExchange(server, 41L, "stale-head-token", START.plusSeconds(600));
+        server.expect(once(), requestTo(API_BASE_URL + "/repositories/73/pulls/12"))
+                .andRespond(withSuccess(
+                        "{\"head\":{\"sha\":\"" + authoritativeSha + "\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.requireExactPullRequestHead(revision()))
+                .isInstanceOfSatisfying(StaleReviewRevisionException.class, failure ->
+                        assertThat(failure.authoritativeRevision())
+                                .isEqualTo(new AuthoritativeRevision(authoritativeSha)));
         server.verify();
     }
 

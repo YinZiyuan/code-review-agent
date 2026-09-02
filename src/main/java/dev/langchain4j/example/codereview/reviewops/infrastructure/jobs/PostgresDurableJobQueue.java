@@ -302,36 +302,42 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
 
     @Override
     public int recoverExpiredLeases(Instant now) {
-        return recoverExpiredLeases(now, DEFAULT_RECOVERY_LIMIT);
+        return recoverExpiredLeaseBatch(now, DEFAULT_RECOVERY_LIMIT).recovered();
     }
 
     @Override
     public int recoverExpiredLeases(Instant now, int limit) {
+        return recoverExpiredLeaseBatch(now, limit).recovered();
+    }
+
+    @Override
+    public LeaseRecoveryBatch recoverExpiredLeaseBatch(Instant now, int limit) {
         Objects.requireNonNull(now, "now");
         if (limit <= 0) {
             throw new IllegalArgumentException("recovery limit must be positive");
         }
-        int recovered = 0;
+        List<LeaseRecovery> outcomes = new ArrayList<>();
         Set<UUID> failedThisCycle = new LinkedHashSet<>();
         for (int attempted = 0; attempted < limit; attempted++) {
             AtomicReference<UUID> selectedId = new AtomicReference<>();
             try {
-                Boolean recoveredOne = transactions.execute(status -> {
+                LeaseRecovery recoveredOne = transactions.execute(status -> {
                     Instant databaseNow = databaseNow();
                     Optional<LeasedJob> selected = lockNextExpiredLease(
                             failedThisCycle);
                     if (selected.isEmpty()) {
-                        return false;
+                        return null;
                     }
                     LeasedJob expiredLease = selected.orElseThrow();
                     selectedId.set(expiredLease.id());
-                    recoverLockedLease(expiredLease, databaseNow);
-                    return true;
+                    return new LeaseRecovery(
+                            expiredLease.jobType(),
+                            recoverLockedLease(expiredLease, databaseNow));
                 });
-                if (!Objects.requireNonNull(recoveredOne, "transaction result")) {
+                if (recoveredOne == null) {
                     break;
                 }
-                recovered++;
+                outcomes.add(recoveredOne);
             } catch (RuntimeException recoveryFailure) {
                 UUID failedId = selectedId.get();
                 if (failedId == null) {
@@ -341,7 +347,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                 LOGGER.warn("Expired job lease recovery failed for job {}", failedId);
             }
         }
-        return recovered;
+        return new LeaseRecoveryBatch(outcomes.size(), outcomes);
     }
 
     private Optional<LeasedJob> lockNextExpiredLease(
@@ -369,14 +375,21 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         return selected.stream().findFirst();
     }
 
-    private void recoverLockedLease(LeasedJob expiredLease, Instant recoveredAt) {
+    private FailureDisposition recoverLockedLease(
+            LeasedJob expiredLease, Instant recoveredAt) {
         int recovered;
+        FailureDisposition disposition;
         if (expiredLease.deliveryAttempt() >= expiredLease.maxAttempts()) {
             ExpiredJobLeaseRecovery.RecoverySettlement settlement = Objects.requireNonNull(
                     expiredLeaseRecovery.recoverWithIntents(expiredLease, recoveredAt),
                     "expired lease recovery settlement");
             settlement.followUpJobs().forEach(this::enqueue);
             recovered = settleExhaustedLease(expiredLease, settlement.action(), recoveredAt);
+            disposition = switch (settlement.action()) {
+                case RETRY_WITHOUT_CHARGE -> FailureDisposition.RETRY_SCHEDULED;
+                case SUCCEEDED -> FailureDisposition.SUCCEEDED;
+                case UNHANDLED -> FailureDisposition.DEAD;
+            };
         } else {
             recovered = jdbcTemplate.update("""
                             UPDATE durable_jobs
@@ -391,11 +404,13 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                     expiredLease.id(),
                     expiredLease.attemptCount(),
                     timestamp(recoveredAt));
+            disposition = FailureDisposition.RETRY_SCHEDULED;
         }
         if (recovered != 1) {
             throw new IllegalStateException(
                     "Expired lease could not be recovered for job " + expiredLease.id());
         }
+        return disposition;
     }
 
     private int settleExhaustedLease(
