@@ -1,0 +1,89 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: review-operations
+      maximum-pool-size: ${code-review.server.database.maximum-pool-size}
+      minimum-idle: ${code-review.server.database.minimum-idle}
+      connection-timeout: ${code-review.server.database.acquisition-timeout}
+      validation-timeout: ${code-review.server.database.validation-timeout}
+      connection-init-sql: >-
+        SET statement_timeout = '${code-review.server.database.statement-timeout}'; SET lock_timeout = '${code-review.server.database.lock-timeout}'; SET idle_in_transaction_session_timeout = '${code-review.server.database.idle-transaction-timeout}'
+      data-source-properties:
+        connectTimeout: ${code-review.server.database.connect-timeout-seconds}
+        socketTimeout: ${code-review.server.database.socket-timeout-seconds}
+        cancelSignalTimeout: ${code-review.server.database.cancel-timeout-seconds}
+        tcpKeepAlive: true
+  flyway:
+    enabled: true
+  transaction:
+    default-timeout: ${code-review.server.database.transaction-timeout}
+
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${MOONSHOT_API_KEY}
+
+code-review:
+  server:
+    database:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:8}
+      minimum-idle: ${DB_POOL_MIN_IDLE:1}
+      acquisition-timeout: ${DB_POOL_ACQUISITION_TIMEOUT:2s}
+      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT:1s}
+      connect-timeout-seconds: ${DB_CONNECT_TIMEOUT_SECONDS:5}
+      socket-timeout-seconds: ${DB_SOCKET_TIMEOUT_SECONDS:15}
+      cancel-timeout-seconds: ${DB_CANCEL_TIMEOUT_SECONDS:2}
+      statement-timeout: ${DB_STATEMENT_TIMEOUT:10s}
+      lock-timeout: ${DB_LOCK_TIMEOUT:2s}
+      idle-transaction-timeout: ${DB_IDLE_TRANSACTION_TIMEOUT:15s}
+      transaction-timeout: ${DB_TRANSACTION_TIMEOUT:10s}
+    github:
+      app-id: ${GITHUB_APP_ID}
+      private-key: ${GITHUB_APP_PRIVATE_KEY}
+      webhook-secret: ${GITHUB_WEBHOOK_SECRET}
+      api-base-url: ${GITHUB_API_BASE_URL:https://api.github.com}
+      max-webhook-bytes: ${GITHUB_MAX_WEBHOOK_BYTES:1048576}
+      connect-timeout: ${GITHUB_CONNECT_TIMEOUT:5s}
+      read-timeout: ${GITHUB_READ_TIMEOUT:30s}
+    worker:
+      poll-interval: 1s
+      batch-size: 10
+      recovery-batch-size: 10
+      lease-duration: 3m
+      heartbeat-interval: 30s
+      initial-backoff: 10s
+      max-backoff: 5m
+      jitter-ratio: 0.2
+    maintenance:
+      retention-age: ${REVIEW_OPERATIONS_RETENTION_AGE:30d}
+      batch-size: ${REVIEW_OPERATIONS_RETENTION_BATCH_SIZE:500}
+      interval: ${REVIEW_OPERATIONS_RETENTION_INTERVAL:1h}
+    observability:
+      refresh-interval: ${REVIEW_OBSERVABILITY_REFRESH_INTERVAL:15s}
+      stale-threshold: ${REVIEW_OBSERVABILITY_STALE_THRESHOLD:15m}
+      failure-backoff-max: ${REVIEW_OBSERVABILITY_FAILURE_BACKOFF_MAX:5m}
+    identity:
+      pipeline-version: ${REVIEW_PIPELINE_VERSION:pipeline-v3}
+      prompt-version: ${REVIEW_PROMPT_VERSION:review-prompt-v1}
+      policy-version: ${REVIEW_POLICY_VERSION:policy-v1}
+      model-deployment-identity: ${REVIEW_MODEL_DEPLOYMENT_IDENTITY:moonshot-public-api-v1}
+      work-budget-identity: ${REVIEW_WORK_BUDGET_IDENTITY:legacy-work-budget-v1}
+      max-review-attempts: ${REVIEW_MAX_ATTEMPTS:3}
+      max-inline-comments: ${REVIEW_MAX_INLINE_COMMENTS:5}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  endpoint:
+    health:
+      show-components: never
+      show-details: never
+
+logging:
+  config: classpath:logback-server.xml

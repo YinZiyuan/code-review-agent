@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.agents.pipeline;
 
 import dev.langchain4j.example.codereview.analyzer.Violation;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.model.Category;
 import dev.langchain4j.example.codereview.model.Citation;
 import dev.langchain4j.example.codereview.model.ReviewFinding;
@@ -19,9 +20,11 @@ import java.util.Map;
 public class Summarizer {
 
     private final CitationKeywordInjector citationInjector;
+    private final ReviewWorkBudget budget;
 
-    public Summarizer(CitationKeywordInjector citationInjector) {
+    public Summarizer(CitationKeywordInjector citationInjector, ReviewWorkBudget budget) {
         this.citationInjector = citationInjector;
+        this.budget = budget;
     }
 
     public ReviewResult summarize(ReviewResult draft, ToolFindings tools, List<Citation> citationCandidates) {
@@ -40,11 +43,49 @@ public class Summarizer {
         List<ReviewFinding> calibrated = deduped.stream()
                 .map(this::calibrateSeverity)
                 .toList();
-        List<ReviewFinding> withCitations = citationInjector.inject(calibrated, citationCandidates);
+        List<ReviewFinding> trustedCitations = validateCitations(calibrated, citationCandidates);
+        List<ReviewFinding> withCitations = citationInjector.inject(trustedCitations, citationCandidates);
+        List<ReviewFinding> sorted = sort(withCitations);
+        int findingCount = Math.min(sorted.size(), budget.input().maxFindings());
         return new ReviewResult(
                 draft.summary() == null ? "" : draft.summary(),
-                sort(withCitations),
+                sorted.subList(0, findingCount),
                 tools.statuses());
+    }
+
+    private List<ReviewFinding> validateCitations(
+            List<ReviewFinding> findings, List<Citation> citationCandidates) {
+        Map<String, Citation> candidatesById = new LinkedHashMap<>();
+        if (citationCandidates != null) {
+            for (Citation candidate : citationCandidates) {
+                if (candidate != null && candidate.id() != null && !candidate.id().isBlank()) {
+                    candidatesById.putIfAbsent(candidate.id(), candidate);
+                }
+            }
+        }
+        return findings.stream()
+                .map(finding -> withTrustedCitations(finding, candidatesById))
+                .toList();
+    }
+
+    private ReviewFinding withTrustedCitations(
+            ReviewFinding finding, Map<String, Citation> candidatesById) {
+        Map<String, Citation> trustedById = new LinkedHashMap<>();
+        if (finding.citations() != null) {
+            for (Citation citation : finding.citations()) {
+                if (citation != null && citation.id() != null) {
+                    Citation candidate = candidatesById.get(citation.id());
+                    if (candidate != null) {
+                        trustedById.putIfAbsent(candidate.id(), candidate);
+                    }
+                }
+            }
+        }
+        return new ReviewFinding(
+                finding.id(), finding.file(), finding.line(), finding.lineRange(),
+                finding.severity(), finding.category(), finding.title(), finding.description(),
+                finding.suggestion(), finding.evidence(), List.copyOf(trustedById.values()),
+                finding.source());
     }
 
     private ReviewFinding calibrateSeverity(ReviewFinding finding) {

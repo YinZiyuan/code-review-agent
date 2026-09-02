@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -28,6 +29,55 @@ class ReviewRunTest {
         run.recordTransientAttemptFailure(transientFailure(), METRICS, T0.plusSeconds(3));
         assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
         assertThat(run.attempts()).hasSize(2);
+    }
+
+    @Test
+    void interruptedAttemptIsRecoveredForAnotherBoundedAttemptWithOnlySafeEvidence() {
+        ReviewRun run = requested(2);
+        run.startAttempt(T0);
+
+        run.recoverInterruptedAttempt(
+                new ReviewFailure("worker_interrupted", FailureClass.TRANSIENT,
+                        "unsafe worker detail that must not be stored"),
+                T0.plusSeconds(1));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.REQUESTED);
+        assertThat(run.attempts().get(0).state())
+                .isEqualTo(ReviewAttemptState.TRANSIENT_FAILURE);
+        assertThat(run.attempts().get(0).failure()).contains(
+                new ReviewFailure("worker_interrupted", FailureClass.TRANSIENT,
+                        "review worker was interrupted"));
+        assertThat(run.attempts().get(0).measurements()).contains(
+                new ExecutionMeasurements(0, 0, 0, Map.of()));
+    }
+
+    @Test
+    void interruptedFinalAttemptExhaustsTheConfiguredAttemptAllowance() {
+        ReviewRun run = requested(1);
+        run.startAttempt(T0);
+
+        run.recoverInterruptedAttempt(
+                new ReviewFailure("worker_interrupted", FailureClass.TRANSIENT, "unsafe detail"),
+                T0.plusSeconds(1));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(
+                new ReviewFailure("worker_interrupted", FailureClass.TERMINAL,
+                        "review attempts exhausted: review worker was interrupted"));
+        assertThatThrownBy(() -> run.startAttempt(T0.plusSeconds(2)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void interruptedAttemptRecoveryIsRejectedOutsideRunningState() {
+        ReviewRun run = requested(2);
+        ReviewFailure interrupted = new ReviewFailure(
+                "worker_interrupted", FailureClass.TRANSIENT, "unsafe detail");
+
+        assertThatThrownBy(() -> run.recoverInterruptedAttempt(interrupted, T0.plusSeconds(1)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(run.state()).isEqualTo(ReviewRunState.REQUESTED);
+        assertThat(run.attempts()).isEmpty();
     }
 
     @Test
@@ -103,6 +153,25 @@ class ReviewRunTest {
         assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
         assertThat(run.finalFailure()).contains(failure);
         assertThat(run.finishedAt()).contains(T0.plusSeconds(3));
+    }
+
+    @Test
+    void terminalPublicationAuthorizationFailureEndsCompletedReview() {
+        ReviewRun run = completed();
+        run.acceptPublicationDecisions(Map.of(
+                run.findings().get(0).fingerprint(),
+                new PublicationDecision(PublicationTier.CHECK_SUMMARY, "publish-v1")));
+        ReviewFailure failure = new ReviewFailure(
+                "github_authorization",
+                FailureClass.TERMINAL,
+                "GitHub publication is not authorized");
+
+        run.recordPublicationAuthorizationFailure(failure, T0.plusSeconds(2));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(failure);
+        assertThat(run.finishedAt()).contains(T0.plusSeconds(2));
+        assertThat(run.checkRunExternalId()).isEmpty();
     }
 
     @Test
@@ -214,6 +283,48 @@ class ReviewRunTest {
         assertThat(run.checkRunExternalId()).contains("check-1");
         assertThat(run.commentReferences()).containsOnly(entry(first.fingerprint(), confirmed));
         assertThat(second.publicationReference()).isEmpty();
+    }
+
+    @Test
+    void aConfirmedMissingCheckCanBeReplacedWithoutChangingTheRunIdentity() {
+        ReviewRun run = completed();
+        FindingFingerprint fingerprint = run.findings().get(0).fingerprint();
+        run.acceptPublicationDecisions(Map.of(
+                fingerprint, new PublicationDecision(PublicationTier.CHECK_SUMMARY, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+        run.recordPublicationProgress("check-deleted", Map.of());
+
+        run.replaceMissingPublicationCheck("check-deleted", "check-replacement");
+
+        assertThat(run.checkRunExternalId()).contains("check-replacement");
+        assertThat(run.id()).isNotNull();
+        assertThatThrownBy(() -> run.replaceMissingPublicationCheck(
+                "check-deleted", "another-check"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not match");
+    }
+
+    @Test
+    void confirmedTerminalCommentRetractionClearsReferencesAndFailsTheRun() {
+        ReviewRun run = completedWithTwoFindings();
+        ReviewFinding first = run.findings().get(0);
+        ReviewFinding second = run.findings().get(1);
+        run.acceptPublicationDecisions(Map.of(
+                first.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1"),
+                second.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+        run.recordPublicationProgress("check-1", Map.of(
+                first.fingerprint(), new PublicationReference("github_review_comment", "comment-1")));
+        ReviewFailure failure = new ReviewFailure(
+                "github_deterministic_input", FailureClass.TERMINAL, "invalid comment");
+
+        run.recordPublicationFailureAfterCommentRetraction(
+                failure, Set.of(first.fingerprint()), T0.plusSeconds(3));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(failure);
+        assertThat(run.commentReferences()).isEmpty();
+        assertThat(first.publicationReference()).isEmpty();
     }
 
     @Test

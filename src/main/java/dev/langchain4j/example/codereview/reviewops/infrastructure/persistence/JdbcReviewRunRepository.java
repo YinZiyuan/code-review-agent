@@ -201,7 +201,7 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
 
     private void upsertOwnedChildren(ReviewRun run) {
         run.attempts().forEach(attempt -> upsertAttempt(run.id(), attempt));
-        run.findings().forEach(finding -> upsertFinding(run.id(), finding));
+        run.findings().forEach(finding -> upsertFinding(run.id(), run.state(), finding));
     }
 
     private void requirePersistedChildIdentitiesAreSubmitted(ReviewRun run) {
@@ -352,7 +352,8 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                 reference == null ? null : reference.externalId());
     }
 
-    private void upsertFinding(ReviewRunId id, ReviewFinding finding) {
+    private void upsertFinding(
+            ReviewRunId id, ReviewRunState reviewRunState, ReviewFinding finding) {
         PublicationDecision decision = finding.publicationDecision().orElse(null);
         PublicationReference reference = finding.publicationReference().orElse(null);
         int affected = jdbcTemplate.update("""
@@ -392,10 +393,21 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                               (review_findings.artifact_type IS NULL
                                   AND review_findings.artifact_external_id IS NULL)
                               OR (
+                                  EXCLUDED.artifact_type IS NULL
+                                  AND EXCLUDED.artifact_external_id IS NULL
+                              )
+                              OR (
                                   review_findings.artifact_type
                                       IS NOT DISTINCT FROM EXCLUDED.artifact_type
                                   AND review_findings.artifact_external_id
                                       IS NOT DISTINCT FROM EXCLUDED.artifact_external_id
+                              )
+                              OR (
+                                  ?
+                                  AND review_findings.artifact_type
+                                      IS NOT DISTINCT FROM EXCLUDED.artifact_type
+                                  AND review_findings.artifact_external_id IS NOT NULL
+                                  AND EXCLUDED.artifact_external_id IS NOT NULL
                               )
                           )
                         """,
@@ -415,7 +427,8 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                 decision == null ? null : decision.tier().name(),
                 decision == null ? null : decision.policyVersion(),
                 reference == null ? null : reference.artifactType(),
-                reference == null ? null : reference.externalId());
+                reference == null ? null : reference.externalId(),
+                reviewRunState == ReviewRunState.PUBLISHING);
         requireIdentityAwareWrite(affected, "finding", id, finding.fingerprint().value());
     }
 

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +16,14 @@ import java.util.Base64;
 import java.util.regex.Pattern;
 
 public class JsonRepair {
+
+    public record ParseResult<T>(T value, int inputTokens, int outputTokens) {
+        public ParseResult {
+            if (inputTokens < 0 || outputTokens < 0) {
+                throw new IllegalArgumentException("model token usage must be non-negative");
+            }
+        }
+    }
 
     private static final Logger log = LoggerFactory.getLogger(JsonRepair.class);
     private static final Pattern BASE64_PAYLOAD = Pattern.compile("\\(base64: \"([A-Za-z0-9+/=]+)\"\\)");
@@ -33,34 +42,51 @@ public class JsonRepair {
     }
 
     public <T> T parseOrRepair(String raw, Class<T> type) {
+        return parseOrRepairResponse(raw, type).value();
+    }
+
+    public <T> ParseResult<T> parseOrRepairWithUsage(String raw, Class<T> type) {
+        ParsedResponse<T> parsed = parseOrRepairResponse(raw, type);
+        if (parsed.repairResponse() == null) {
+            return new ParseResult<>(parsed.value(), 0, 0);
+        }
+        return new ParseResult<>(
+                parsed.value(),
+                requiredInputTokens(parsed.repairResponse()),
+                requiredOutputTokens(parsed.repairResponse()));
+    }
+
+    private <T> ParsedResponse<T> parseOrRepairResponse(String raw, Class<T> type) {
         String normalized = normalize(raw);
         try {
-            return readValue(extractJson(normalized), type);
+            return new ParsedResponse<>(readValue(extractJson(normalized), type), null);
         } catch (JsonProcessingException first) {
-            log.warn("JSON parse failed ({}); attempting repair", first.getOriginalMessage());
-            String repaired = askForRepair(normalized);
+            log.warn("model_json_parse_failed; attempting repair");
+            ChatResponse repairResponse = askForRepair(normalized);
             try {
-                return readValue(extractJson(repaired), type);
+                return new ParsedResponse<>(
+                        readValue(extractJson(repairResponse.aiMessage().text()), type),
+                        repairResponse);
             } catch (JsonProcessingException second) {
                 throw new RepairFailedException(
-                        "Repair did not produce valid JSON: " + second.getOriginalMessage(),
-                        second);
+                        requiredInputTokens(repairResponse),
+                        requiredOutputTokens(repairResponse));
             }
         }
     }
 
     public <T> T repairThenParse(String raw, Class<T> type) {
-        String repaired = askForRepair(normalize(raw));
+        ChatResponse repairResponse = askForRepair(normalize(raw));
         try {
-            return readValue(extractJson(repaired), type);
+            return readValue(extractJson(repairResponse.aiMessage().text()), type);
         } catch (JsonProcessingException e) {
             throw new RepairFailedException(
-                    "Repair did not produce valid JSON: " + e.getOriginalMessage(),
-                    e);
+                    requiredInputTokens(repairResponse),
+                    requiredOutputTokens(repairResponse));
         }
     }
 
-    private String askForRepair(String raw) {
+    private ChatResponse askForRepair(String raw) {
         String prompt = """
                 The following text was supposed to be a single JSON object but failed to parse.
                 Return ONLY the corrected JSON - no prose, no markdown fences.
@@ -68,10 +94,23 @@ public class JsonRepair {
 
                 Broken JSON:
                 """ + raw;
-        var response = model.chat(ChatRequest.builder()
+        return model.chat(ChatRequest.builder()
                 .messages(UserMessage.from(prompt))
                 .build());
-        return response.aiMessage().text();
+    }
+
+    private static int requiredInputTokens(ChatResponse response) {
+        if (response.tokenUsage() == null || response.tokenUsage().inputTokenCount() == null) {
+            throw new IllegalStateException("repair response did not include input token usage");
+        }
+        return response.tokenUsage().inputTokenCount();
+    }
+
+    private static int requiredOutputTokens(ChatResponse response) {
+        if (response.tokenUsage() == null || response.tokenUsage().outputTokenCount() == null) {
+            throw new IllegalStateException("repair response did not include output token usage");
+        }
+        return response.tokenUsage().outputTokenCount();
     }
 
     private <T> T readValue(String json, Class<T> type) throws JsonProcessingException {
@@ -96,7 +135,7 @@ public class JsonRepair {
                 byte[] decoded = Base64.getDecoder().decode(matcher.group(1));
                 return new String(decoded, StandardCharsets.UTF_8);
             } catch (IllegalArgumentException e) {
-                log.warn("Could not decode base64 JSON payload: {}", e.getMessage());
+                log.warn("model_json_base64_decode_failed");
             }
         }
         return raw;
@@ -115,8 +154,32 @@ public class JsonRepair {
     }
 
     public static class RepairFailedException extends RuntimeException {
-        public RepairFailedException(String message, Throwable cause) {
-            super(message, cause);
+        private final int inputTokens;
+        private final int outputTokens;
+
+        public RepairFailedException(
+                String message, Throwable cause, int inputTokens, int outputTokens) {
+            this(inputTokens, outputTokens);
         }
+
+        public RepairFailedException(int inputTokens, int outputTokens) {
+            super("model JSON repair failed");
+            if (inputTokens < 0 || outputTokens < 0) {
+                throw new IllegalArgumentException("model token usage must be non-negative");
+            }
+            this.inputTokens = inputTokens;
+            this.outputTokens = outputTokens;
+        }
+
+        public int inputTokens() {
+            return inputTokens;
+        }
+
+        public int outputTokens() {
+            return outputTokens;
+        }
+    }
+
+    private record ParsedResponse<T>(T value, ChatResponse repairResponse) {
     }
 }

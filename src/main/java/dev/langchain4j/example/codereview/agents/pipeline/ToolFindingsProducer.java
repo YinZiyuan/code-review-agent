@@ -4,6 +4,7 @@ import dev.langchain4j.example.codereview.analyzer.RegexAnalyzer;
 import dev.langchain4j.example.codereview.analyzer.SpotBugsResult;
 import dev.langchain4j.example.codereview.analyzer.SpotBugsAnalyzer;
 import dev.langchain4j.example.codereview.analyzer.Violation;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.model.ToolRunState;
 import dev.langchain4j.example.codereview.model.ToolStatus;
 import org.springframework.stereotype.Component;
@@ -18,37 +19,59 @@ public class ToolFindingsProducer {
 
     private final RegexAnalyzer regex;
     private final SpotBugsAnalyzer spotbugs;
+    private final ReviewWorkBudget budget;
 
-    public ToolFindingsProducer(RegexAnalyzer regex, SpotBugsAnalyzer spotbugs) {
+    public ToolFindingsProducer(
+            RegexAnalyzer regex, SpotBugsAnalyzer spotbugs, ReviewWorkBudget budget) {
         this.regex = regex;
         this.spotbugs = spotbugs;
+        this.budget = budget;
     }
 
     public ToolFindings produce(ReviewContext ctx) {
         List<Violation> all = new ArrayList<>();
         List<ToolStatus> statuses = new ArrayList<>();
 
+        if (ctx.sourceContextStatus() == ReviewContext.SourceContextStatus.COMPLETE) {
+            statuses.add(new ToolStatus("cross_file_context", ToolRunState.RAN, null));
+        } else {
+            statuses.add(new ToolStatus("cross_file_context", ToolRunState.SKIPPED_EXPECTED,
+                    sourceContextReason(ctx.sourceContextStatus())));
+        }
+
         try {
             all.addAll(regex.analyze(ctx.fileDiffs()));
             statuses.add(new ToolStatus("regex", ToolRunState.RAN, null));
-        } catch (RuntimeException e) {
-            statuses.add(new ToolStatus("regex", ToolRunState.FAILED, e.toString()));
+        } catch (RuntimeException ignored) {
+            statuses.add(new ToolStatus("regex", ToolRunState.FAILED, "analyzer failed"));
         }
 
         try {
             SpotBugsResult sb = spotbugs.analyzeWithSource(ctx.fileDiffs(), ctx.sourceRoot());
             if (!sb.ran()) {
                 statuses.add(new ToolStatus("spotbugs", ToolRunState.SKIPPED_EXPECTED,
-                        "not buildable or not installed"));
+                        sb.safeReason()));
             } else {
                 statuses.add(new ToolStatus("spotbugs", ToolRunState.RAN, null));
                 all.addAll(sb.violations());
             }
-        } catch (RuntimeException e) {
-            statuses.add(new ToolStatus("spotbugs", ToolRunState.FAILED, e.toString()));
+        } catch (RuntimeException ignored) {
+            statuses.add(new ToolStatus("spotbugs", ToolRunState.FAILED, "analyzer failed"));
         }
 
-        return new ToolFindings(dedupe(all), statuses);
+        List<Violation> deduped = dedupe(all);
+        int findingCount = Math.min(deduped.size(), budget.input().maxFindings());
+        return new ToolFindings(deduped.subList(0, findingCount), statuses);
+    }
+
+    private static String sourceContextReason(ReviewContext.SourceContextStatus status) {
+        return switch (status) {
+            case LIMIT_EXCEEDED -> "source context limit exceeded";
+            case TIMED_OUT -> "source context timed out";
+            case CANCELLED -> "source context cancelled";
+            case NOT_AVAILABLE -> "source context unavailable";
+            case COMPLETE -> "completed";
+        };
     }
 
     private List<Violation> dedupe(List<Violation> in) {

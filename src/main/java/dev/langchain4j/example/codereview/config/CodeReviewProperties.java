@@ -3,12 +3,10 @@ package dev.langchain4j.example.codereview.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.nio.file.Path;
-import java.time.Duration;
 
 @ConfigurationProperties(prefix = "code-review")
 public record CodeReviewProperties(
         Rag rag,
-        Orchestration orchestration,
         Eval eval
 ) {
     public record Rag(
@@ -19,11 +17,6 @@ public record CodeReviewProperties(
             int bm25TopK,
             int rerankTopK,
             int rrfK
-    ) { }
-
-    public record Orchestration(
-            Duration reviewerTimeout,
-            int parallelism
     ) { }
 
     public record Eval(

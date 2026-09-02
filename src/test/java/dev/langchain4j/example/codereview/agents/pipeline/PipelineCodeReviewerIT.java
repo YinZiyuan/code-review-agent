@@ -6,6 +6,7 @@ import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,6 +61,7 @@ class PipelineCodeReviewerIT {
                     .thenReturn(ChatResponse.builder()
                             .aiMessage(AiMessage.from("""
                                     {"summary":"ok","findings":[],"tool_status":[]}"""))
+                            .tokenUsage(new TokenUsage(80, 12))
                             .build());
             return model;
         }

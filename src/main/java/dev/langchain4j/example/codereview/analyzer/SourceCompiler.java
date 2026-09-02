@@ -1,50 +1,180 @@
 package dev.langchain4j.example.codereview.analyzer;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudgetProperties;
+import io.micrometer.core.instrument.Metrics;
 
-import javax.tools.JavaCompiler;
-import javax.tools.JavaFileObject;
-import javax.tools.StandardJavaFileManager;
-import javax.tools.StandardLocation;
-import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
+import java.io.BufferedWriter;
+import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.stream.Stream;
 
-public class SourceCompiler {
+/** Runs javac out-of-process; source text and diagnostics are always treated as untrusted. */
+public final class SourceCompiler {
 
-    private static final Logger log = LoggerFactory.getLogger(SourceCompiler.class);
+    @FunctionalInterface
+    public interface CompilerProcess {
+        BoundedProcessRunner.Result run(BoundedProcessRunner.Request request);
+    }
 
-    public Optional<Path> compile(Path sourceDir) {
-        try (Stream<Path> walk = Files.walk(sourceDir)) {
-            List<Path> javaFiles = walk
-                    .filter(p -> p.toString().endsWith(".java"))
-                    .toList();
-            if (javaFiles.isEmpty()) {
-                return Optional.empty();
+    private final CompilerProcess process;
+    private final ReviewWorkBudget budget;
+
+    public SourceCompiler() {
+        this(new BoundedProcessRunner(Metrics.globalRegistry)::run,
+                new ReviewWorkBudgetProperties(null, null, null, null, null, null).toBudget());
+    }
+
+    public SourceCompiler(CompilerProcess process, ReviewWorkBudget budget) {
+        this.process = Objects.requireNonNull(process, "process");
+        this.budget = Objects.requireNonNull(budget, "budget");
+    }
+
+    public CompilationResult compile(Path sourceDirectory, Path classesDirectory) {
+        Objects.requireNonNull(sourceDirectory, "sourceDirectory");
+        Objects.requireNonNull(classesDirectory, "classesDirectory");
+        Path argumentFile = null;
+        try {
+            List<Path> sources = boundedSources(sourceDirectory);
+            if (sources == null) {
+                return result(CompilationResult.Status.LIMIT_EXCEEDED, "source limit exceeded");
+            }
+            if (sources.isEmpty()) {
+                return result(CompilationResult.Status.NO_SOURCES, "no Java sources");
+            }
+            if (!Files.isDirectory(classesDirectory, LinkOption.NOFOLLOW_LINKS)
+                    || Files.isSymbolicLink(classesDirectory)) {
+                return result(CompilationResult.Status.FAILED, "compiler unavailable");
             }
 
-            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-            if (compiler == null) {
-                log.warn("No system Java compiler available.");
-                return Optional.empty();
+            argumentFile = Files.createTempFile(
+                    classesDirectory.getParent(), "javac-", ".args");
+            ArgumentWriteOutcome argumentWrite = writeSourceArguments(argumentFile, sources);
+            if (argumentWrite == ArgumentWriteOutcome.LIMIT_EXCEEDED) {
+                return result(CompilationResult.Status.LIMIT_EXCEEDED,
+                        "compiler argument limit exceeded");
             }
-
-            Path classesDir = Files.createTempDirectory("crv-classes-");
-            try (StandardJavaFileManager fm = compiler.getStandardFileManager(null, null, null)) {
-                fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(classesDir.toFile()));
-                Iterable<? extends JavaFileObject> units = fm.getJavaFileObjectsFromPaths(javaFiles);
-                boolean ok = compiler.getTask(null, fm, null,
-                        List.of("-nowarn", "-proc:none"), null, units).call();
-                return ok ? Optional.of(classesDir) : Optional.empty();
+            if (argumentWrite == ArgumentWriteOutcome.CANCELLED) {
+                return result(CompilationResult.Status.CANCELLED, "compiler cancelled");
             }
-        } catch (IOException e) {
-            log.warn("SourceCompiler I/O error: {}", e.toString());
-            return Optional.empty();
+            List<String> command = List.of(
+                    javacExecutable(),
+                    "-J-Xmx" + budget.process().compilerMaxHeapMb() + "m",
+                    "-nowarn",
+                    "-proc:none",
+                    "-d",
+                    classesDirectory.toAbsolutePath().toString(),
+                    "@" + argumentFile.toAbsolutePath());
+            BoundedProcessRunner.Result processResult = process.run(new BoundedProcessRunner.Request(
+                    BoundedProcessRunner.ProcessKind.JAVAC,
+                    command,
+                    classesDirectory.getParent(),
+                    budget.stages().compiler(),
+                    budget.process().maxOutputBytes()));
+            return map(processResult);
+        } catch (IOException | RuntimeException exception) {
+            return result(CompilationResult.Status.FAILED, "compiler unavailable");
+        } finally {
+            if (argumentFile != null) {
+                try {
+                    Files.deleteIfExists(argumentFile);
+                } catch (IOException ignored) {
+                    // The enclosing marker-bearing workspace owns any failed deletion.
+                }
+            }
         }
+    }
+
+    private List<Path> boundedSources(Path sourceDirectory) throws IOException {
+        if (!Files.isDirectory(sourceDirectory, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(sourceDirectory)) {
+            return List.of();
+        }
+        List<Path> sources = new java.util.ArrayList<>();
+        long bytes = 0;
+        try (Stream<Path> walk = Files.walk(sourceDirectory)) {
+            Iterator<Path> javaFiles = walk
+                    .filter(path -> path.getFileName().toString().endsWith(".java"))
+                    .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                    .iterator();
+            while (javaFiles.hasNext()) {
+                Path source = javaFiles.next();
+                if (sources.size() >= budget.input().maxJavaSourceFiles()) {
+                    return null;
+                }
+                long size = Files.size(source);
+                if (size > budget.input().maxJavaSourceBytes() - bytes) {
+                    return null;
+                }
+                sources.add(source);
+                bytes += size;
+            }
+        }
+        sources.sort(Comparator.comparing(path -> sourceDirectory.relativize(path).toString()));
+        return sources;
+    }
+
+    private ArgumentWriteOutcome writeSourceArguments(Path argumentFile, List<Path> sources)
+            throws IOException {
+        long writtenBytes = 0;
+        try (BufferedWriter writer = Files.newBufferedWriter(
+                argumentFile, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING)) {
+            for (Path source : sources) {
+                if (Thread.currentThread().isInterrupted()) {
+                    return ArgumentWriteOutcome.CANCELLED;
+                }
+                String line = quoteArgument(source.toAbsolutePath().toString())
+                        + System.lineSeparator();
+                int bytes = line.getBytes(StandardCharsets.UTF_8).length;
+                if (bytes > budget.process().maxCompilerArgumentBytes() - writtenBytes) {
+                    return ArgumentWriteOutcome.LIMIT_EXCEEDED;
+                }
+                writer.write(line);
+                writtenBytes += bytes;
+            }
+        }
+        return ArgumentWriteOutcome.COMPLETE;
+    }
+
+    private static String quoteArgument(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static String javacExecutable() {
+        String executable = System.getProperty("os.name", "").toLowerCase().contains("win")
+                ? "javac.exe" : "javac";
+        return Path.of(System.getProperty("java.home"), "bin", executable).toString();
+    }
+
+    private static CompilationResult map(BoundedProcessRunner.Result processResult) {
+        return switch (processResult.outcome()) {
+            case TIMED_OUT -> result(CompilationResult.Status.TIMED_OUT, "compiler timed out");
+            case CANCELLED -> result(CompilationResult.Status.CANCELLED, "compiler cancelled");
+            case OUTPUT_LIMIT_EXCEEDED -> result(
+                    CompilationResult.Status.LIMIT_EXCEEDED, "compiler output limit exceeded");
+            case START_FAILED -> result(CompilationResult.Status.FAILED, "compiler unavailable");
+            case COMPLETED -> processResult.exitCode().orElse(-1) == 0
+                    ? result(CompilationResult.Status.COMPILED, "compiled")
+                    : result(CompilationResult.Status.FAILED, "compiler failed");
+        };
+    }
+
+    private static CompilationResult result(
+            CompilationResult.Status status, String safeReason) {
+        return new CompilationResult(status, safeReason);
+    }
+
+    private enum ArgumentWriteOutcome {
+        COMPLETE,
+        LIMIT_EXCEEDED,
+        CANCELLED
     }
 }

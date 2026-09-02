@@ -68,6 +68,88 @@ env -u DEBUG java -jar target/code-review-agent-1.0.0.jar eval \
 
 Sample format and isolation rules are in [`eval/samples/README.md`](eval/samples/README.md).
 
+## GitHub App server
+
+The same jar can run as a self-hosted GitHub App. Register the App with these repository permissions:
+
+- **Contents: read**
+- **Pull requests: read and write**
+- **Checks: read and write**
+- **Metadata: read**
+
+Subscribe to the `pull_request` event. The production intake URL is
+`https://<your-host>/webhooks/github`; the supported actions are `opened`, `reopened`, and
+`synchronize`.
+
+The server requires PostgreSQL, a GitHub App ID, a PKCS#8 RSA private key, the webhook
+secret, and the model API key. It fails startup when any required setting is absent or
+invalid. GitHub's downloaded key can be converted to the expected form with:
+
+```bash
+openssl pkcs8 -topk8 -nocrypt \
+  -in downloaded-github-app-key.pem \
+  -out github-app-key-pkcs8.pem
+```
+
+For the Compose demo, copy the names-only template, set the non-key values in `.env`,
+and pass the multi-line key through the process environment:
+
+```bash
+cp .env.example .env
+# Edit .env. Use jdbc:postgresql://postgres:5432/code_review for the Compose database.
+export GITHUB_APP_PRIVATE_KEY="$(<github-app-key-pkcs8.pem)"
+docker compose up --build
+```
+
+For a jar deployment, export the same seven variables and run:
+
+```bash
+mvn -q clean package -DskipTests
+java -jar target/code-review-agent-1.0.0.jar serve
+```
+
+Webhook processing is deliberately non-blocking: a valid signed delivery receives
+HTTP `202` only after its delivery fact and review intent commit. A durable worker then
+reviews the exact observed head SHA, rechecks that SHA immediately before publication,
+and reconciles one Check Run plus eligible inline comments. Duplicate deliveries and
+worker retries do not create duplicate runs or confirmed artifacts; a stale head produces
+no new GitHub mutation.
+
+Operational endpoints are:
+
+- `/actuator/health` — process liveness only.
+- `/actuator/health/readiness` — PostgreSQL reachability plus active webhook intake.
+- `/actuator/metrics` — metric names and low-cardinality measurements, including lease recovery.
+
+A GitHub or model outage leaves readiness up: affected durable jobs retry according to
+their bounded backoff policy. The actuator surface never exposes environment values,
+credentials, or health details.
+
+GitHub HTTP calls also have bounded deadlines. `GITHUB_CONNECT_TIMEOUT` defaults to
+`5s` and `GITHUB_READ_TIMEOUT` defaults to `30s`; both must be positive Spring duration
+values. These deadlines turn a stalled GitHub request into a transient durable-job retry
+without changing readiness.
+
+### Signed local intake demonstration
+
+The signature boundary can be exercised without a real GitHub credential. Start a
+throwaway server with `GITHUB_WEBHOOK_SECRET=local-demo-only` (an ephemeral PKCS#8 key,
+dummy App ID/model key, and local PostgreSQL are sufficient for startup), then run:
+
+```bash
+demo_body='{"action":"opened","installation":{"id":41},"repository":{"id":73,"full_name":"octo/demo","clone_url":"https://github.com/octo/demo.git"},"number":12,"pull_request":{"head":{"sha":"0123456789abcdef0123456789abcdef01234567"}}}'
+demo_signature="$(printf '%s' "$demo_body" | openssl dgst -sha256 -hmac 'local-demo-only' -hex | sed 's/^.* //')"
+curl -i http://localhost:8080/webhooks/github \
+  -H 'Content-Type: application/json' \
+  -H 'X-GitHub-Event: pull_request' \
+  -H 'X-GitHub-Delivery: local-demo-1' \
+  -H "X-Hub-Signature-256: sha256=$demo_signature" \
+  --data "$demo_body"
+```
+
+The response is `202 Accepted`; this proves signed intake and durable admission only.
+End-to-end publication requires an installed GitHub App and a valid model key.
+
 ## Evaluation
 
 The strict W4 release suite has 40 synthetic / reverse-style samples. Both accepted reports were run as 40 samples x 3 runs with no review errors.
@@ -97,5 +179,6 @@ Use [`docs/demo-script.md`](docs/demo-script.md) for a reproducible build, revie
 ## Roadmap
 
 - Add real public PR samples and separate them from synthetic release fixtures.
+- Add scheduled review-comment feedback reconciliation as a dedicated follow-up.
 - Expand high-confidence static rules only when they generalize beyond benchmark fixtures.
 - Explore a later multi-reviewer `v4-stretch` only after the evaluation baseline is stable on real data.
