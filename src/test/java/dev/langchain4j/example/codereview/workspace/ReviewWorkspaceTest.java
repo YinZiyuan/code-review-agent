@@ -87,4 +87,28 @@ class ReviewWorkspaceTest {
         assertThat(analysisRoot).doesNotExist();
         assertThat(externalSource).exists();
     }
+
+    @Test
+    void simultaneousPipelineAndCleanupFailureRetainsOnlyASafeMarkerObligation()
+            throws Exception {
+        String arbitraryPath = "/private/repository/secret.java";
+        ReviewWorkspace workspace = new ReviewWorkspaceFactory(
+                temporaryParent,
+                root -> { throw new IOException(arbitraryPath); })
+                .create();
+        RuntimeException pipelineFailure = new RuntimeException("pipeline failed");
+
+        try {
+            workspace.close();
+        } catch (ReviewWorkspaceCleanupException cleanupFailure) {
+            pipelineFailure.addSuppressed(cleanupFailure);
+        }
+
+        assertThat(workspace.root().resolve(ReviewWorkspace.MARKER)).exists();
+        assertThat(pipelineFailure.getSuppressed()).singleElement()
+                .isInstanceOf(ReviewWorkspaceCleanupException.class);
+        assertThat(pipelineFailure.getSuppressed()[0])
+                .hasMessage("Could not remove review workspace");
+        assertThat(pipelineFailure.getSuppressed()[0].toString()).doesNotContain(arbitraryPath);
+    }
 }

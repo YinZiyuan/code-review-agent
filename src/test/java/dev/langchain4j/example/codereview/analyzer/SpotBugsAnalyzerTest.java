@@ -10,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.io.IOException;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,6 +64,9 @@ class SpotBugsAnalyzerTest {
         assertThat(result.ran()).isFalse();
         assertThat(result.violations()).isEmpty();
         assertThat(result.safeReason()).isEqualTo("compiler failed");
+        assertThat(Files.list(tmp)
+                .noneMatch(path -> path.getFileName().toString().startsWith(ReviewWorkspace.PREFIX)))
+                .isTrue();
     }
 
     @Test
@@ -90,6 +94,24 @@ class SpotBugsAnalyzerTest {
 
         assertThat(result.ran()).isFalse();
         assertThat(result.safeReason()).isEqualTo("analyzer timed out");
+        assertThat(Files.list(tmp)
+                .noneMatch(path -> path.getFileName().toString().startsWith(ReviewWorkspace.PREFIX)))
+                .isTrue();
+    }
+
+    @Test
+    void analyzerFailureIsSafeAndCleansClassesAndReportArtifacts() throws Exception {
+        Path sourceDir = Files.createDirectory(tmp.resolve("analyzer-failure"));
+        Files.writeString(sourceDir.resolve("Failure.java"), "class Failure {}");
+        SpotBugsAnalyzer analyzer = new SpotBugsAnalyzer(
+                (classesDir, output) -> { throw new IOException("repository-secret"); },
+                new SourceCompiler(),
+                new ReviewWorkspaceFactory(tmp));
+
+        SpotBugsResult result = analyzer.analyzeWithSource(List.of(), sourceDir);
+
+        assertThat(result.ran()).isFalse();
+        assertThat(result.safeReason()).isEqualTo("analyzer unavailable");
         assertThat(Files.list(tmp)
                 .noneMatch(path -> path.getFileName().toString().startsWith(ReviewWorkspace.PREFIX)))
                 .isTrue();
