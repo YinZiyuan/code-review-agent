@@ -2,9 +2,10 @@ package dev.langchain4j.example.codereview.analyzer;
 
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.model.Severity;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudgetProperties;
+import dev.langchain4j.example.codereview.workspace.ReviewAnalysisWorkspace;
+import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
 
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
@@ -18,25 +19,48 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
-@Component
 public class SpotBugsAnalyzer implements StaticAnalyzer {
-
-    private static final Logger log = LoggerFactory.getLogger(SpotBugsAnalyzer.class);
 
     @FunctionalInterface
     public interface Runner {
-        boolean run(Path classesDir, Path output) throws IOException;
+        RunOutcome run(Path classesDir, Path output) throws IOException;
+    }
+
+    public enum RunOutcome {
+        COMPLETED,
+        TIMED_OUT,
+        CANCELLED,
+        FAILED,
+        UNAVAILABLE
     }
 
     private final Runner runner;
     private final SourceCompiler compiler;
+    private final ReviewWorkspaceFactory workspaceFactory;
+    private final ReviewWorkBudget budget;
 
     public SpotBugsAnalyzer(Runner runner, SourceCompiler compiler) {
+        this(runner, compiler,
+                new ReviewWorkspaceFactory(Path.of(System.getProperty("java.io.tmpdir"))),
+                defaults());
+    }
+
+    public SpotBugsAnalyzer(
+            Runner runner, SourceCompiler compiler, ReviewWorkspaceFactory workspaceFactory) {
+        this(runner, compiler, workspaceFactory, defaults());
+    }
+
+    public SpotBugsAnalyzer(
+            Runner runner,
+            SourceCompiler compiler,
+            ReviewWorkspaceFactory workspaceFactory,
+            ReviewWorkBudget budget) {
         this.runner = runner;
         this.compiler = compiler;
+        this.workspaceFactory = workspaceFactory;
+        this.budget = budget;
     }
 
     @Override
@@ -50,22 +74,39 @@ public class SpotBugsAnalyzer implements StaticAnalyzer {
     }
 
     public SpotBugsResult analyzeWithSource(List<DiffParser.FileDiff> files, Path sourceDir) {
-        Optional<Path> classesDir = compiler.compile(sourceDir);
-        if (classesDir.isEmpty()) {
-            log.debug("SpotBugs skipped: source not compilable at {}", sourceDir);
-            return SpotBugsResult.skipped();
-        }
-        try {
-            Path output = Files.createTempFile("spotbugs-", ".xml");
-            if (!runner.run(classesDir.get(), output)) {
-                log.debug("SpotBugs runner reported skip");
-                return SpotBugsResult.skipped();
+        try (ReviewAnalysisWorkspace workspace = workspaceFactory.analysisFor(sourceDir)) {
+            Path classesDirectory = workspace.createClassesDirectory();
+            CompilationResult compilation = compiler.compile(sourceDir, classesDirectory);
+            if (!compilation.compiled()) {
+                return SpotBugsResult.skipped(compilation.safeReason());
             }
-            return new SpotBugsResult(true, parseAndFilter(output, files));
-        } catch (IOException e) {
-            log.warn("SpotBugs I/O error: {}", e.toString());
-            return SpotBugsResult.skipped();
+            Path output = workspace.createReportFile();
+            RunOutcome outcome = runner.run(classesDirectory, output);
+            if (outcome != RunOutcome.COMPLETED) {
+                return SpotBugsResult.skipped(safeReason(outcome));
+            }
+            long reportBytes = Files.size(output);
+            if (reportBytes == 0 || reportBytes > budget.process().maxOutputBytes()) {
+                return SpotBugsResult.skipped("analyzer output limit exceeded");
+            }
+            return new SpotBugsResult(true, parseAndFilter(output, files), "completed");
+        } catch (IOException | RuntimeException exception) {
+            return SpotBugsResult.skipped("analyzer unavailable");
         }
+    }
+
+    private static String safeReason(RunOutcome outcome) {
+        return switch (outcome) {
+            case TIMED_OUT -> "analyzer timed out";
+            case CANCELLED -> "analyzer cancelled";
+            case FAILED -> "analyzer failed";
+            case UNAVAILABLE -> "analyzer unavailable";
+            case COMPLETED -> "completed";
+        };
+    }
+
+    private static ReviewWorkBudget defaults() {
+        return new ReviewWorkBudgetProperties(null, null, null, null, null, null).toBudget();
     }
 
     private List<Violation> parseAndFilter(Path xml, List<DiffParser.FileDiff> files) throws IOException {

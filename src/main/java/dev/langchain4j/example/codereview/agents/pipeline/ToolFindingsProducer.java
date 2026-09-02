@@ -43,7 +43,7 @@ public class ToolFindingsProducer {
             SpotBugsResult sb = spotbugs.analyzeWithSource(ctx.fileDiffs(), ctx.sourceRoot());
             if (!sb.ran()) {
                 statuses.add(new ToolStatus("spotbugs", ToolRunState.SKIPPED_EXPECTED,
-                        "not buildable or not installed"));
+                        sb.safeReason()));
             } else {
                 statuses.add(new ToolStatus("spotbugs", ToolRunState.RAN, null));
                 all.addAll(sb.violations());

@@ -37,7 +37,8 @@ class ToolFindingsProducerTest {
         ReviewContext ctx = new ReviewContext(diff, parser.parse(diff), Map.of(), Path.of("/nonexistent"));
 
         SpotBugsAnalyzer spotbugs = new SpotBugsAnalyzer(
-                (classesDir, output) -> false, new SourceCompiler());
+                (classesDir, output) -> SpotBugsAnalyzer.RunOutcome.FAILED,
+                new SourceCompiler());
         ToolFindingsProducer producer = new ToolFindingsProducer(
                 new RegexAnalyzer(), spotbugs, defaults);
 
@@ -63,7 +64,8 @@ class ToolFindingsProducerTest {
         ReviewContext ctx = new ReviewContext(diff, parser.parse(diff), Map.of(), Path.of("/nonexistent"));
 
         SpotBugsAnalyzer spotbugs = new SpotBugsAnalyzer(
-                (classesDir, output) -> false, new SourceCompiler()) {
+                (classesDir, output) -> SpotBugsAnalyzer.RunOutcome.FAILED,
+                new SourceCompiler()) {
             @Override
             public SpotBugsResult analyzeWithSource(List<DiffParser.FileDiff> files, Path sourceDir) {
                 return new SpotBugsResult(true, List.of());
@@ -91,7 +93,8 @@ class ToolFindingsProducerTest {
         ReviewContext ctx = new ReviewContext(diff, parser.parse(diff), Map.of(), Path.of("/nonexistent"));
 
         SpotBugsAnalyzer spotbugs = new SpotBugsAnalyzer(
-                (classesDir, output) -> false, new SourceCompiler()) {
+                (classesDir, output) -> SpotBugsAnalyzer.RunOutcome.FAILED,
+                new SourceCompiler()) {
             @Override
             public SpotBugsResult analyzeWithSource(List<DiffParser.FileDiff> files, Path sourceDir) {
                 throw new RuntimeException("boom");
@@ -112,7 +115,8 @@ class ToolFindingsProducerTest {
     @Test
     void globallyCapsFindingsInStableAnalyzerOrder() {
         SpotBugsAnalyzer spotbugs = new SpotBugsAnalyzer(
-                (classesDir, output) -> false, new SourceCompiler()) {
+                (classesDir, output) -> SpotBugsAnalyzer.RunOutcome.FAILED,
+                new SourceCompiler()) {
             @Override
             public SpotBugsResult analyzeWithSource(List<DiffParser.FileDiff> files, Path sourceDir) {
                 return new SpotBugsResult(true, List.of(

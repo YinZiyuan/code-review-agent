@@ -2,6 +2,7 @@ package dev.langchain4j.example.codereview.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
+import dev.langchain4j.example.codereview.analyzer.BoundedProcessRunner;
 import dev.langchain4j.example.codereview.analyzer.SourceCompiler;
 import dev.langchain4j.example.codereview.analyzer.SpotBugsAnalyzer;
 import dev.langchain4j.example.codereview.eval.EvaluationRunner;
@@ -11,14 +12,11 @@ import dev.langchain4j.example.codereview.eval.Matcher;
 import dev.langchain4j.example.codereview.eval.ModelRuntimeMetadata;
 import dev.langchain4j.example.codereview.eval.ModelRuntimeMetadataResolver;
 import dev.langchain4j.example.codereview.infra.JsonRepair;
+import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
 import dev.langchain4j.model.chat.ChatModel;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class AgentConfig {
@@ -50,30 +48,40 @@ public class AgentConfig {
     }
 
     @Bean
-    public SourceCompiler sourceCompiler() {
-        return new SourceCompiler();
+    public SourceCompiler sourceCompiler(
+            BoundedProcessRunner processRunner, ReviewWorkBudget budget) {
+        return new SourceCompiler(processRunner::run, budget);
     }
 
     @Bean
-    public SpotBugsAnalyzer.Runner spotBugsRunner() {
+    public SpotBugsAnalyzer.Runner spotBugsRunner(
+            BoundedProcessRunner processRunner, ReviewWorkBudget budget) {
         return (classesDir, output) -> {
-            try {
-                Process process = new ProcessBuilder(
-                        "spotbugs", "-textui", "-quiet", "-xml", "-output", output.toString(),
-                        classesDir.toString())
-                        .redirectErrorStream(true)
-                        .start();
-                if (!process.waitFor(120, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                    return false;
-                }
-                return process.exitValue() == 0 && Files.size(output) > 0;
-            } catch (IOException e) {
-                return false;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
+            BoundedProcessRunner.Result result = processRunner.run(new BoundedProcessRunner.Request(
+                    BoundedProcessRunner.ProcessKind.SPOTBUGS,
+                    java.util.List.of(
+                            "spotbugs", "-textui", "-quiet", "-xml", "-output",
+                            output.toString(), classesDir.toString()),
+                    classesDir.getParent(),
+                    budget.stages().spotbugs(),
+                    budget.process().maxOutputBytes()));
+            return switch (result.outcome()) {
+                case TIMED_OUT -> SpotBugsAnalyzer.RunOutcome.TIMED_OUT;
+                case CANCELLED -> SpotBugsAnalyzer.RunOutcome.CANCELLED;
+                case START_FAILED -> SpotBugsAnalyzer.RunOutcome.UNAVAILABLE;
+                case COMPLETED -> result.exitCode().orElse(-1) == 0
+                        ? SpotBugsAnalyzer.RunOutcome.COMPLETED
+                        : SpotBugsAnalyzer.RunOutcome.FAILED;
+            };
         };
+    }
+
+    @Bean
+    public SpotBugsAnalyzer spotBugsAnalyzer(
+            SpotBugsAnalyzer.Runner runner,
+            SourceCompiler compiler,
+            ReviewWorkspaceFactory workspaceFactory,
+            ReviewWorkBudget budget) {
+        return new SpotBugsAnalyzer(runner, compiler, workspaceFactory, budget);
     }
 }
