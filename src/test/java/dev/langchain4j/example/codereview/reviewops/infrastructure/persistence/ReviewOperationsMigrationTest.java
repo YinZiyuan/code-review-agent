@@ -86,6 +86,16 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 .containsExactly("occurred_at", "event_id");
         assertThat(indexColumns("github_deliveries", "idx_github_deliveries_received_at"))
                 .containsExactly("received_at");
+        assertThat(indexColumns("durable_jobs", "idx_durable_jobs_expired_lease"))
+                .containsExactly("lease_expires_at", "id");
+        assertThat(indexDefinition("idx_durable_jobs_expired_lease"))
+                .contains("WHERE (state = 'LEASED'::text)");
+        assertThat(indexColumns("durable_jobs", "idx_durable_jobs_terminal_retention"))
+                .containsExactly("updated_at", "id");
+        assertThat(indexColumns("outbox_events", "idx_outbox_events_published_retention"))
+                .containsExactly("published_at", "event_id");
+        assertThat(indexColumns("github_deliveries", "idx_github_deliveries_handled_retention"))
+                .containsExactly("handled_at", "delivery_id");
     }
 
     @Test
@@ -835,6 +845,14 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 return columns;
             }
         }
+    }
+
+    private String indexDefinition(String indexName) {
+        return jdbcTemplate.queryForObject("""
+                        SELECT indexdef
+                        FROM pg_indexes
+                        WHERE schemaname = 'public' AND indexname = ?
+                        """, String.class, indexName);
     }
 }
 

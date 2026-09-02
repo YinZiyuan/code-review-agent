@@ -3,8 +3,24 @@ spring:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: review-operations
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:8}
+      minimum-idle: ${DB_POOL_MIN_IDLE:1}
+      connection-timeout: ${DB_POOL_ACQUISITION_TIMEOUT_MS:2000}
+      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT_MS:1000}
+      connection-init-sql: >-
+        SET statement_timeout = '10s'; SET lock_timeout = '2s'; SET idle_in_transaction_session_timeout = '15s'
+      data-source-properties:
+        connectTimeout: ${DB_CONNECT_TIMEOUT_SECONDS:5}
+        socketTimeout: ${DB_SOCKET_TIMEOUT_SECONDS:15}
+        cancelSignalTimeout: ${DB_CANCEL_TIMEOUT_SECONDS:2}
+        tcpKeepAlive: true
   flyway:
     enabled: true
+  transaction:
+    default-timeout: 10s
 
 langchain4j:
   open-ai:
@@ -30,6 +46,10 @@ code-review:
       initial-backoff: 10s
       max-backoff: 5m
       jitter-ratio: 0.2
+    maintenance:
+      retention-age: ${REVIEW_OPERATIONS_RETENTION_AGE:30d}
+      batch-size: ${REVIEW_OPERATIONS_RETENTION_BATCH_SIZE:500}
+      interval: ${REVIEW_OPERATIONS_RETENTION_INTERVAL:1h}
 
 management:
   endpoints:

@@ -108,8 +108,43 @@ class ApplicationModeTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void bindsSafeBoundedRetentionMaintenanceDefaultsAndOverrides() {
+        contextRunner.run(context -> {
+            ReviewOperationsMaintenanceProperties maintenance =
+                    context.getBean(ReviewOperationsMaintenanceProperties.class);
+            assertThat(maintenance.retentionAge()).isEqualTo(Duration.ofDays(30));
+            assertThat(maintenance.batchSize()).isEqualTo(500);
+            assertThat(maintenance.interval()).isEqualTo(Duration.ofHours(1));
+        });
+        contextRunner.withPropertyValues(
+                        "code-review.server.maintenance.retention-age=14d",
+                        "code-review.server.maintenance.batch-size=25",
+                        "code-review.server.maintenance.interval=15m")
+                .run(context -> {
+                    ReviewOperationsMaintenanceProperties maintenance =
+                            context.getBean(ReviewOperationsMaintenanceProperties.class);
+                    assertThat(maintenance.retentionAge()).isEqualTo(Duration.ofDays(14));
+                    assertThat(maintenance.batchSize()).isEqualTo(25);
+                    assertThat(maintenance.interval()).isEqualTo(Duration.ofMinutes(15));
+                });
+    }
+
+    @Test
+    void rejectsRetentionSettingsThatWouldDisableBoundsOrBusySpin() {
+        contextRunner.withPropertyValues("code-review.server.maintenance.retention-age=0s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues("code-review.server.maintenance.batch-size=0")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues("code-review.server.maintenance.interval=0s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     @Configuration(proxyBeanMethods = false)
-    @EnableConfigurationProperties(ServerProperties.class)
+    @EnableConfigurationProperties({
+            ServerProperties.class,
+            ReviewOperationsMaintenanceProperties.class
+    })
     static class ServerPropertiesConfiguration {
     }
 }

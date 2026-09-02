@@ -51,6 +51,7 @@ import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.J
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JdbcReviewRunRepository;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JsonColumnCodec;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresObsoleteReviewRunStore;
+import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresReviewOperationsRetention;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.TransactionalReviewRunAdmissionStore;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.TransactionalReviewRunMutationStore;
 import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
@@ -64,20 +65,16 @@ import org.springframework.boot.actuate.health.HttpCodeStatusMapper;
 import org.springframework.boot.actuate.health.StatusAggregator;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClient;
 
-import javax.sql.DataSource;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -96,30 +93,23 @@ import java.util.concurrent.ThreadLocalRandom;
 public class ServerConfiguration {
 
     @Bean
-    DataSource dataSource(DataSourceProperties properties) {
-        DriverManagerDataSource dataSource = new DriverManagerDataSource();
-        dataSource.setUrl(properties.getUrl());
-        dataSource.setUsername(properties.getUsername());
-        dataSource.setPassword(properties.getPassword());
-        if (properties.getDriverClassName() != null) {
-            dataSource.setDriverClassName(properties.getDriverClassName());
-        }
-        return dataSource;
-    }
-
-    @Bean
-    JdbcTemplate jdbcTemplate(DataSource dataSource) {
-        return new JdbcTemplate(dataSource);
-    }
-
-    @Bean
-    PlatformTransactionManager transactionManager(DataSource dataSource) {
-        return new DataSourceTransactionManager(dataSource);
-    }
-
-    @Bean
     TransactionOperations transactionOperations(PlatformTransactionManager transactionManager) {
         return new TransactionTemplate(transactionManager);
+    }
+
+    @Bean
+    PostgresReviewOperationsRetention reviewOperationsRetention(
+            JdbcTemplate jdbcTemplate,
+            TransactionOperations transactions,
+            Clock clock) {
+        return new PostgresReviewOperationsRetention(jdbcTemplate, transactions, clock);
+    }
+
+    @Bean
+    ScheduledReviewOperationsRetention scheduledReviewOperationsRetention(
+            PostgresReviewOperationsRetention retention,
+            ReviewOperationsMaintenanceProperties properties) {
+        return new ScheduledReviewOperationsRetention(retention, properties);
     }
 
     @Bean
