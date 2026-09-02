@@ -28,5 +28,12 @@ class ReviewWorkBudgetMetricsTest {
         assertThat(metrics.get("code.review.work.budget.limit")
                 .tag("limit", "analyzer_max_heap_mb").gauge().value())
                 .isEqualTo(256);
+        assertThat(metrics.get("code.review.work.budget.limit")
+                .tag("limit", "stage_workers").gauge().value()).isEqualTo(4);
+        assertThat(metrics.get("code.review.work.budget.limit")
+                .tag("limit", "stage_queue_capacity").gauge().value()).isEqualTo(16);
+        assertThat(metrics.get("code.review.work.budget.limit")
+                .tag("limit", "workspace_max_children_inspected").gauge().value())
+                .isEqualTo(1_024);
     }
 }

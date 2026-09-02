@@ -29,6 +29,10 @@ public final class PipelineStageExecutor implements AutoCloseable {
         Stage(String metricValue) {
             this.metricValue = metricValue;
         }
+
+        String metricValue() {
+            return metricValue;
+        }
     }
 
     private final MeterRegistry metrics;
@@ -38,7 +42,7 @@ public final class PipelineStageExecutor implements AutoCloseable {
         this(metrics, 4, 16);
     }
 
-    PipelineStageExecutor(MeterRegistry metrics, int workers, int queueCapacity) {
+    public PipelineStageExecutor(MeterRegistry metrics, int workers, int queueCapacity) {
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         if (workers <= 0 || queueCapacity <= 0) {
             throw new IllegalArgumentException("stage capacity must be positive");

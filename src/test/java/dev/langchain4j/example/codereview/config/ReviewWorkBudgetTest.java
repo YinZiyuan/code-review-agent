@@ -29,6 +29,7 @@ class ReviewWorkBudgetTest {
             assertThat(budget.input().maxChangedFiles()).isEqualTo(500);
             assertThat(budget.input().maxJavaSourceFiles()).isEqualTo(2_000);
             assertThat(budget.input().maxJavaSourceBytes()).isEqualTo(32L * 1024 * 1024);
+            assertThat(budget.input().maxJavaSourceLineBytes()).isEqualTo(64 * 1024);
             assertThat(budget.input().maxSnippets()).isEqualTo(200);
             assertThat(budget.input().maxFindings()).isEqualTo(200);
             assertThat(budget.input().maxArchiveBytes()).isEqualTo(100 * 1024 * 1024);
@@ -38,13 +39,50 @@ class ReviewWorkBudgetTest {
             assertThat(budget.prompt().completionReserveTokens()).isEqualTo(2_048);
             assertThat(budget.prompt().inputFramingReserveTokens()).isEqualTo(16);
             assertThat(budget.prompt().maxDiffTokens()).isEqualTo(4_096);
+            assertThat(budget.prompt().modelId()).isEqualTo("moonshot-v1-8k");
+            assertThat(budget.prompt().tokenizerId()).isEqualTo("cl100k_base");
+            assertThat(budget.prompt().tokenizerVersion()).isEqualTo("jtokkit-1.1.0");
             assertThat(budget.process().maxOutputBytes()).isEqualTo(64 * 1024);
             assertThat(budget.process().compilerMaxHeapMb()).isEqualTo(256);
             assertThat(budget.process().analyzerMaxHeapMb()).isEqualTo(256);
             assertThat(budget.stages().reviewModel()).isEqualTo(Duration.ofSeconds(60));
             assertThat(budget.workspace().staleAge()).isEqualTo(Duration.ofHours(24));
+            assertThat(budget.workspace().maxChildrenInspected()).isEqualTo(1_024);
+            assertThat(budget.workspace().maxDeletionsPerRun()).isEqualTo(64);
+            assertThat(budget.workspace().maxEntriesDeletedPerRun()).isEqualTo(10_000);
+            assertThat(budget.workspace().cleanupDeadline()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(budget.execution().reviewerTimeout()).isEqualTo(Duration.ofSeconds(60));
+            assertThat(budget.execution().stageWorkers()).isEqualTo(4);
+            assertThat(budget.execution().stageQueueCapacity()).isEqualTo(16);
             assertThat(budget.configurationHash()).matches("[0-9a-f]{64}");
+            assertThat(budget.identity()).isEqualTo(
+                    "review-work-v1:" + budget.configurationHash());
         });
+    }
+
+    @Test
+    void rejectsRuntimeModelThatDoesNotMatchTheValidatedTokenizerContract() {
+        contextRunner.withPropertyValues(
+                        "langchain4j.open-ai.chat-model.model-name=unknown-model")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void everyExecutionAndTokenizerCapChangesTheStableIdentity() {
+        ReviewWorkBudget defaults = new ReviewWorkBudgetProperties(
+                null, null, null, null, null, null, null).toBudget();
+        contextRunner.withPropertyValues(
+                        "langchain4j.open-ai.chat-model.model-name=moonshot-v1-8k",
+                        "code-review.work-budget.execution.reviewer-timeout=7s",
+                        "code-review.work-budget.execution.stage-workers=2",
+                        "code-review.work-budget.execution.stage-queue-capacity=3")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    ReviewWorkBudget changed = context.getBean(ReviewWorkBudget.class);
+                    assertThat(changed.execution()).isEqualTo(
+                            new ReviewWorkBudget.ExecutionLimits(Duration.ofSeconds(7), 2, 3));
+                    assertThat(changed.configurationHash()).isNotEqualTo(defaults.configurationHash());
+                });
     }
 
     @Test

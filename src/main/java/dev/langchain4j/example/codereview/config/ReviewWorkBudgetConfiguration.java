@@ -9,6 +9,7 @@ import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 
 import java.nio.file.Path;
 
@@ -16,13 +17,19 @@ import java.nio.file.Path;
 public class ReviewWorkBudgetConfiguration {
 
     @Bean
-    ReviewWorkBudget reviewWorkBudget(ReviewWorkBudgetProperties properties) {
-        return properties.toBudget();
+    ReviewWorkBudget reviewWorkBudget(
+            ReviewWorkBudgetProperties properties, Environment environment) {
+        ReviewWorkBudget budget = properties.toBudget();
+        String effectiveModel = environment.getProperty(
+                "langchain4j.open-ai.chat-model.model-name", "moonshot-v1-8k");
+        ReviewModelContextContract.verify(effectiveModel, budget.prompt());
+        return budget;
     }
 
     @Bean
-    PromptTokenizer promptTokenizer() {
-        return new JTokkitPromptTokenizer();
+    PromptTokenizer promptTokenizer(ReviewWorkBudget budget) {
+        return new JTokkitPromptTokenizer(
+                budget.prompt().tokenizerId(), budget.prompt().tokenizerVersion());
     }
 
     @Bean
@@ -32,8 +39,12 @@ public class ReviewWorkBudgetConfiguration {
     }
 
     @Bean(destroyMethod = "close")
-    PipelineStageExecutor pipelineStageExecutor(MeterRegistry metrics) {
-        return new PipelineStageExecutor(metrics);
+    PipelineStageExecutor pipelineStageExecutor(
+            MeterRegistry metrics, ReviewWorkBudget budget) {
+        return new PipelineStageExecutor(
+                metrics,
+                budget.execution().stageWorkers(),
+                budget.execution().stageQueueCapacity());
     }
 
     @Bean

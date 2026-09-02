@@ -32,6 +32,13 @@ public class ToolFindingsProducer {
         List<Violation> all = new ArrayList<>();
         List<ToolStatus> statuses = new ArrayList<>();
 
+        if (ctx.sourceContextStatus() == ReviewContext.SourceContextStatus.COMPLETE) {
+            statuses.add(new ToolStatus("cross_file_context", ToolRunState.RAN, null));
+        } else {
+            statuses.add(new ToolStatus("cross_file_context", ToolRunState.SKIPPED_EXPECTED,
+                    sourceContextReason(ctx.sourceContextStatus())));
+        }
+
         try {
             all.addAll(regex.analyze(ctx.fileDiffs()));
             statuses.add(new ToolStatus("regex", ToolRunState.RAN, null));
@@ -55,6 +62,16 @@ public class ToolFindingsProducer {
         List<Violation> deduped = dedupe(all);
         int findingCount = Math.min(deduped.size(), budget.input().maxFindings());
         return new ToolFindings(deduped.subList(0, findingCount), statuses);
+    }
+
+    private static String sourceContextReason(ReviewContext.SourceContextStatus status) {
+        return switch (status) {
+            case LIMIT_EXCEEDED -> "source context limit exceeded";
+            case TIMED_OUT -> "source context timed out";
+            case CANCELLED -> "source context cancelled";
+            case NOT_AVAILABLE -> "source context unavailable";
+            case COMPLETE -> "completed";
+        };
     }
 
     private List<Violation> dedupe(List<Violation> in) {

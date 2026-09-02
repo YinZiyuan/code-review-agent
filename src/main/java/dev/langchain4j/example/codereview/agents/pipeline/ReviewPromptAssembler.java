@@ -7,6 +7,7 @@ import dev.langchain4j.example.codereview.model.Citation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Comparator;
 
 public final class ReviewPromptAssembler {
 
@@ -139,7 +140,14 @@ public final class ReviewPromptAssembler {
             return "(none)";
         }
         StringBuilder rendered = new StringBuilder();
-        for (Violation violation : violations) {
+        List<Violation> stable = violations.stream()
+                .sorted(Comparator.comparing(Violation::file)
+                        .thenComparingInt(Violation::line)
+                        .thenComparing(Violation::rule)
+                        .thenComparing(violation -> violation.severity().name())
+                        .thenComparing(Violation::message))
+                .toList();
+        for (Violation violation : stable) {
             rendered.append("- [").append(violation.severity()).append("] ")
                     .append(violation.file()).append(':').append(violation.line())
                     .append(" (").append(violation.rule()).append(") ")
@@ -150,9 +158,10 @@ public final class ReviewPromptAssembler {
 
     private static String renderContext(ReviewContext context) {
         if (context.contextByFile().isEmpty()) {
-            return "(none)";
+            return "status=" + context.sourceContextStatus().name().toLowerCase() + "\n(none)";
         }
-        StringBuilder rendered = new StringBuilder();
+        StringBuilder rendered = new StringBuilder("status=")
+                .append(context.sourceContextStatus().name().toLowerCase()).append('\n');
         context.contextByFile().forEach((file, snippets) -> {
             rendered.append("// for ").append(file).append('\n');
             for (CodeSnippet snippet : snippets) {
@@ -168,8 +177,14 @@ public final class ReviewPromptAssembler {
             return "(none)";
         }
         StringBuilder rendered = new StringBuilder();
-        for (int index = 0; index < citations.size(); index++) {
-            Citation citation = citations.get(index);
+        Comparator<String> text = Comparator.nullsFirst(Comparator.naturalOrder());
+        List<Citation> stable = citations.stream()
+                .sorted(Comparator.comparing(Citation::id, text)
+                        .thenComparing(Citation::source, text)
+                        .thenComparing(Citation::section, text))
+                .toList();
+        for (int index = 0; index < stable.size(); index++) {
+            Citation citation = stable.get(index);
             rendered.append(index + 1).append(") id=").append(citation.id())
                     .append(" source=").append(citation.source())
                     .append(" section=").append(citation.section()).append('\n');

@@ -2,12 +2,16 @@ package dev.langchain4j.example.codereview.agents.pipeline;
 
 import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.config.ReviewWorkBudgetProperties;
+import dev.langchain4j.example.codereview.analyzer.Violation;
 import dev.langchain4j.example.codereview.infra.DiffParser;
+import dev.langchain4j.example.codereview.model.Citation;
+import dev.langchain4j.example.codereview.model.Severity;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -71,5 +75,39 @@ class ReviewPromptAssemblerTest {
         assertThat(tokenizer.count(truncated)).isLessThanOrEqualTo(17);
         assertThat(truncated).doesNotContain("�");
         assertThat(text).startsWith(truncated);
+    }
+
+    @Test
+    void allUnorderedPromptInputsAreCanonicalizedBeforeTruncation() {
+        ReviewWorkBudget budget = new ReviewWorkBudgetProperties(
+                null, null, null, null, null, null).toBudget();
+        ReviewPromptAssembler assembler = new ReviewPromptAssembler(
+                new JTokkitPromptTokenizer(), budget);
+        Map<String, List<CodeSnippet>> forward = new LinkedHashMap<>();
+        forward.put("z/Z.java", List.of(new CodeSnippet("z/Z.java", 9, "z")));
+        forward.put("a/A.java", List.of(new CodeSnippet("a/A.java", 2, "b"),
+                new CodeSnippet("a/A.java", 1, "a")));
+        Map<String, List<CodeSnippet>> reverse = new LinkedHashMap<>();
+        reverse.put("a/A.java", List.of(new CodeSnippet("a/A.java", 1, "a"),
+                new CodeSnippet("a/A.java", 2, "b")));
+        reverse.put("z/Z.java", List.of(new CodeSnippet("z/Z.java", 9, "z")));
+        List<Violation> findings = List.of(
+                new Violation(Severity.WARNING, "z/Z.java", 9, "z-rule", "z"),
+                new Violation(Severity.CRITICAL, "a/A.java", 1, "a-rule", "a"));
+        List<Citation> citations = List.of(
+                new Citation("z", "z-source", "z-section"),
+                new Citation("a", "a-source", "a-section"));
+
+        String first = assembler.assemble("system",
+                new ReviewContext("diff", List.of(), forward, Path.of("source")),
+                new ToolFindings(findings, List.of()), citations).text();
+        String second = assembler.assemble("system",
+                new ReviewContext("diff", List.of(), reverse, Path.of("source")),
+                new ToolFindings(List.of(findings.get(1), findings.get(0)), List.of()),
+                List.of(citations.get(1), citations.get(0))).text();
+
+        assertThat(first).isEqualTo(second);
+        assertThat(first.indexOf("a/A.java")).isLessThan(first.indexOf("z/Z.java"));
+        assertThat(first.indexOf("id=a ")).isLessThan(first.indexOf("id=z "));
     }
 }

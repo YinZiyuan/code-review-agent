@@ -101,4 +101,31 @@ class DiffAnalyzerTest {
         assertThat(context.contextByFile()).hasSize(1).containsOnlyKeys("F0.java");
         assertThat(context.contextByFile().get("F0.java")).hasSize(1);
     }
+
+    @Test
+    void exposesAnOverBudgetCorpusAsASafeNonBlockingContextStatus() throws Exception {
+        Path src = Files.createDirectories(tmp.resolve("over-budget"));
+        Files.writeString(src.resolve("A.java"), "class A {}\n");
+        Files.writeString(src.resolve("B.java"), "class B {}\n");
+        ReviewWorkBudget budget = new ReviewWorkBudget(
+                defaults.version(),
+                new ReviewWorkBudget.InputLimits(1024, 10, 1, 1024, 64,
+                        1024, 2048, 10, 10, 10),
+                defaults.prompt(), defaults.process(), defaults.stages(), defaults.workspace(),
+                defaults.execution());
+        String diff = """
+                diff --git a/Foo.java b/Foo.java
+                --- a/Foo.java
+                +++ b/Foo.java
+                @@ -1 +1,2 @@
+                 class Foo {}
+                +class Foo { A use() { return new A(); } }
+                """;
+
+        ReviewContext context = new DiffAnalyzer(parser, search, budget).analyze(diff, src);
+
+        assertThat(context.contextByFile()).isEmpty();
+        assertThat(context.sourceContextStatus())
+                .isEqualTo(ReviewContext.SourceContextStatus.LIMIT_EXCEEDED);
+    }
 }

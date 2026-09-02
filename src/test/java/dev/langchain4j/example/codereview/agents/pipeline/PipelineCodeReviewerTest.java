@@ -115,4 +115,35 @@ class PipelineCodeReviewerTest {
                 .tag("outcome", "timeout")
                 .timer().count()).isEqualTo(1);
     }
+
+    @Test
+    void overallReviewerTimeoutCapsTheSumOfIndividuallyFastStages() {
+        DiffAnalyzer analyzer = mock(DiffAnalyzer.class);
+        ToolFindingsProducer tools = mock(ToolFindingsProducer.class);
+        LlmReviewer llm = mock(LlmReviewer.class);
+        Summarizer summarizer = mock(Summarizer.class);
+        Path source = Path.of("/tmp/exact-sha");
+        ReviewContext context = new ReviewContext("diff", List.of(), Map.of(), source);
+        when(analyzer.analyze("diff", source)).thenAnswer(ignored -> {
+            Thread.sleep(30);
+            return context;
+        });
+        when(tools.produce(context)).thenAnswer(ignored -> {
+            Thread.sleep(30);
+            return new ToolFindings(List.of(), List.of());
+        });
+        ReviewWorkBudget budget = new ReviewWorkBudget(
+                defaults.version(), defaults.input(), defaults.prompt(), defaults.process(),
+                defaults.stages(), defaults.workspace(),
+                new ReviewWorkBudget.ExecutionLimits(Duration.ofMillis(45), 4, 16));
+
+        PipelineCodeReviewer reviewer = new PipelineCodeReviewer(
+                analyzer, tools, llm, summarizer, budget, stages);
+
+        assertThat(catchThrowableOfType(
+                ReviewStageTimeoutException.class,
+                () -> reviewer.reviewWithTelemetry("diff", source)))
+                .hasMessage("review stage timed out: tool_analysis");
+        verifyNoInteractions(llm, summarizer);
+    }
 }

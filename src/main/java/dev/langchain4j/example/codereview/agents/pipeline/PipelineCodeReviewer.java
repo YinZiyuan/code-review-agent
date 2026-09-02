@@ -6,6 +6,7 @@ import dev.langchain4j.example.codereview.model.ReviewResult;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
+import java.time.Duration;
 
 @Component
 public class PipelineCodeReviewer implements CodeReviewAgent {
@@ -38,23 +39,28 @@ public class PipelineCodeReviewer implements CodeReviewAgent {
 
     @Override
     public ReviewExecution reviewWithTelemetry(String request, Path sourceRoot) {
+        long reviewStarted = System.nanoTime();
         String diff = extractDiff(request);
         ReviewContext ctx = stages.run(
                 PipelineStageExecutor.Stage.DIFF_ANALYSIS,
-                budget.stages().diffAnalysis(),
+                remaining(PipelineStageExecutor.Stage.DIFF_ANALYSIS,
+                        budget.stages().diffAnalysis(), reviewStarted),
                 () -> diffAnalyzer.analyze(diff, sourceRoot));
         ToolFindings tools = stages.run(
                 PipelineStageExecutor.Stage.TOOL_ANALYSIS,
-                budget.stages().toolAnalysis(),
+                remaining(PipelineStageExecutor.Stage.TOOL_ANALYSIS,
+                        budget.stages().toolAnalysis(), reviewStarted),
                 () -> toolFindingsProducer.produce(ctx));
         LlmReviewer.Draft draft = stages.run(
                 PipelineStageExecutor.Stage.REVIEW_MODEL,
-                budget.stages().reviewModel(),
+                remaining(PipelineStageExecutor.Stage.REVIEW_MODEL,
+                        budget.stages().reviewModel(), reviewStarted),
                 () -> llmReviewer.review(ctx, tools));
         try {
             ReviewResult result = stages.run(
                     PipelineStageExecutor.Stage.SUMMARIZATION,
-                    budget.stages().summarization(),
+                    remaining(PipelineStageExecutor.Stage.SUMMARIZATION,
+                            budget.stages().summarization(), reviewStarted),
                     () -> summarizer.summarize(
                             draft.result(), tools, draft.citationCandidates()));
             return new ReviewExecution(result, draft.inputTokens(), draft.outputTokens());
@@ -62,6 +68,16 @@ public class PipelineCodeReviewer implements CodeReviewAgent {
             throw new ReviewExecutionException(
                     failure, draft.inputTokens(), draft.outputTokens());
         }
+    }
+
+    private Duration remaining(
+            PipelineStageExecutor.Stage stage, Duration stageLimit, long reviewStarted) {
+        long elapsed = Math.max(0, System.nanoTime() - reviewStarted);
+        long overallRemaining = budget.execution().reviewerTimeout().toNanos() - elapsed;
+        if (overallRemaining <= 0) {
+            throw new ReviewStageTimeoutException(stage.metricValue());
+        }
+        return Duration.ofNanos(Math.min(stageLimit.toNanos(), overallRemaining));
     }
 
     private String extractDiff(String request) {

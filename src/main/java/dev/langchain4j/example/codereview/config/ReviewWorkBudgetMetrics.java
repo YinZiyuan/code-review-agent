@@ -20,6 +20,8 @@ public final class ReviewWorkBudgetMetrics {
         limit(metrics, budget, "max_changed_files", budget.input().maxChangedFiles());
         limit(metrics, budget, "max_java_source_files", budget.input().maxJavaSourceFiles());
         limit(metrics, budget, "max_java_source_bytes", budget.input().maxJavaSourceBytes());
+        limit(metrics, budget, "max_java_source_line_bytes",
+                budget.input().maxJavaSourceLineBytes());
         limit(metrics, budget, "max_archive_bytes", budget.input().maxArchiveBytes());
         limit(metrics, budget, "max_expanded_bytes", budget.input().maxExpandedBytes());
         limit(metrics, budget, "max_archive_entries", budget.input().maxArchiveEntries());
@@ -32,6 +34,8 @@ public final class ReviewWorkBudgetMetrics {
         limit(metrics, budget, "input_framing_reserve_tokens",
                 budget.prompt().inputFramingReserveTokens());
         limit(metrics, budget, "max_process_output_bytes", budget.process().maxOutputBytes());
+        limit(metrics, budget, "max_compiler_argument_bytes",
+                budget.process().maxCompilerArgumentBytes());
         limit(metrics, budget, "compiler_max_heap_mb", budget.process().compilerMaxHeapMb());
         limit(metrics, budget, "analyzer_max_heap_mb", budget.process().analyzerMaxHeapMb());
         limit(metrics, budget, "diff_analysis_deadline_millis",
@@ -46,6 +50,19 @@ public final class ReviewWorkBudgetMetrics {
         limit(metrics, budget, "spotbugs_deadline_millis", budget.stages().spotbugs().toMillis());
         limit(metrics, budget, "workspace_stale_age_millis",
                 budget.workspace().staleAge().toMillis());
+        limit(metrics, budget, "workspace_max_children_inspected",
+                budget.workspace().maxChildrenInspected());
+        limit(metrics, budget, "workspace_max_deletions_per_run",
+                budget.workspace().maxDeletionsPerRun());
+        limit(metrics, budget, "workspace_max_entries_deleted_per_run",
+                budget.workspace().maxEntriesDeletedPerRun());
+        limit(metrics, budget, "workspace_cleanup_deadline_millis",
+                budget.workspace().cleanupDeadline().toMillis());
+        limit(metrics, budget, "reviewer_timeout_millis",
+                budget.execution().reviewerTimeout().toMillis());
+        limit(metrics, budget, "stage_workers", budget.execution().stageWorkers());
+        limit(metrics, budget, "stage_queue_capacity",
+                budget.execution().stageQueueCapacity());
     }
 
     private static void limit(
