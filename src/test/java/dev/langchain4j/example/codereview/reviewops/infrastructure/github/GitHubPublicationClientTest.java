@@ -246,7 +246,7 @@ class GitHubPublicationClientTest {
     }
 
     @Test
-    void reconcilesOnlyAnExactTerminalMarkerAtTheRequestedHeadLocationAndApp() {
+    void continuesPaginationPastUnownedExactMarkerSpoofsToTheAppOwnedMatch() {
         Fixture fixture = fixture();
         expectCommentPage(fixture.server, 1, mismatchedMarkerCommentsPage());
         expectCommentPage(fixture.server, 2, commentsJson(List.of(reviewComment(
@@ -638,6 +638,15 @@ class GitHubPublicationClientTest {
         comments.add(reviewComment(
                 506, MARKER, HEAD_SHA, HEAD_SHA,
                 "src/Foo.java", 12, "RIGHT", 999L));
+        comments.add(reviewComment(
+                507, MARKER, HEAD_SHA, HEAD_SHA,
+                "src/Foo.java", 12, "RIGHT", null));
+        Map<String, Object> userAuthoredSpoof = reviewComment(
+                508, MARKER, HEAD_SHA, HEAD_SHA,
+                "src/Foo.java", 12, "RIGHT", null);
+        userAuthoredSpoof.put(
+                "user", Map.of("id", 77, "login", "reviewer", "type", "User"));
+        comments.add(userAuthoredSpoof);
         for (int index = comments.size() + 1; index <= 100; index++) {
             comments.add(reviewComment(
                     600 + index,

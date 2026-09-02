@@ -283,11 +283,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 || !"RIGHT".equals(optionalText(comment, "side"))) {
             return false;
         }
-        JsonNode performedViaApp = comment.get("performed_via_github_app");
-        if (performedViaApp == null || performedViaApp.isNull()) {
-            return true;
-        }
-        JsonNode remoteAppId = performedViaApp.path("id");
+        JsonNode remoteAppId = comment.path("performed_via_github_app").path("id");
         return remoteAppId.isIntegralNumber()
                 && remoteAppId.canConvertToLong()
                 && remoteAppId.longValue() == appId;
