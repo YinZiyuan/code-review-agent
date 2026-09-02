@@ -52,6 +52,7 @@ public final class ExecuteReviewRun {
     private final ReviewFindingMapper findingMapper;
     private final DiffParser diffParser;
     private final Clock clock;
+    private final ReviewOperationsTelemetry telemetry;
 
     public ExecuteReviewRun(
             ReviewRunRepository reviewRuns,
@@ -61,6 +62,19 @@ public final class ExecuteReviewRun {
             ReviewFindingMapper findingMapper,
             DiffParser diffParser,
             Clock clock) {
+        this(reviewRuns, mutations, sources, reviewer, findingMapper, diffParser, clock,
+                ReviewOperationsTelemetry.NOOP);
+    }
+
+    public ExecuteReviewRun(
+            ReviewRunRepository reviewRuns,
+            ReviewRunMutationStore mutations,
+            ReviewSourceProvider sources,
+            CodeReviewAgent reviewer,
+            ReviewFindingMapper findingMapper,
+            DiffParser diffParser,
+            Clock clock,
+            ReviewOperationsTelemetry telemetry) {
         this.reviewRuns = Objects.requireNonNull(reviewRuns, "reviewRuns");
         this.mutations = Objects.requireNonNull(mutations, "mutations");
         this.sources = Objects.requireNonNull(sources, "sources");
@@ -68,6 +82,7 @@ public final class ExecuteReviewRun {
         this.findingMapper = Objects.requireNonNull(findingMapper, "findingMapper");
         this.diffParser = Objects.requireNonNull(diffParser, "diffParser");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     public ExecutionOutcome execute(ReviewRunId id) {
@@ -92,6 +107,7 @@ public final class ExecuteReviewRun {
                     "interrupted execution details are not retained"), recoveredAt);
             if (run.state() == ReviewRunState.FAILED) {
                 enqueueFailurePresentation(run, version, recoveredAt, fence);
+                telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.FAILED, 1);
                 return ExecutionOutcome.terminal(run.finalFailure().orElseThrow());
             }
             fence.requireCurrent();
@@ -160,6 +176,8 @@ public final class ExecuteReviewRun {
         run.supersede(authoritative, clock.instant());
         fence.requireCurrent();
         mutations.saveProgress(run, version);
+        telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.SUPERSEDED, 1);
+        telemetry.preventedStale(ReviewOperationsTelemetry.StaleStage.EXECUTION_SOURCE);
         return ExecutionOutcome.superseded();
     }
 
@@ -240,6 +258,7 @@ public final class ExecuteReviewRun {
         }
         if (run.state() == ReviewRunState.FAILED) {
             enqueueFailurePresentation(run, version, failedAt, fence);
+            telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.FAILED, 1);
         } else {
             fence.requireCurrent();
             mutations.saveProgress(run, version);

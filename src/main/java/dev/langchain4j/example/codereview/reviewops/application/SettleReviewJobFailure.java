@@ -22,9 +22,17 @@ import java.util.Objects;
 public final class SettleReviewJobFailure implements FinalJobFailureSettlement {
 
     private final ReviewRunRepository reviewRuns;
+    private final ReviewOperationsTelemetry telemetry;
 
     public SettleReviewJobFailure(ReviewRunRepository reviewRuns) {
+        this(reviewRuns, ReviewOperationsTelemetry.NOOP);
+    }
+
+    public SettleReviewJobFailure(
+            ReviewRunRepository reviewRuns,
+            ReviewOperationsTelemetry telemetry) {
         this.reviewRuns = Objects.requireNonNull(reviewRuns, "reviewRuns");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     @Override
@@ -59,6 +67,8 @@ public final class SettleReviewJobFailure implements FinalJobFailureSettlement {
                             ? "review job attempts exhausted"
                             : "review job failed terminally"), settledAt);
             reviewRuns.update(run, stored.version());
+            telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.FAILED, 1);
+            telemetry.publication(ReviewOperationsTelemetry.PublicationOutcome.FAILED);
         }
         return new FinalJobFailureSettlement.FinalFailureSettlement(
                 DurableJobQueue.FailureDisposition.DEAD,

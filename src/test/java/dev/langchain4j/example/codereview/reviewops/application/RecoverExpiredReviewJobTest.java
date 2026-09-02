@@ -28,7 +28,9 @@ class RecoverExpiredReviewJobTest {
         ReviewRun run = requestedRun(1);
         run.startAttempt(NOW.minusSeconds(30));
         RecordingRepository repository = new RecordingRepository(run, 5);
-        RecoverExpiredReviewExecution recovery = new RecoverExpiredReviewExecution(repository);
+        RecordingTelemetry telemetry = new RecordingTelemetry();
+        RecoverExpiredReviewExecution recovery =
+                new RecoverExpiredReviewExecution(repository, telemetry);
 
         ExpiredJobLeaseRecovery.RecoverySettlement settlement = recovery.recoverWithIntents(
                 finalLease(ReviewRunAdmissionStore.REVIEW_EXECUTION_JOB_TYPE, run.id()), NOW);
@@ -40,6 +42,7 @@ class RecoverExpiredReviewJobTest {
             assertThat(job.jobType()).isEqualTo(ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE);
             assertThat(job.payloadReference()).isEqualTo(run.id().value());
         });
+        assertThat(telemetry.failed).isOne();
     }
 
     @Test
@@ -107,6 +110,16 @@ class RecoverExpiredReviewJobTest {
     }
 
     private record JobCase(String jobType, ReviewRun run) {
+    }
+
+    private static final class RecordingTelemetry implements ReviewOperationsTelemetry {
+        private int failed;
+
+        @Override
+        public void lifecycle(LifecycleOutcome outcome, int count) {
+            assertThat(outcome).isEqualTo(LifecycleOutcome.FAILED);
+            failed += count;
+        }
     }
 
     private static final class RecordingRepository implements ReviewRunRepository {

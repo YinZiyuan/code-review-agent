@@ -7,6 +7,7 @@ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFai
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubInstallationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
+import dev.langchain4j.example.codereview.reviewops.application.ReviewOperationsTelemetry;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
@@ -60,6 +61,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
     private final String checkName;
     private final CheckRunFormatter checkFormatter;
     private final InlineCommentFormatter inlineFormatter;
+    private final ReviewOperationsTelemetry telemetry;
 
     public GitHubPublicationClient(
             RestClient restClient,
@@ -70,6 +72,20 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
             String checkName,
             CheckRunFormatter checkFormatter,
             InlineCommentFormatter inlineFormatter) {
+        this(restClient, installations, objectMapper, clock, appId, checkName,
+                checkFormatter, inlineFormatter, ReviewOperationsTelemetry.NOOP);
+    }
+
+    public GitHubPublicationClient(
+            RestClient restClient,
+            GitHubInstallationGateway installations,
+            ObjectMapper objectMapper,
+            Clock clock,
+            long appId,
+            String checkName,
+            CheckRunFormatter checkFormatter,
+            InlineCommentFormatter inlineFormatter,
+            ReviewOperationsTelemetry telemetry) {
         this.restClient = Objects.requireNonNull(restClient, "restClient");
         this.installations = Objects.requireNonNull(installations, "installations");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -87,11 +103,18 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         this.checkName = checkName;
         this.checkFormatter = Objects.requireNonNull(checkFormatter, "checkFormatter");
         this.inlineFormatter = Objects.requireNonNull(inlineFormatter, "inlineFormatter");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     @Override
     public AuthoritativeRevision authoritativeRevision(PullRequestRevision revision) {
         Objects.requireNonNull(revision, "revision");
+        return telemetry.timePublicationStage(
+                ReviewOperationsTelemetry.PublicationStage.HEAD_LOOKUP,
+                () -> readAuthoritativeRevision(revision));
+    }
+
+    private AuthoritativeRevision readAuthoritativeRevision(PullRequestRevision revision) {
         byte[] response = exchange(
                 revision,
                 HttpMethod.GET,
@@ -123,6 +146,13 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
     public CheckRunArtifact upsertCheck(CheckRunRequest request, OperationFence fence) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(fence, "fence");
+        return telemetry.timePublicationStage(
+                ReviewOperationsTelemetry.PublicationStage.CHECK,
+                () -> upsertCheckUntimed(request, fence));
+    }
+
+    private CheckRunArtifact upsertCheckUntimed(
+            CheckRunRequest request, OperationFence fence) {
         CheckRunFormatter.FormattedCheckRun formatted = checkFormatter.format(request);
         Optional<String> persistedId = request.existingGitHubArtifactId()
                 .map(GitHubPublicationClient::requireArtifactId);
@@ -165,6 +195,16 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
             InlineCommentRequest request, OperationFence fence) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(fence, "fence");
+        InlineCommentArtifact artifact = telemetry.timePublicationStage(
+                ReviewOperationsTelemetry.PublicationStage.INLINE_COMMENT,
+                () -> reconcileInlineCommentUntimed(request, fence));
+        telemetry.comment(ReviewOperationsTelemetry.CommentOutcome.valueOf(
+                artifact.reconciliation().name()));
+        return artifact;
+    }
+
+    private InlineCommentArtifact reconcileInlineCommentUntimed(
+            InlineCommentRequest request, OperationFence fence) {
         String body = inlineFormatter.format(request.finding());
         String marker = InlineCommentFormatter.marker(
                 request.finding().fingerprint().value());
@@ -231,6 +271,15 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
             InlineCommentRetractionRequest request, OperationFence fence) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(fence, "fence");
+        InlineCommentRetraction retraction = telemetry.timePublicationStage(
+                ReviewOperationsTelemetry.PublicationStage.COMMENT_RETRACTION,
+                () -> retractInlineCommentUntimed(request, fence));
+        telemetry.comment(ReviewOperationsTelemetry.CommentOutcome.RETRACTED);
+        return retraction;
+    }
+
+    private InlineCommentRetraction retractInlineCommentUntimed(
+            InlineCommentRetractionRequest request, OperationFence fence) {
         PublicationReference reference = request.reference();
         if (!COMMENT_ARTIFACT_TYPE.equals(reference.artifactType())) {
             throw deterministic("Persisted GitHub comment reference was invalid");

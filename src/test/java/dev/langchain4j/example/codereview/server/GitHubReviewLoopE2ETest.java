@@ -292,6 +292,48 @@ class GitHubReviewLoopE2ETest {
     }
 
     @Test
+    void exhaustedPublicationAtomicallyFailsRunAndPublishesOneNeutralCheck()
+            throws Exception {
+        FAKE_GITHUB.failNextCheckMutations(3);
+        double deadBefore = counterValue(
+                "code.review.jobs", "job.type", "PUBLISH_REVIEW", "outcome", "dead");
+        double failedBefore = counterValue(
+                "code.review.publication.outcomes", "outcome", "failed");
+        double neutralBefore = counterValue(
+                "code.review.publication.outcomes", "outcome", "neutral_failure");
+        byte[] payload = openedPayload("delivery-exhausted-publication");
+        assertThat(postWebhook(
+                payload,
+                "delivery-exhausted-publication",
+                signature(payload))).isEqualTo(202);
+
+        runUntilIdle();
+
+        assertThat(jdbcTemplate.queryForObject("SELECT state FROM review_runs", String.class))
+                .isEqualTo("FAILED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT state FROM durable_jobs WHERE job_type = 'PUBLISH_REVIEW'
+                """, String.class)).isEqualTo("DEAD");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT state FROM durable_jobs WHERE job_type = 'PRESENT_REVIEW_FAILURE'
+                """, String.class)).isEqualTo("SUCCEEDED");
+        assertThat(FAKE_GITHUB.checks()).singleElement().satisfies(check -> {
+            assertThat(check.headSha()).isEqualTo(HEAD_SHA);
+            assertThat(check.conclusion()).isEqualTo("neutral");
+        });
+        assertThat(FAKE_GITHUB.comments()).isEmpty();
+        assertThat(counterValue(
+                "code.review.jobs", "job.type", "PUBLISH_REVIEW", "outcome", "dead")
+                - deadBefore).isEqualTo(1.0);
+        assertThat(counterValue(
+                "code.review.publication.outcomes", "outcome", "failed")
+                - failedBefore).isEqualTo(1.0);
+        assertThat(counterValue(
+                "code.review.publication.outcomes", "outcome", "neutral_failure")
+                - neutralBefore).isEqualTo(1.0);
+    }
+
+    @Test
     void staleHeadDuringPublishingWithPersistedPartialProgressSupersedesWithoutNewMutation()
             throws Exception {
         FAKE_GITHUB.failSecondCommentCreateOnce();
@@ -316,6 +358,35 @@ class GitHubReviewLoopE2ETest {
         assertThat(FAKE_GITHUB.checkMutationCount()).isEqualTo(checkMutations);
         assertThat(FAKE_GITHUB.commentAttemptLines()).hasSize(commentMutations);
         assertThat(FAKE_GITHUB.comments()).hasSize(1);
+    }
+
+    @Test
+    void deletedPersistedCommentIsReplacedBeforePublicationCompletes()
+            throws Exception {
+        FAKE_GITHUB.failSecondCommentCreateOnce();
+        byte[] payload = openedPayload("delivery-deleted-comment");
+        assertThat(postWebhook(
+                payload,
+                "delivery-deleted-comment",
+                signature(payload))).isEqualTo(202);
+
+        runUntilPersistedPartialPublication();
+        FAKE_GITHUB.deleteAllComments();
+        makeRetriesDue();
+        runUntilIdle();
+
+        Map<String, Object> storedRun = jdbcTemplate.queryForMap(
+                "SELECT state, failure_code FROM review_runs");
+        assertThat(storedRun.get("state"))
+                .as("stored run: %s", storedRun)
+                .isEqualTo("PUBLISHED");
+        assertThat(FAKE_GITHUB.comments())
+                .extracting(FakeGitHub.Comment::line)
+                .containsExactlyInAnyOrder(1, 2);
+        assertThat(FAKE_GITHUB.commentAttemptLines()).containsExactly(1, 2, 1, 2);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM review_findings WHERE artifact_external_id IS NOT NULL",
+                Integer.class)).isEqualTo(2);
     }
 
     @Test
@@ -370,6 +441,11 @@ class GitHubReviewLoopE2ETest {
 
     private double leaseRecoveryCount() {
         var counter = meterRegistry.find("code.review.job.lease.recoveries").counter();
+        return counter == null ? 0.0 : counter.count();
+    }
+
+    private double counterValue(String name, String... tags) {
+        var counter = meterRegistry.find(name).tags(tags).counter();
         return counter == null ? 0.0 : counter.count();
     }
 
@@ -498,6 +574,7 @@ class GitHubReviewLoopE2ETest {
         private String authoritativeHead = HEAD_SHA;
         private int checkMutationCount;
         private int failedCommentAttempt = -1;
+        private int checkFailuresRemaining;
         private long pullRequestMetadataDelayMillis;
         private CountDownLatch hangingRequest = new CountDownLatch(0);
 
@@ -533,6 +610,7 @@ class GitHubReviewLoopE2ETest {
             authoritativeHead = HEAD_SHA;
             checkMutationCount = 0;
             failedCommentAttempt = -1;
+            checkFailuresRemaining = 0;
             pullRequestMetadataDelayMillis = 0;
             hangingRequest = new CountDownLatch(0);
         }
@@ -563,6 +641,14 @@ class GitHubReviewLoopE2ETest {
 
         synchronized void failSecondCommentCreateOnce() {
             failedCommentAttempt = 2;
+        }
+
+        synchronized void failNextCheckMutations(int count) {
+            checkFailuresRemaining = count;
+        }
+
+        synchronized void deleteAllComments() {
+            comments.clear();
         }
 
         synchronized void authoritativeHead(String headSha) {
@@ -642,10 +728,19 @@ class GitHubReviewLoopE2ETest {
             }
             if (method.equals("POST") && path.equals("/repositories/73/check-runs")) {
                 JsonNode json = JSON.readTree(body);
+                synchronized (this) {
+                    if (checkFailuresRemaining > 0) {
+                        checkFailuresRemaining--;
+                        checkMutationCount++;
+                        respond(exchange, 500, Map.of("message", "temporary failure"));
+                        return;
+                    }
+                }
                 Check check = new Check(
                         Long.toString(ids.incrementAndGet()),
                         json.path("head_sha").asText(),
-                        json.path("external_id").asText());
+                        json.path("external_id").asText(),
+                        json.path("conclusion").asText());
                 synchronized (this) {
                     checks.add(check);
                     checkMutationCount++;
@@ -738,7 +833,7 @@ class GitHubReviewLoopE2ETest {
             executor.shutdownNow();
         }
 
-        record Check(String id, String headSha, String externalId) {
+        record Check(String id, String headSha, String externalId, String conclusion) {
         }
 
         record Comment(

@@ -22,16 +22,27 @@ public final class SupersedeObsoleteReviewRuns {
     private final ObsoleteReviewRunStore obsoleteRuns;
     private final GitHubPublicationGateway github;
     private final Clock clock;
+    private final ReviewOperationsTelemetry telemetry;
 
     public SupersedeObsoleteReviewRuns(
             ReviewRunRepository reviewRuns,
             ObsoleteReviewRunStore obsoleteRuns,
             GitHubPublicationGateway github,
             Clock clock) {
+        this(reviewRuns, obsoleteRuns, github, clock, ReviewOperationsTelemetry.NOOP);
+    }
+
+    public SupersedeObsoleteReviewRuns(
+            ReviewRunRepository reviewRuns,
+            ObsoleteReviewRunStore obsoleteRuns,
+            GitHubPublicationGateway github,
+            Clock clock,
+            ReviewOperationsTelemetry telemetry) {
         this.reviewRuns = Objects.requireNonNull(reviewRuns, "reviewRuns");
         this.obsoleteRuns = Objects.requireNonNull(obsoleteRuns, "obsoleteRuns");
         this.github = Objects.requireNonNull(github, "github");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     public SupersessionOutcome execute(ReviewRunId currentRunId) {
@@ -61,8 +72,14 @@ public final class SupersedeObsoleteReviewRuns {
                         source.supersede(authoritative, supersededAt);
                         return true;
                     });
-            return SupersessionOutcome.staleSource(
-                    result == ObsoleteReviewRunStore.UpdateResult.UPDATED ? 1 : 0);
+            int superseded = result == ObsoleteReviewRunStore.UpdateResult.UPDATED ? 1 : 0;
+            if (superseded == 1) {
+                telemetry.lifecycle(
+                        ReviewOperationsTelemetry.LifecycleOutcome.SUPERSEDED, 1);
+                telemetry.preventedStale(
+                        ReviewOperationsTelemetry.StaleStage.SUPERSESSION_SOURCE);
+            }
+            return SupersessionOutcome.staleSource(superseded);
         }
 
         ObsoleteReviewRunStore.SupersessionScope scope =
@@ -86,6 +103,8 @@ public final class SupersedeObsoleteReviewRuns {
                 superseded++;
             }
         }
+        telemetry.lifecycle(
+                ReviewOperationsTelemetry.LifecycleOutcome.SUPERSEDED, superseded);
         return SupersessionOutcome.completed(superseded);
     }
 

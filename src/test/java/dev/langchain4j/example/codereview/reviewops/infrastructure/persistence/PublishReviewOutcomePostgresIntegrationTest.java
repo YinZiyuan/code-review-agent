@@ -170,7 +170,7 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
     }
 
     @Test
-    void partialCommentSuccessIsDurableAndRetryPublishesOnlyTheMissingComment() {
+    void partialCommentSuccessIsDurableAndRetryVerifiesPersistedThenPublishesMissingComment() {
         ReviewRun run = completedRunWithInlineDecisions();
         reviewRuns.insert(run);
         PartialPublicationGateway gateway = new PartialPublicationGateway();
@@ -202,7 +202,8 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
                 new FindingFingerprint("a".repeat(64)),
                 new FindingFingerprint("b".repeat(64)));
         assertThat(gateway.commentFingerprints).containsExactly(
-                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+                "a".repeat(64), "b".repeat(64),
+                "a".repeat(64), "b".repeat(64));
         assertThat(gateway.checkExistingIds).containsExactly(null, "check-901");
     }
 
@@ -227,6 +228,37 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         assertThat(persisted.checkRunExternalId()).contains("check-replacement");
         assertThat(persisted.commentReferences()).hasSize(2);
         assertThat(gateway.checkExistingIds).containsExactly("check-deleted");
+    }
+
+    @Test
+    void deletedCommentReplacementIsDurableAcrossPublicationCompletion() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint first = new FindingFingerprint("a".repeat(64));
+        PublicationReference deleted =
+                new PublicationReference("github_review_comment", "comment-deleted");
+        run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
+        run.recordPublicationProgress("check-existing", Map.of(first, deleted));
+        reviewRuns.insert(run);
+        ReplacementCommentGateway gateway = new ReplacementCommentGateway();
+        PublishReviewOutcome publisher = new PublishReviewOutcome(
+                reviewRuns,
+                mutations,
+                gateway,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(publisher.publish(run.id()))
+                .isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
+
+        ReviewRun persisted = reviewRuns.find(run.id()).orElseThrow().reviewRun();
+        assertThat(persisted.state()).isEqualTo(ReviewRunState.PUBLISHED);
+        assertThat(persisted.commentReferences()).containsEntry(
+                first,
+                new PublicationReference("github_review_comment", "comment-replacement"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT artifact_external_id FROM review_findings WHERE fingerprint = ?",
+                String.class,
+                first.value())).isEqualTo("comment-replacement");
+        assertThat(gateway.existingCommentIds).containsExactly("comment-deleted", null);
     }
 
     @Test
@@ -261,7 +293,8 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         assertThat(failed.commentReferences()).isEmpty();
         assertThat(failed.findings().get(0).publicationReference()).isEmpty();
         assertThat(gateway.commentFingerprints).containsExactly(
-                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+                "a".repeat(64), "b".repeat(64),
+                "a".repeat(64), "b".repeat(64));
         assertThat(gateway.retractedFingerprints).containsExactly(
                 "a".repeat(64), "a".repeat(64));
         assertThat(jdbcTemplate.queryForObject(
@@ -540,6 +573,43 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
             return new InlineCommentArtifact(
                     request.finding().fingerprint(),
                     "comment-" + request.finding().fingerprint().value().substring(0, 8));
+        }
+
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            throw new AssertionError("successful publication must not retract comments");
+        }
+    }
+
+    private static final class ReplacementCommentGateway implements GitHubPublicationGateway {
+        private final ArrayList<String> existingCommentIds = new ArrayList<>();
+
+        @Override
+        public AuthoritativeRevision authoritativeRevision(PullRequestRevision revision) {
+            return new AuthoritativeRevision(REVIEW_SHA);
+        }
+
+        @Override
+        public CheckRunArtifact upsertCheck(CheckRunRequest request) {
+            return new CheckRunArtifact(request.existingGitHubArtifactId().orElseThrow());
+        }
+
+        @Override
+        public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
+            String existingId = request.finding().existingReference()
+                    .map(PublicationReference::externalId)
+                    .orElse(null);
+            existingCommentIds.add(existingId);
+            if (existingId != null) {
+                return new InlineCommentArtifact(
+                        request.finding().fingerprint(),
+                        "comment-replacement",
+                        InlineCommentArtifact.Reconciliation.REPLACED_MISSING);
+            }
+            return new InlineCommentArtifact(
+                    request.finding().fingerprint(),
+                    "comment-created");
         }
 
         @Override

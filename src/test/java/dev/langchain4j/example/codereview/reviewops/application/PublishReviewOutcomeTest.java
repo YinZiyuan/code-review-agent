@@ -464,11 +464,13 @@ class PublishReviewOutcomeTest {
                 GitHubFailureException.Classification.DETERMINISTIC_INPUT)) {
             ReviewRun run = completedRunWithDecision();
             RecordingMutationStore mutations = new RecordingMutationStore();
+            RecordingTelemetry telemetry = new RecordingTelemetry();
             GitHubFailureException failure = new GitHubFailureException(
                     classification, "safe GitHub publication failure");
 
             assertThatThrownBy(() -> publisher(
-                    run, 13, mutations, new FailingGateway(failure)).publish(run.id()))
+                    run, 13, mutations, new FailingGateway(failure), telemetry)
+                    .publish(run.id()))
                     .isSameAs(failure);
 
             assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
@@ -483,6 +485,8 @@ class PublishReviewOutcomeTest {
             assertThat(mutations.progressExpectedVersion).isEqualTo(13);
             assertThat(mutations.progressState).isEqualTo(ReviewRunState.FAILED);
             assertThat(mutations.atomicSaveCount).isZero();
+            assertThat(telemetry.failedLifecycle).isOne();
+            assertThat(telemetry.failedPublication).isOne();
         }
     }
 
@@ -518,11 +522,22 @@ class PublishReviewOutcomeTest {
             long version,
             RecordingMutationStore mutations,
             GitHubPublicationGateway gateway) {
+        return publisher(
+                run, version, mutations, gateway, ReviewOperationsTelemetry.NOOP);
+    }
+
+    private static PublishReviewOutcome publisher(
+            ReviewRun run,
+            long version,
+            RecordingMutationStore mutations,
+            GitHubPublicationGateway gateway,
+            ReviewOperationsTelemetry telemetry) {
         return new PublishReviewOutcome(
                 new FixedReviewRunRepository(run, version),
                 mutations,
                 gateway,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                telemetry);
     }
 
     private static void assertTerminalOutcome(
@@ -817,6 +832,25 @@ class PublishReviewOutcomeTest {
             ReviewRunState state,
             String checkId,
             int commentCount) {
+    }
+
+    private static final class RecordingTelemetry implements ReviewOperationsTelemetry {
+        private int failedLifecycle;
+        private int failedPublication;
+
+        @Override
+        public void lifecycle(LifecycleOutcome outcome, int count) {
+            if (outcome == LifecycleOutcome.FAILED) {
+                failedLifecycle += count;
+            }
+        }
+
+        @Override
+        public void publication(PublicationOutcome outcome) {
+            if (outcome == PublicationOutcome.FAILED) {
+                failedPublication++;
+            }
+        }
     }
 
     private static final class FailingGateway implements GitHubPublicationGateway {

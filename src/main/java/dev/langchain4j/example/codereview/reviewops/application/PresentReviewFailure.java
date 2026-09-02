@@ -27,16 +27,27 @@ public final class PresentReviewFailure {
     private final GitHubPublicationGateway github;
     @SuppressWarnings("unused")
     private final Clock clock;
+    private final ReviewOperationsTelemetry telemetry;
 
     public PresentReviewFailure(
             ReviewRunRepository reviewRuns,
             ReviewRunMutationStore mutations,
             GitHubPublicationGateway github,
             Clock clock) {
+        this(reviewRuns, mutations, github, clock, ReviewOperationsTelemetry.NOOP);
+    }
+
+    public PresentReviewFailure(
+            ReviewRunRepository reviewRuns,
+            ReviewRunMutationStore mutations,
+            GitHubPublicationGateway github,
+            Clock clock,
+            ReviewOperationsTelemetry telemetry) {
         this.reviewRuns = Objects.requireNonNull(reviewRuns, "reviewRuns");
         this.mutations = Objects.requireNonNull(mutations, "mutations");
         this.github = Objects.requireNonNull(github, "github");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     public PresentationOutcome present(ReviewRunId id) {
@@ -58,6 +69,8 @@ public final class PresentReviewFailure {
         AuthoritativeRevision authoritative = Objects.requireNonNull(
                 github.authoritativeRevision(run.revision()), "authoritative revision");
         if (!authoritative.matches(run.revision())) {
+            telemetry.preventedStale(
+                    ReviewOperationsTelemetry.StaleStage.FAILURE_PRESENTATION);
             return PresentationOutcome.STALE;
         }
 
@@ -99,6 +112,7 @@ public final class PresentReviewFailure {
             fence.requireCurrent();
             mutations.saveProgress(run, version);
         }
+        telemetry.publication(ReviewOperationsTelemetry.PublicationOutcome.NEUTRAL_FAILURE);
         return PresentationOutcome.PRESENTED;
     }
 

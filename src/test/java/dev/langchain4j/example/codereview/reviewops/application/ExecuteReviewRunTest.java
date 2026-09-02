@@ -168,13 +168,15 @@ class ExecuteReviewRunTest {
         RecordingMutationStore mutations = new RecordingMutationStore();
         FakePreparedSource source = new FakePreparedSource(DIFF, SOURCE_ROOT);
         MutableClock clock = new MutableClock(T0);
+        RecordingTelemetry telemetry = new RecordingTelemetry();
         RecordingAgent agent = new RecordingAgent((request, sourceRoot) -> {
             clock.advance(Duration.ofMillis(10));
             return new ReviewResult("invalid", List.of(pipelineFinding(null)), List.of());
         });
 
         ExecuteReviewRun.ExecutionOutcome outcome = executor(
-                new FakeReviewRunRepository(run, 2), mutations, revision -> source, agent, clock)
+                new FakeReviewRunRepository(run, 2), mutations, revision -> source, agent, clock,
+                telemetry)
                 .execute(run.id());
 
         assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.TERMINAL_FAILURE);
@@ -198,6 +200,9 @@ class ExecuteReviewRunTest {
                     "present-review-failure:" + run.id().value());
         });
         assertThat(mutations.events).isEmpty();
+        assertThat(telemetry.lifecycleOutcome)
+                .isEqualTo(ReviewOperationsTelemetry.LifecycleOutcome.FAILED);
+        assertThat(telemetry.lifecycleCount).isOne();
     }
 
     @Test
@@ -297,6 +302,7 @@ class ExecuteReviewRunTest {
         ReviewRun run = requestedRun(1);
         run.startAttempt(T0.minusSeconds(30));
         RecordingMutationStore mutations = new RecordingMutationStore();
+        RecordingTelemetry telemetry = new RecordingTelemetry();
 
         ExecuteReviewRun.ExecutionOutcome outcome = executor(
                 new FakeReviewRunRepository(run, 11),
@@ -304,7 +310,8 @@ class ExecuteReviewRunTest {
                 new CountingSourceProvider(),
                 new RecordingAgent((request, sourceRoot) ->
                         new ReviewResult("must not run", List.of(), List.of())),
-                new MutableClock(T0)).execute(run.id());
+                new MutableClock(T0),
+                telemetry).execute(run.id());
 
         assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.TERMINAL_FAILURE);
         assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
@@ -313,6 +320,9 @@ class ExecuteReviewRunTest {
         assertThat(mutations.atomicExpectedVersion).isEqualTo(11L);
         assertThat(mutations.jobs).singleElement().satisfies(job ->
                 assertThat(job.jobType()).isEqualTo("PRESENT_REVIEW_FAILURE"));
+        assertThat(telemetry.lifecycleOutcome).isEqualTo(
+                ReviewOperationsTelemetry.LifecycleOutcome.FAILED);
+        assertThat(telemetry.lifecycleCount).isOne();
     }
 
     @Test
@@ -370,6 +380,7 @@ class ExecuteReviewRunTest {
     void exactHeadMismatchSupersedesInsteadOfFailingTheRun() {
         ReviewRun run = requestedRun(3);
         RecordingMutationStore mutations = new RecordingMutationStore();
+        RecordingTelemetry telemetry = new RecordingTelemetry();
         String authoritativeSha = "abcdef0123456789abcdef0123456789abcdef01";
         ReviewSourceProvider sources = revision -> {
             throw new StaleReviewRevisionException(
@@ -381,7 +392,8 @@ class ExecuteReviewRunTest {
                 mutations,
                 sources,
                 new RecordingAgent((request, sourceRoot) -> null),
-                new MutableClock(T0)).execute(run.id());
+                new MutableClock(T0),
+                telemetry).execute(run.id());
 
         assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.SUPERSEDED);
         assertThat(run.state()).isEqualTo(ReviewRunState.SUPERSEDED);
@@ -389,6 +401,9 @@ class ExecuteReviewRunTest {
         assertThat(mutations.progressStates).containsExactly(
                 ReviewRunState.RUNNING, ReviewRunState.SUPERSEDED);
         assertThat(mutations.jobs).isEmpty();
+        assertThat(telemetry.lifecycleCount).isOne();
+        assertThat(telemetry.staleStage).isEqualTo(
+                ReviewOperationsTelemetry.StaleStage.EXECUTION_SOURCE);
     }
 
     @Test
@@ -451,6 +466,24 @@ class ExecuteReviewRunTest {
                 new ReviewFindingMapper(),
                 new DiffParser(),
                 clock);
+    }
+
+    private static ExecuteReviewRun executor(
+            ReviewRunRepository repository,
+            ReviewRunMutationStore mutations,
+            ReviewSourceProvider sources,
+            CodeReviewAgent agent,
+            Clock clock,
+            ReviewOperationsTelemetry telemetry) {
+        return new ExecuteReviewRun(
+                repository,
+                mutations,
+                sources,
+                agent,
+                new ReviewFindingMapper(),
+                new DiffParser(),
+                clock,
+                telemetry);
     }
 
     private static ReviewRun requestedRun(int maxAttempts) {
@@ -634,5 +667,22 @@ class ExecuteReviewRunTest {
     }
 
     private static final class TestPersistenceFailure extends RuntimeException {
+    }
+
+    private static final class RecordingTelemetry implements ReviewOperationsTelemetry {
+        private int lifecycleCount;
+        private LifecycleOutcome lifecycleOutcome;
+        private StaleStage staleStage;
+
+        @Override
+        public void lifecycle(LifecycleOutcome outcome, int count) {
+            lifecycleOutcome = outcome;
+            lifecycleCount += count;
+        }
+
+        @Override
+        public void preventedStale(StaleStage stage) {
+            staleStage = stage;
+        }
     }
 }

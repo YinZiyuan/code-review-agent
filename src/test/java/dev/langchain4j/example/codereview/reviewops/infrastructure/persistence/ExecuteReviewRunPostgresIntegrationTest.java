@@ -85,6 +85,7 @@ class ExecuteReviewRunPostgresIntegrationTest extends PostgresIntegrationSupport
 
         LeasedJob preStartCrash = jobs.leaseDue(
                 "worker-a", T0, LEASE_DURATION, 1).get(0);
+        expireLease(jobId);
         assertThat(jobs.recoverExpiredLeases(preStartCrash.leaseExpiresAt())).isEqualTo(1);
         assertThat(jdbcTemplate.queryForMap(
                         "SELECT state, attempt_count, max_attempts FROM durable_jobs WHERE id = ?",
@@ -98,10 +99,13 @@ class ExecuteReviewRunPostgresIntegrationTest extends PostgresIntegrationSupport
         assertThat(finalDelivery.attemptCount()).isGreaterThan(preStartCrash.attemptCount());
         var stored = reviewRuns.find(admission.reviewRun().id()).orElseThrow();
         ReviewRun started = stored.reviewRun();
-        started.startAttempt(preStartCrash.leaseExpiresAt().plusSeconds(1));
+        Instant startedAt = jdbcTemplate.queryForObject(
+                "SELECT CURRENT_TIMESTAMP", java.sql.Timestamp.class).toInstant();
+        started.startAttempt(startedAt);
         reviewRuns.update(started, stored.version());
 
         Instant recoveredAt = finalDelivery.leaseExpiresAt();
+        expireLease(jobId);
         assertThat(jobs.recoverExpiredLeases(recoveredAt)).isEqualTo(1);
 
         assertThat(admission.executionJob().maxAttempts()).isEqualTo(1);
@@ -122,6 +126,14 @@ class ExecuteReviewRunPostgresIntegrationTest extends PostgresIntegrationSupport
                 .containsEntry("state", "SUCCEEDED")
                 .containsEntry("attempt_count", 1)
                 .containsEntry("max_attempts", 1);
+    }
+
+    private void expireLease(java.util.UUID jobId) {
+        jdbcTemplate.update("""
+                UPDATE durable_jobs
+                SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                WHERE id = ? AND state = 'LEASED'
+                """, jobId);
     }
 
     @Test

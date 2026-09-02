@@ -14,6 +14,7 @@ import dev.langchain4j.example.codereview.reviewops.application.RecoverExpiredRe
 import dev.langchain4j.example.codereview.reviewops.application.ReviewFindingMapper;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunAdmissionStore;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunMutationStore;
+import dev.langchain4j.example.codereview.reviewops.application.ReviewOperationsTelemetry;
 import dev.langchain4j.example.codereview.reviewops.application.SupersedeObsoleteReviewRuns;
 import dev.langchain4j.example.codereview.reviewops.application.SettleReviewJobFailure;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
@@ -43,6 +44,7 @@ import dev.langchain4j.example.codereview.reviewops.infrastructure.github.GitHub
 import dev.langchain4j.example.codereview.reviewops.infrastructure.github.InlineCommentFormatter;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.github.PullRequestWebhookParser;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.jobs.PostgresDurableJobQueue;
+import dev.langchain4j.example.codereview.reviewops.infrastructure.metrics.MicrometerReviewOperationsTelemetry;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JdbcOutboxStore;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JdbcPullRequestObservationStore;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.JdbcReviewRunRepository;
@@ -178,18 +180,21 @@ public class ServerConfiguration {
             TransactionOperations transactions,
             Clock clock,
             ReviewRunRepository reviewRuns,
+            ReviewOperationsTelemetry telemetry,
             SettleReviewJobFailure finalFailureSettlement) {
         return new PostgresDurableJobQueue(
                 jdbcTemplate,
                 transactions,
                 clock,
-                new RecoverExpiredReviewExecution(reviewRuns),
+                new RecoverExpiredReviewExecution(reviewRuns, telemetry),
                 finalFailureSettlement);
     }
 
     @Bean
-    SettleReviewJobFailure settleReviewJobFailure(ReviewRunRepository reviewRuns) {
-        return new SettleReviewJobFailure(reviewRuns);
+    SettleReviewJobFailure settleReviewJobFailure(
+            ReviewRunRepository reviewRuns,
+            ReviewOperationsTelemetry telemetry) {
+        return new SettleReviewJobFailure(reviewRuns, telemetry);
     }
 
     @Bean
@@ -245,8 +250,10 @@ public class ServerConfiguration {
             ReviewRunRepository reviewRuns,
             ObsoleteReviewRunStore obsoleteRuns,
             GitHubPublicationGateway github,
+            ReviewOperationsTelemetry telemetry,
             Clock clock) {
-        return new SupersedeObsoleteReviewRuns(reviewRuns, obsoleteRuns, github, clock);
+        return new SupersedeObsoleteReviewRuns(
+                reviewRuns, obsoleteRuns, github, clock, telemetry);
     }
 
     @Bean
@@ -305,6 +312,7 @@ public class ServerConfiguration {
             GitHubRestClient installations,
             ObjectMapper objectMapper,
             Clock clock,
+            ReviewOperationsTelemetry telemetry,
             ServerProperties serverProperties) {
         return new GitHubPublicationClient(
                 gitHubHttpClient,
@@ -314,7 +322,13 @@ public class ServerConfiguration {
                 serverProperties.github().appId(),
                 "Code Review Agent",
                 new CheckRunFormatter(),
-                new InlineCommentFormatter());
+                new InlineCommentFormatter(),
+                telemetry);
+    }
+
+    @Bean
+    ReviewOperationsTelemetry reviewOperationsTelemetry(MeterRegistry metrics) {
+        return new MicrometerReviewOperationsTelemetry(metrics);
     }
 
     @Bean
@@ -325,9 +339,11 @@ public class ServerConfiguration {
             CodeReviewAgent reviewer,
             ReviewFindingMapper findingMapper,
             DiffParser diffParser,
+            ReviewOperationsTelemetry telemetry,
             Clock clock) {
         return new ExecuteReviewRun(
-                reviewRuns, mutations, sources, reviewer, findingMapper, diffParser, clock);
+                reviewRuns, mutations, sources, reviewer, findingMapper, diffParser, clock,
+                telemetry);
     }
 
     @Bean
@@ -344,8 +360,9 @@ public class ServerConfiguration {
             ReviewRunRepository reviewRuns,
             ReviewRunMutationStore mutations,
             GitHubPublicationGateway github,
+            ReviewOperationsTelemetry telemetry,
             Clock clock) {
-        return new PublishReviewOutcome(reviewRuns, mutations, github, clock);
+        return new PublishReviewOutcome(reviewRuns, mutations, github, clock, telemetry);
     }
 
     @Bean
@@ -353,8 +370,9 @@ public class ServerConfiguration {
             ReviewRunRepository reviewRuns,
             ReviewRunMutationStore mutations,
             GitHubPublicationGateway github,
+            ReviewOperationsTelemetry telemetry,
             Clock clock) {
-        return new PresentReviewFailure(reviewRuns, mutations, github, clock);
+        return new PresentReviewFailure(reviewRuns, mutations, github, clock, telemetry);
     }
 
     @Bean

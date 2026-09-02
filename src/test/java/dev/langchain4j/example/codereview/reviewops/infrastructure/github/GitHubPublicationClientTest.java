@@ -10,6 +10,8 @@ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPub
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.InlineCommentRequest;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.PublicationFinding;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
+import dev.langchain4j.example.codereview.reviewops.infrastructure.metrics.MicrometerReviewOperationsTelemetry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
@@ -384,6 +386,10 @@ class GitHubPublicationClientTest {
         assertThat(fixture.client.reconcileInlineComment(
                 inlineRequest(inlineFinding(Optional.empty()))).githubArtifactId())
                 .isEqualTo("502");
+        assertThat(fixture.metrics.get("code.review.publication.stage")
+                .tag("stage", "inline_comment").timer().count()).isOne();
+        assertThat(fixture.metrics.get("code.review.publication.comments")
+                .tag("outcome", "created").counter().count()).isOne();
         fixture.server.verify();
     }
 
@@ -577,6 +583,7 @@ class GitHubPublicationClientTest {
         GitHubInstallationGateway installations = installationId ->
                 new GitHubInstallationGateway.InstallationToken(
                         TOKEN, NOW.plusSeconds(600));
+        SimpleMeterRegistry metrics = new SimpleMeterRegistry();
         GitHubPublicationClient client = new GitHubPublicationClient(
                 builder.build(),
                 installations,
@@ -585,8 +592,9 @@ class GitHubPublicationClientTest {
                 APP_ID,
                 "Code Review Agent",
                 new CheckRunFormatter(),
-                new InlineCommentFormatter());
-        return new Fixture(server, client);
+                new InlineCommentFormatter(),
+                new MicrometerReviewOperationsTelemetry(metrics));
+        return new Fixture(server, client, metrics);
     }
 
     private static void assertRateLimitedAt(
@@ -776,6 +784,7 @@ class GitHubPublicationClientTest {
 
     private record Fixture(
             MockRestServiceServer server,
-            GitHubPublicationClient client) {
+            GitHubPublicationClient client,
+            SimpleMeterRegistry metrics) {
     }
 }

@@ -32,16 +32,27 @@ public final class PublishReviewOutcome {
     private final ReviewRunMutationStore mutations;
     private final GitHubPublicationGateway github;
     private final Clock clock;
+    private final ReviewOperationsTelemetry telemetry;
 
     public PublishReviewOutcome(
             ReviewRunRepository reviewRuns,
             ReviewRunMutationStore mutations,
             GitHubPublicationGateway github,
             Clock clock) {
+        this(reviewRuns, mutations, github, clock, ReviewOperationsTelemetry.NOOP);
+    }
+
+    public PublishReviewOutcome(
+            ReviewRunRepository reviewRuns,
+            ReviewRunMutationStore mutations,
+            GitHubPublicationGateway github,
+            Clock clock,
+            ReviewOperationsTelemetry telemetry) {
         this.reviewRuns = Objects.requireNonNull(reviewRuns, "reviewRuns");
         this.mutations = Objects.requireNonNull(mutations, "mutations");
         this.github = Objects.requireNonNull(github, "github");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     public PublicationOutcome publish(ReviewRunId id) {
@@ -79,6 +90,8 @@ public final class PublishReviewOutcome {
             }
             fence.requireCurrent();
             mutations.saveProgress(run, stored.version());
+            telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.SUPERSEDED, 1);
+            telemetry.preventedStale(ReviewOperationsTelemetry.StaleStage.PUBLICATION_HEAD);
             return PublicationOutcome.SUPERSEDED;
         }
 
@@ -180,6 +193,7 @@ public final class PublishReviewOutcome {
             run.confirmPublication(checkId, run.commentReferences(), clock.instant());
             fence.requireCurrent();
             mutations.saveProgress(run, version);
+            telemetry.publication(ReviewOperationsTelemetry.PublicationOutcome.PUBLISHED);
             return PublicationOutcome.PUBLISHED;
         } catch (GitHubFailureException failure) {
             settleTerminalArtifactFailure(run, version, failure, fence);
@@ -215,6 +229,8 @@ public final class PublishReviewOutcome {
         }
         fence.requireCurrent();
         long failedVersion = mutations.saveProgress(run, expectedVersion);
+        telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.FAILED, 1);
+        telemetry.publication(ReviewOperationsTelemetry.PublicationOutcome.FAILED);
         bestEffortNeutralCheck(run, failedVersion, failure, commentsMayRemain, fence);
     }
 
@@ -335,6 +351,8 @@ public final class PublishReviewOutcome {
         }
         fence.requireCurrent();
         mutations.saveProgress(run, expectedVersion);
+        telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.FAILED, 1);
+        telemetry.publication(ReviewOperationsTelemetry.PublicationOutcome.FAILED);
     }
 
     private static PublicationOutcome settledOutcome(ReviewRunState state) {

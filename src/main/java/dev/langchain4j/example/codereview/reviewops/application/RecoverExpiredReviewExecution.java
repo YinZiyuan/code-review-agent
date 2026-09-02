@@ -18,9 +18,17 @@ import java.util.List;
 public final class RecoverExpiredReviewExecution implements ExpiredJobLeaseRecovery {
 
     private final ReviewRunRepository reviewRuns;
+    private final ReviewOperationsTelemetry telemetry;
 
     public RecoverExpiredReviewExecution(ReviewRunRepository reviewRuns) {
+        this(reviewRuns, ReviewOperationsTelemetry.NOOP);
+    }
+
+    public RecoverExpiredReviewExecution(
+            ReviewRunRepository reviewRuns,
+            ReviewOperationsTelemetry telemetry) {
         this.reviewRuns = Objects.requireNonNull(reviewRuns, "reviewRuns");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
     }
 
     @Override
@@ -52,6 +60,9 @@ public final class RecoverExpiredReviewExecution implements ExpiredJobLeaseRecov
                     FailureClass.TRANSIENT,
                     "interrupted execution details are not retained"), recoveredAt);
             reviewRuns.update(run, stored.version());
+            if (run.state() == ReviewRunState.FAILED) {
+                telemetry.lifecycle(ReviewOperationsTelemetry.LifecycleOutcome.FAILED, 1);
+            }
         }
         if (run.state() == ReviewRunState.FAILED) {
             List<DurableJobRequest> followUps =

@@ -70,6 +70,11 @@ class ReviewJobWorkerPostgresIntegrationTest extends PostgresIntegrationSupport 
         ReviewJobHandler first = handler("FIRST", job -> {
             assertThat(job.id()).isEqualTo(firstId);
             clock.set(T0.plus(LEASE_DURATION).plusSeconds(3));
+            jdbcTemplate.update("""
+                    UPDATE durable_jobs
+                    SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                    WHERE state = 'LEASED'
+                    """);
             assertThat(secondQueue.recoverExpiredLeases(clock.instant())).isEqualTo(2);
             secondWorkerLeases.set(secondQueue.leaseDue(
                     "worker-b", clock.instant(), LEASE_DURATION, 2));
