@@ -8,8 +8,8 @@ spring:
       pool-name: review-operations
       maximum-pool-size: ${code-review.server.database.maximum-pool-size}
       minimum-idle: ${code-review.server.database.minimum-idle}
-      connection-timeout: ${code-review.server.database.acquisition-timeout}
-      validation-timeout: ${code-review.server.database.validation-timeout}
+      connection-timeout: ${DB_POOL_ACQUISITION_TIMEOUT_MS:2000}
+      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT_MS:1000}
       connection-init-sql: >-
         SET statement_timeout = '${code-review.server.database.statement-timeout}'; SET lock_timeout = '${code-review.server.database.lock-timeout}'; SET idle_in_transaction_session_timeout = '${code-review.server.database.idle-transaction-timeout}'
       data-source-properties:

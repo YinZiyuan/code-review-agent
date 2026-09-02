@@ -23,6 +23,24 @@ class ContainerResourceConfigurationTest {
         assertThat(app.get("pids_limit")).isEqualTo(256);
     }
 
+    @SuppressWarnings("unchecked")
+    @Test
+    void applicationContainerForwardsTheOpenAiCompatibleEndpointAndModel() throws Exception {
+        Map<String, Object> compose = new Yaml().load(Files.readString(Path.of("compose.yml")));
+        Map<String, Object> services = (Map<String, Object>) compose.get("services");
+        Map<String, Object> app = (Map<String, Object>) services.get("app");
+        Map<String, Object> environment = (Map<String, Object>) app.get("environment");
+
+        assertThat(environment.get("LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL"))
+                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL:-https://api.moonshot.cn/v1}");
+        assertThat(environment.get("LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME"))
+                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:-moonshot-v1-8k}");
+        assertThat(environment.get("DB_POOL_ACQUISITION_TIMEOUT_MS"))
+                .isEqualTo("${DB_POOL_ACQUISITION_TIMEOUT_MS:-2000}");
+        assertThat(environment.get("DB_POOL_VALIDATION_TIMEOUT_MS"))
+                .isEqualTo("${DB_POOL_VALIDATION_TIMEOUT_MS:-1000}");
+    }
+
     @Test
     void runtimeJvmHonorsContainerMemoryAndExitsOnOom() throws Exception {
         String dockerfile = Files.readString(Path.of("Dockerfile"));
