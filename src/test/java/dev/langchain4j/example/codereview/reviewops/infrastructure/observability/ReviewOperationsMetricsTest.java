@@ -28,6 +28,7 @@ class ReviewOperationsMetricsTest extends PostgresIntegrationSupport {
     void setUpMetrics() {
         jdbc = new JdbcTemplate(dataSource);
         jdbc.execute("TRUNCATE github_deliveries, outbox_events, durable_jobs, review_runs CASCADE");
+        jdbc.execute("TRUNCATE review_operations_metric_rollup");
         registry = new SimpleMeterRegistry();
         metrics = new ReviewOperationsMetrics(
                 jdbc, registry, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofMinutes(15));
@@ -58,8 +59,8 @@ class ReviewOperationsMetricsTest extends PostgresIntegrationSupport {
         assertThat(gauge("code_review_runs", "state", "PUBLISHING")).isEqualTo(1);
         assertThat(gauge("code_review_stale_runs", "state", "RUNNING")).isEqualTo(1);
         assertThat(gauge("code_review_stale_runs", "state", "PUBLISHING")).isZero();
-        assertThat(gauge("code_review_tokens", "direction", "input")).isEqualTo(13);
-        assertThat(gauge("code_review_tokens", "direction", "output")).isEqualTo(8);
+        assertThat(gauge("code_review_retained_history_tokens", "direction", "input")).isEqualTo(13);
+        assertThat(gauge("code_review_retained_history_tokens", "direction", "output")).isEqualTo(8);
         assertThat(gauge("code_review_publication_findings", "tier", "INLINE_COMMENT")).isEqualTo(1);
         assertThat(gauge("code_review_publication_findings", "tier", "CHECK_SUMMARY")).isEqualTo(1);
         assertThat(gauge("code_review_publication_comments_confirmed")).isEqualTo(1);
@@ -85,6 +86,60 @@ class ReviewOperationsMetricsTest extends PostgresIntegrationSupport {
                 .extracting(Meter::getId)
                 .extracting(Meter.Id::getType)
                 .containsOnly(Meter.Type.GAUGE);
+    }
+
+    @Test
+    void staleGaugesMeasureTimeInCurrentStateInsteadOfAgeOfTheRun() {
+        UUID oldRunJustStarted = insertRun("REQUESTED", NOW.minus(Duration.ofHours(2)));
+        jdbc.update("UPDATE review_runs SET state = 'RUNNING' WHERE id = ?", oldRunJustStarted);
+        setStateEnteredAt(oldRunJustStarted, NOW.minus(Duration.ofMinutes(5)));
+
+        UUID runStrandedInRunning = insertRun("RUNNING", NOW.minus(Duration.ofMinutes(20)));
+        setStateEnteredAt(runStrandedInRunning, NOW.minus(Duration.ofMinutes(20)));
+
+        UUID oldRunJustPublishing = insertRun("RUNNING", NOW.minus(Duration.ofHours(1)));
+        jdbc.update("UPDATE review_runs SET state = 'PUBLISHING' WHERE id = ?", oldRunJustPublishing);
+        setStateEnteredAt(oldRunJustPublishing, NOW.minus(Duration.ofMinutes(2)));
+
+        metrics.refresh();
+
+        assertThat(gauge("code_review_stale_runs", "state", "RUNNING")).isEqualTo(1);
+        assertThat(gauge("code_review_stale_runs", "state", "PUBLISHING")).isZero();
+    }
+
+    @Test
+    void failedRefreshDoesNotPublishAPartialSnapshot() {
+        insertJob("READY", NOW.minusSeconds(30));
+        metrics.refresh();
+        assertThat(gauge("code_review_queue_depth", "state", "READY")).isEqualTo(1);
+
+        insertJob("READY", NOW.minusSeconds(20));
+        jdbc.execute("ALTER TABLE review_runs RENAME TO review_runs_unavailable");
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(metrics::refresh)
+                    .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            assertThat(gauge("code_review_queue_depth", "state", "READY")).isEqualTo(1);
+        } finally {
+            jdbc.execute("ALTER TABLE review_runs_unavailable RENAME TO review_runs");
+        }
+    }
+
+    @Test
+    void retainedHistoryMetricsStayCompactAsAuditRowsGrow() {
+        UUID runId = insertRun("COMPLETED", NOW.minusSeconds(10));
+        for (int attempt = 1; attempt <= 100; attempt++) {
+            insertAttempt(runId, attempt, 2, 3);
+        }
+
+        metrics.refresh();
+
+        assertThat(gauge("code_review_retained_history_tokens", "direction", "input"))
+                .isEqualTo(200);
+        assertThat(gauge("code_review_retained_history_tokens", "direction", "output"))
+                .isEqualTo(300);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM review_operations_metric_rollup", Integer.class))
+                .isLessThanOrEqualTo(24);
     }
 
     private UUID insertRun(String state, Instant requestedAt) {
@@ -116,14 +171,24 @@ class ReviewOperationsMetricsTest extends PostgresIntegrationSupport {
     }
 
     private void insertAttempt(UUID runId, int inputTokens, int outputTokens) {
+        insertAttempt(runId, 1, inputTokens, outputTokens);
+    }
+
+    private void insertAttempt(UUID runId, int attempt, int inputTokens, int outputTokens) {
         jdbc.update("""
                         INSERT INTO review_attempts (
                             review_run_id, attempt_number, state, started_at, ended_at, latency_ms,
                             input_tokens, output_tokens, tool_states)
-                        VALUES (?, 1, 'SUCCEEDED', ?, ?, 10, ?, ?, '{}'::jsonb)
+                        VALUES (?, ?, 'SUCCEEDED', ?, ?, 10, ?, ?, '{}'::jsonb)
                         """,
-                runId, Timestamp.from(NOW.minusSeconds(2)), Timestamp.from(NOW.minusSeconds(1)),
+                runId, attempt,
+                Timestamp.from(NOW.minusSeconds(2)), Timestamp.from(NOW.minusSeconds(1)),
                 inputTokens, outputTokens);
+    }
+
+    private void setStateEnteredAt(UUID runId, Instant enteredAt) {
+        jdbc.update("UPDATE review_runs SET state_entered_at = ? WHERE id = ?",
+                Timestamp.from(enteredAt), runId);
     }
 
     private void insertFinding(UUID runId, String tier, boolean confirmedComment) {

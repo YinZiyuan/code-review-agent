@@ -69,6 +69,7 @@ code-review:
     observability:
       refresh-interval: ${REVIEW_OBSERVABILITY_REFRESH_INTERVAL:15s}
       stale-threshold: ${REVIEW_OBSERVABILITY_STALE_THRESHOLD:15m}
+      failure-backoff-max: ${REVIEW_OBSERVABILITY_FAILURE_BACKOFF_MAX:5m}
     identity:
       pipeline-version: ${REVIEW_PIPELINE_VERSION:pipeline-v3}
       prompt-version: ${REVIEW_PROMPT_VERSION:review-prompt-v1}

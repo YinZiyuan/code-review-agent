@@ -144,12 +144,14 @@ class ApplicationModeTest {
     void bindsBoundedObservabilityRefreshAndStalenessSettings() {
         contextRunner.withPropertyValues(
                         "code-review.server.observability.refresh-interval=20s",
-                        "code-review.server.observability.stale-threshold=12m")
+                        "code-review.server.observability.stale-threshold=12m",
+                        "code-review.server.observability.failure-backoff-max=2m")
                 .run(context -> {
                     ReviewObservabilityProperties observability =
                             context.getBean(ReviewObservabilityProperties.class);
                     assertThat(observability.refreshInterval()).isEqualTo(Duration.ofSeconds(20));
                     assertThat(observability.staleThreshold()).isEqualTo(Duration.ofMinutes(12));
+                    assertThat(observability.failureBackoffMax()).isEqualTo(Duration.ofMinutes(2));
                 });
     }
 
@@ -158,6 +160,12 @@ class ApplicationModeTest {
         contextRunner.withPropertyValues("code-review.server.observability.refresh-interval=0s")
                 .run(context -> assertThat(context).hasFailed());
         contextRunner.withPropertyValues("code-review.server.observability.stale-threshold=0s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues("code-review.server.observability.failure-backoff-max=0s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues(
+                        "code-review.server.observability.refresh-interval=30s",
+                        "code-review.server.observability.failure-backoff-max=29s")
                 .run(context -> assertThat(context).hasFailed());
     }
 

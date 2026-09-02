@@ -7,14 +7,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.ToDoubleFunction;
 
 /**
- * Caches bounded aggregate database observations so a metrics scrape never waits for PostgreSQL.
+ * Publishes an atomic cache built from fixed-cardinality database rollups and indexed age probes.
+ * A scrape performs no database work, and a failed refresh leaves the entire prior snapshot intact.
  */
 public final class ReviewOperationsMetrics {
 
@@ -30,15 +33,7 @@ public final class ReviewOperationsMetrics {
     private final JdbcTemplate jdbc;
     private final Clock clock;
     private final Duration staleThreshold;
-    private final Map<String, AtomicLong> queueDepth = new LinkedHashMap<>();
-    private final Map<String, AtomicLong> runCount = new LinkedHashMap<>();
-    private final Map<String, AtomicLong> staleRunCount = new LinkedHashMap<>();
-    private final Map<String, AtomicLong> publicationCount = new LinkedHashMap<>();
-    private final AtomicLong oldestReadyAgeSeconds = new AtomicLong();
-    private final AtomicLong inputTokens = new AtomicLong();
-    private final AtomicLong outputTokens = new AtomicLong();
-    private final AtomicLong confirmedComments = new AtomicLong();
-    private final AtomicLong unpublishedOutbox = new AtomicLong();
+    private final AtomicReference<Snapshot> current = new AtomicReference<>(Snapshot.empty());
 
     public ReviewOperationsMetrics(
             JdbcTemplate jdbc,
@@ -49,100 +44,116 @@ public final class ReviewOperationsMetrics {
         Objects.requireNonNull(registry, "registry");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.staleThreshold = requirePositive(staleThreshold, "staleThreshold");
-        registerStates(registry, "code_review_queue_depth", "state", JOB_STATES, queueDepth);
-        registerStates(registry, "code_review_runs", "state", RUN_STATES, runCount);
-        registerStates(registry, "code_review_stale_runs", "state", STALE_STATES, staleRunCount);
-        registerStates(
-                registry, "code_review_publication_findings", "tier",
-                PUBLICATION_TIERS, publicationCount);
-        register(registry, "code_review_queue_oldest_ready_age_seconds", oldestReadyAgeSeconds);
-        register(registry, "code_review_tokens", inputTokens, "direction", "input");
-        register(registry, "code_review_tokens", outputTokens, "direction", "output");
-        register(registry, "code_review_publication_comments_confirmed", confirmedComments);
-        register(registry, "code_review_outbox_depth", unpublishedOutbox, "state", "unpublished");
+
+        registerStates(registry, "code_review_queue_depth", "state", JOB_STATES,
+                snapshot -> snapshot.queueDepth);
+        registerStates(registry, "code_review_runs", "state", RUN_STATES,
+                snapshot -> snapshot.runCount);
+        registerStates(registry, "code_review_stale_runs", "state", STALE_STATES,
+                snapshot -> snapshot.staleRunCount);
+        registerStates(registry, "code_review_publication_findings", "tier",
+                PUBLICATION_TIERS, snapshot -> snapshot.publicationCount);
+        register(registry, "code_review_queue_oldest_ready_age_seconds",
+                snapshot -> snapshot.oldestReadyAgeSeconds);
+        // This gauge is the total still retained in database audit history. Stream B owns
+        // process-lifetime token counters; the distinct name makes restart/retention semantics clear.
+        register(registry, "code_review_retained_history_tokens",
+                snapshot -> snapshot.inputTokens, "direction", "input");
+        register(registry, "code_review_retained_history_tokens",
+                snapshot -> snapshot.outputTokens, "direction", "output");
+        register(registry, "code_review_publication_comments_confirmed",
+                snapshot -> snapshot.confirmedComments);
+        register(registry, "code_review_outbox_depth",
+                snapshot -> snapshot.unpublishedOutbox, "state", "unpublished");
     }
 
     public void refresh() {
-        refreshGrouped("SELECT state, count(*) AS value FROM durable_jobs GROUP BY state", queueDepth);
-        refreshGrouped("SELECT state, count(*) AS value FROM review_runs GROUP BY state", runCount);
-        refreshStaleRuns();
-        refreshGrouped("""
-                SELECT publication_tier AS state, count(*) AS value
-                FROM review_findings
-                WHERE publication_tier IS NOT NULL
-                GROUP BY publication_tier
-                """, publicationCount);
-        Timestamp oldestReady = jdbc.query(
-                "SELECT min(next_attempt_at) FROM durable_jobs WHERE state = 'READY'",
-                resultSet -> resultSet.next() ? resultSet.getTimestamp(1) : null);
-        oldestReadyAgeSeconds.set(oldestReady == null ? 0 : Math.max(0,
-                Duration.between(oldestReady.toInstant(), clock.instant()).toSeconds()));
-        Map<String, Object> tokenTotals = jdbc.queryForMap("""
-                SELECT coalesce(sum(input_tokens), 0) AS input,
-                       coalesce(sum(output_tokens), 0) AS output
-                FROM review_attempts
-                WHERE input_tokens IS NOT NULL AND output_tokens IS NOT NULL
-                """);
-        inputTokens.set(number(tokenTotals.get("input")));
-        outputTokens.set(number(tokenTotals.get("output")));
-        confirmedComments.set(jdbc.queryForObject("""
-                SELECT count(*) FROM review_findings
-                WHERE publication_tier = 'INLINE_COMMENT'
-                  AND artifact_type = 'REVIEW_COMMENT'
-                  AND artifact_external_id IS NOT NULL
-                """, Long.class));
-        unpublishedOutbox.set(jdbc.queryForObject(
-                "SELECT count(*) FROM outbox_events WHERE published_at IS NULL", Long.class));
-    }
-
-    private void refreshStaleRuns() {
-        Map<String, Long> observed = new LinkedHashMap<>();
+        Map<RollupKey, Long> rollups = new HashMap<>();
         jdbc.queryForList("""
-                        SELECT state, count(*) AS value
+                        SELECT metric_name, dimension_value, metric_value
+                        FROM review_operations_metric_rollup
+                        """)
+                .forEach(row -> rollups.put(
+                        new RollupKey(row.get("metric_name").toString(),
+                                row.get("dimension_value").toString()),
+                        number(row.get("metric_value"))));
+
+        Timestamp oldestReady = jdbc.queryForObject(
+                "SELECT min(next_attempt_at) FROM durable_jobs WHERE state = 'READY'",
+                Timestamp.class);
+
+        Map<String, Long> staleRuns = new LinkedHashMap<>();
+        jdbc.queryForList("""
+                        SELECT state, count(*) AS metric_value
                         FROM review_runs
-                        WHERE state IN ('RUNNING', 'PUBLISHING') AND requested_at < ?
+                        WHERE state IN ('RUNNING', 'PUBLISHING') AND state_entered_at < ?
                         GROUP BY state
                         """,
                 Timestamp.from(clock.instant().minus(staleThreshold)))
-                .forEach(row -> observed.put(
-                        row.get("state").toString(), number(row.get("value"))));
-        replaceValues(staleRunCount, observed);
+                .forEach(row -> staleRuns.put(
+                        row.get("state").toString(), number(row.get("metric_value"))));
+
+        long readyAgeSeconds = oldestReady == null ? 0 : Math.max(0,
+                Duration.between(oldestReady.toInstant(), clock.instant()).toSeconds());
+        Snapshot replacement = new Snapshot(
+                dimensions(rollups, "durable_jobs", JOB_STATES),
+                dimensions(rollups, "review_runs", RUN_STATES),
+                dimensions(staleRuns, STALE_STATES),
+                dimensions(rollups, "publication_findings", PUBLICATION_TIERS),
+                readyAgeSeconds,
+                rollup(rollups, "retained_history_tokens", "input"),
+                rollup(rollups, "retained_history_tokens", "output"),
+                rollup(rollups, "publication_comments", "confirmed"),
+                rollup(rollups, "outbox", "unpublished"));
+        current.set(replacement);
     }
 
-    private void refreshGrouped(String sql, Map<String, AtomicLong> values) {
-        Map<String, Long> observed = new LinkedHashMap<>();
-        jdbc.queryForList(sql).forEach(row -> observed.put(
-                row.get("state").toString(), number(row.get("value"))));
-        replaceValues(values, observed);
-    }
-
-    private static void replaceValues(
-            Map<String, AtomicLong> targets,
-            Map<String, Long> observed) {
-        targets.forEach((state, value) -> value.set(observed.getOrDefault(state, 0L)));
-    }
-
-    private static void registerStates(
+    private void registerStates(
             MeterRegistry registry,
             String name,
             String tagName,
             List<String> states,
-            Map<String, AtomicLong> values) {
-        states.forEach(state -> {
-            AtomicLong value = new AtomicLong();
-            values.put(state, value);
-            register(registry, name, value, tagName, state);
-        });
+            java.util.function.Function<Snapshot, Map<String, Long>> values) {
+        states.forEach(state -> register(
+                registry, name,
+                snapshot -> values.apply(snapshot).getOrDefault(state, 0L),
+                tagName, state));
     }
 
-    private static void register(
+    private void register(
             MeterRegistry registry,
             String name,
-            AtomicLong value,
+            ToDoubleFunction<Snapshot> value,
             String... tags) {
-        Gauge.builder(name, value, AtomicLong::doubleValue)
+        Gauge.builder(name, current, reference -> value.applyAsDouble(reference.get()))
                 .tags(tags)
                 .register(registry);
+    }
+
+    private static Map<String, Long> dimensions(
+            Map<RollupKey, Long> rollups,
+            String metric,
+            List<String> allowedDimensions) {
+        Map<String, Long> values = new LinkedHashMap<>();
+        allowedDimensions.forEach(dimension ->
+                values.put(dimension, rollup(rollups, metric, dimension)));
+        return Map.copyOf(values);
+    }
+
+    private static Map<String, Long> dimensions(
+            Map<String, Long> observed,
+            List<String> allowedDimensions) {
+        Map<String, Long> values = new LinkedHashMap<>();
+        allowedDimensions.forEach(dimension ->
+                values.put(dimension, observed.getOrDefault(dimension, 0L)));
+        return Map.copyOf(values);
+    }
+
+    private static long rollup(
+            Map<RollupKey, Long> rollups,
+            String metric,
+            String dimension) {
+        return rollups.getOrDefault(new RollupKey(metric, dimension), 0L);
     }
 
     private static long number(Object value) {
@@ -155,5 +166,26 @@ public final class ReviewOperationsMetrics {
             throw new IllegalArgumentException(name + " must be positive");
         }
         return value;
+    }
+
+    private record RollupKey(String metric, String dimension) {
+    }
+
+    private record Snapshot(
+            Map<String, Long> queueDepth,
+            Map<String, Long> runCount,
+            Map<String, Long> staleRunCount,
+            Map<String, Long> publicationCount,
+            long oldestReadyAgeSeconds,
+            long inputTokens,
+            long outputTokens,
+            long confirmedComments,
+            long unpublishedOutbox) {
+
+        private static Snapshot empty() {
+            return new Snapshot(
+                    Map.of(), Map.of(), Map.of(), Map.of(),
+                    0, 0, 0, 0, 0);
+        }
     }
 }

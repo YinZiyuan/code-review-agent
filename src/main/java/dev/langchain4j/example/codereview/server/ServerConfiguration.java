@@ -133,8 +133,10 @@ public class ServerConfiguration {
     @Bean
     ScheduledReviewOperationsMetrics scheduledReviewOperationsMetrics(
             ReviewOperationsMetrics metrics,
-            ReviewOperationLogger operations) {
-        return new ScheduledReviewOperationsMetrics(metrics, operations);
+            ReviewOperationLogger operations,
+            ReviewObservabilityProperties properties,
+            Clock clock) {
+        return new ScheduledReviewOperationsMetrics(metrics, operations, properties, clock);
     }
 
     @Bean

@@ -7,7 +7,8 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "code-review.server.observability")
 public record ReviewObservabilityProperties(
         Duration refreshInterval,
-        Duration staleThreshold) {
+        Duration staleThreshold,
+        Duration failureBackoffMax) {
 
     public ReviewObservabilityProperties {
         if (refreshInterval == null) {
@@ -16,8 +17,16 @@ public record ReviewObservabilityProperties(
         if (staleThreshold == null) {
             staleThreshold = Duration.ofMinutes(15);
         }
+        if (failureBackoffMax == null) {
+            failureBackoffMax = Duration.ofMinutes(5);
+        }
         requirePositive(refreshInterval, "refreshInterval");
         requirePositive(staleThreshold, "staleThreshold");
+        requirePositive(failureBackoffMax, "failureBackoffMax");
+        if (failureBackoffMax.compareTo(refreshInterval) < 0) {
+            throw new IllegalArgumentException(
+                    "failureBackoffMax must not be shorter than refreshInterval");
+        }
     }
 
     private static void requirePositive(Duration duration, String name) {

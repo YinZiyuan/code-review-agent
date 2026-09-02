@@ -52,6 +52,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     void clearReviewRuns() {
         jdbcTemplate = new JdbcTemplate(dataSource);
         jdbcTemplate.execute("TRUNCATE TABLE review_runs CASCADE");
+        jdbcTemplate.execute("TRUNCATE TABLE review_operations_metric_rollup");
     }
 
     @Test
@@ -63,15 +64,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 "review_findings",
                 "finding_feedback",
                 "durable_jobs",
-                "outbox_events");
-        assertThat(indexColumns("review_runs", "uq_review_runs_business_identity"))
-                .containsExactly(
-                        "installation_id",
-                        "repository_id",
-                        "pull_request_number",
-                        "head_sha",
-                        "pipeline_version",
-                        "configuration_version");
+                "outbox_events",
+                "review_operations_metric_rollup");
         assertThat(businessIdentityIndexDefinition(jdbcTemplate, "public"))
                 .contains("UNIQUE INDEX")
                 .contains("WHERE (state <> 'SUPERSEDED'::text)");
@@ -98,6 +92,10 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 .containsExactly("published_at", "event_id");
         assertThat(indexColumns("github_deliveries", "idx_github_deliveries_handled_retention"))
                 .containsExactly("handled_at", "delivery_id");
+        assertThat(indexColumns("review_runs", "idx_review_runs_active_state_entry"))
+                .containsExactly("state", "state_entered_at");
+        assertThat(indexDefinition("idx_review_runs_active_state_entry"))
+                .contains("WHERE (state = ANY (ARRAY['RUNNING'::text, 'PUBLISHING'::text]))");
     }
 
     @Test
@@ -128,6 +126,104 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void v8MaintainsAuthoritativeRunStateEntryTimeAndCompactRollups() throws Exception {
+        UUID runId = UUID.randomUUID();
+        Instant requestedAt = Instant.parse("2026-09-02T01:00:00Z");
+        jdbcTemplate.update("""
+                        INSERT INTO review_runs (
+                            id, installation_id, repository_id, pull_request_number, head_sha,
+                            pipeline_version, configuration_version, model_name, policy_version,
+                            max_review_attempts, requested_at, state)
+                        VALUES (?, 1, 2, 3, ?, 'pipeline-v3', ?, 'model', 'policy-v1', 3, ?, 'REQUESTED')
+                        """,
+                runId, "a".repeat(40), "configuration-" + runId,
+                Timestamp.from(requestedAt));
+
+        Instant requestedStateEntry = jdbcTemplate.queryForObject(
+                "SELECT state_entered_at FROM review_runs WHERE id = ?",
+                Timestamp.class, runId).toInstant();
+        assertThat(requestedStateEntry).isEqualTo(requestedAt);
+        assertThat(metricRollup("review_runs", "REQUESTED")).isEqualTo(1);
+
+        jdbcTemplate.update("UPDATE review_runs SET model_name = 'model-v2' WHERE id = ?", runId);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT state_entered_at FROM review_runs WHERE id = ?",
+                Timestamp.class, runId).toInstant()).isEqualTo(requestedStateEntry);
+
+        Instant beforeTransition = Instant.now();
+        jdbcTemplate.update("UPDATE review_runs SET state = 'RUNNING' WHERE id = ?", runId);
+        Instant runningStateEntry = jdbcTemplate.queryForObject(
+                "SELECT state_entered_at FROM review_runs WHERE id = ?",
+                Timestamp.class, runId).toInstant();
+        assertThat(runningStateEntry)
+                .isBetween(beforeTransition.minusMillis(100), Instant.now().plusMillis(100));
+        assertThat(metricRollup("review_runs", "REQUESTED")).isZero();
+        assertThat(metricRollup("review_runs", "RUNNING")).isEqualTo(1);
+
+        UUID jobId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                        INSERT INTO durable_jobs (
+                            id, job_type, payload_reference, state, attempt_count, max_attempts,
+                            next_attempt_at, initial_next_attempt_at, idempotency_key,
+                            created_at, updated_at)
+                        VALUES (?, 'REVIEW_EXECUTION', ?, 'READY', 0, 3, now(), now(), ?, now(), now())
+                        """,
+                jobId, runId, "rollup-job-" + jobId);
+        assertThat(metricRollup("durable_jobs", "READY")).isEqualTo(1);
+        jdbcTemplate.update("UPDATE durable_jobs SET state = 'DEAD' WHERE id = ?", jobId);
+        assertThat(metricRollup("durable_jobs", "READY")).isZero();
+        assertThat(metricRollup("durable_jobs", "DEAD")).isEqualTo(1);
+        jdbcTemplate.update("DELETE FROM durable_jobs WHERE id = ?", jobId);
+        assertThat(metricRollup("durable_jobs", "DEAD")).isZero();
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM review_operations_metric_rollup", Integer.class))
+                .isLessThanOrEqualTo(24);
+    }
+
+    @Test
+    void activeStateAgeProbeUsesItsPartialIndexWithPopulatedHistory() throws Exception {
+        jdbcTemplate.update("""
+                INSERT INTO review_runs (
+                    id, installation_id, repository_id, pull_request_number, head_sha,
+                    pipeline_version, configuration_version, model_name, policy_version,
+                    max_review_attempts, requested_at, state)
+                SELECT ('00000000-0000-0000-0000-' || lpad(sequence::text, 12, '0'))::uuid,
+                       1, 2, sequence, md5(sequence::text), 'pipeline-v3',
+                       'configuration-' || sequence, 'model', 'policy-v1', 3,
+                       now() - interval '1 hour', 'RUNNING'
+                FROM generate_series(1, 2000) AS sequence
+                """);
+        jdbcTemplate.execute("ANALYZE review_runs");
+
+        String plan;
+        try (var connection = dataSource.getConnection();
+             var statement = connection.createStatement()) {
+            statement.execute("SET enable_seqscan = off");
+            try (var rows = statement.executeQuery("""
+                    EXPLAIN (COSTS OFF)
+                    SELECT state, count(*)
+                    FROM review_runs
+                    WHERE state IN ('RUNNING', 'PUBLISHING')
+                      AND state_entered_at < now() - interval '15 minutes'
+                    GROUP BY state
+                    """)) {
+                StringBuilder rendered = new StringBuilder();
+                while (rows.next()) {
+                    rendered.append(rows.getString(1)).append('\n');
+                }
+                plan = rendered.toString();
+            }
+        }
+
+        assertThat(plan).contains("idx_review_runs_active_state_entry");
+        assertThat(metricRollup("review_runs", "RUNNING")).isEqualTo(2_000);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM review_operations_metric_rollup", Integer.class))
+                .isLessThanOrEqualTo(24);
+    }
+
+    @Test
     void v7OnlineUpgradeLetsANewWriterFinishWhileAnOlderWriterRemainsOpen() throws Exception {
         String schema = "online_v7_" + UUID.randomUUID().toString().replace("-", "");
         jdbcTemplate.execute("CREATE SCHEMA " + schema);
@@ -145,7 +241,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 olderWriter.createStatement().execute(
                         "LOCK TABLE durable_jobs IN ROW EXCLUSIVE MODE");
 
-                Flyway latest = flyway(isolatedDataSource, schema, null);
+                Flyway latest = flyway(isolatedDataSource, schema, "7");
                 CompletableFuture<Integer> migration = CompletableFuture.supplyAsync(
                         () -> latest.migrate().migrationsExecuted);
                 awaitMigrationStart(migration);
@@ -186,7 +282,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
             Flyway v6 = flyway(isolatedDataSource, schema, "6");
             assertThat(v6.migrate().migrationsExecuted).isEqualTo(6);
 
-            Flyway latest = flyway(isolatedDataSource, schema, null);
+            Flyway latest = flyway(isolatedDataSource, schema, "7");
             CompletableFuture<Integer> failedMigration;
             try (var blocker = DriverManager.getConnection(
                     POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
@@ -250,7 +346,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(3);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(5);
             assertFlywayIsValid(latest);
             assertThat(isolated.queryForObject(
                     "SELECT review_run_id FROM github_deliveries WHERE delivery_id = 'legacy-delivery'",
@@ -303,7 +399,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(4);
             assertFlywayIsValid(latest);
             assertThat(isolated.queryForObject(
                     "SELECT lease_sequence FROM durable_jobs WHERE id = ?",
@@ -354,7 +450,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(5);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(7);
             assertFlywayIsValid(latest);
             assertThat(businessIdentityIndexDefinition(isolated, schema))
                     .contains("UNIQUE INDEX")
@@ -893,6 +989,14 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
         }
     }
 
+    private long metricRollup(String metric, String dimension) {
+        Long value = jdbcTemplate.queryForObject("""
+                        SELECT metric_value FROM review_operations_metric_rollup
+                        WHERE metric_name = ? AND dimension_value = ?
+                        """, Long.class, metric, dimension);
+        return value == null ? 0 : value;
+    }
+
     private static ReviewRun requestedRun(ReviewRunId id) {
         return ReviewRun.request(
                 id,
@@ -910,7 +1014,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                      WHERE table_schema = 'public'
                        AND table_type = 'BASE TABLE'
                        AND table_name IN ('github_deliveries', 'review_runs', 'review_attempts', 'review_findings',
-                                          'finding_feedback', 'durable_jobs', 'outbox_events')
+                                          'finding_feedback', 'durable_jobs', 'outbox_events',
+                                          'review_operations_metric_rollup')
                      """);
              var resultSet = statement.executeQuery()) {
             var tables = new ArrayList<String>();
