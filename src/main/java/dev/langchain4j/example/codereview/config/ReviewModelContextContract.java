@@ -7,6 +7,7 @@ import java.util.Objects;
 final class ReviewModelContextContract {
 
     private static final Map<String, Contract> SUPPORTED = Map.of(
+            "gpt-5.6-sol", new Contract("cl100k_base", "jtokkit-1.1.0", 8_192),
             "moonshot-v1-8k", new Contract("cl100k_base", "jtokkit-1.1.0", 8_192));
 
     private ReviewModelContextContract() {

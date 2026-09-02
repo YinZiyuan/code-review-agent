@@ -1,9 +1,9 @@
 langchain4j:
   open-ai:
     chat-model:
-      base-url: https://api.moonshot.cn/v1
-      api-key: ${MOONSHOT_API_KEY:}
-      model-name: moonshot-v1-8k
+      base-url: ${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL:https://sub2api.apemind.ai/v1}
+      api-key: ${APEMIND_API_KEY:${MOONSHOT_API_KEY:}}
+      model-name: ${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:gpt-5.6-sol}
       temperature: 0
       max-tokens: 4096
       timeout: 90s
@@ -20,7 +20,7 @@ code-review:
     rerank-top-k: 4
     rrf-k: 60
   eval:
-    judge-model: ${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:moonshot-v1-8k}
+    judge-model: ${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:gpt-5.6-sol}
     runs-per-sample: 1      # W1 keeps it 1; release uses 3
     samples-dir: eval/samples
     report-dir: eval/reports

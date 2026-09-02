@@ -8,8 +8,8 @@ spring:
       pool-name: review-operations
       maximum-pool-size: ${code-review.server.database.maximum-pool-size}
       minimum-idle: ${code-review.server.database.minimum-idle}
-      connection-timeout: ${code-review.server.database.acquisition-timeout}
-      validation-timeout: ${code-review.server.database.validation-timeout}
+      connection-timeout: ${DB_POOL_ACQUISITION_TIMEOUT_MS:2000}
+      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT_MS:1000}
       connection-init-sql: >-
         SET statement_timeout = '${code-review.server.database.statement-timeout}'; SET lock_timeout = '${code-review.server.database.lock-timeout}'; SET idle_in_transaction_session_timeout = '${code-review.server.database.idle-transaction-timeout}'
       data-source-properties:
@@ -25,15 +25,13 @@ spring:
 langchain4j:
   open-ai:
     chat-model:
-      api-key: ${MOONSHOT_API_KEY}
-
 code-review:
   server:
     database:
       maximum-pool-size: ${DB_POOL_MAX_SIZE:8}
       minimum-idle: ${DB_POOL_MIN_IDLE:1}
-      acquisition-timeout: ${DB_POOL_ACQUISITION_TIMEOUT:2s}
-      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT:1s}
+      acquisition-timeout: ${DB_POOL_ACQUISITION_TIMEOUT_MS:2000}ms
+      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT_MS:1000}ms
       connect-timeout-seconds: ${DB_CONNECT_TIMEOUT_SECONDS:5}
       socket-timeout-seconds: ${DB_SOCKET_TIMEOUT_SECONDS:15}
       cancel-timeout-seconds: ${DB_CANCEL_TIMEOUT_SECONDS:2}
@@ -70,7 +68,7 @@ code-review:
       pipeline-version: ${REVIEW_PIPELINE_VERSION:pipeline-v3}
       prompt-version: ${REVIEW_PROMPT_VERSION:review-prompt-v1}
       policy-version: ${REVIEW_POLICY_VERSION:policy-v1}
-      model-deployment-identity: ${REVIEW_MODEL_DEPLOYMENT_IDENTITY:moonshot-public-api-v1}
+      model-deployment-identity: ${REVIEW_MODEL_DEPLOYMENT_IDENTITY:apemind-gpt-5.6-sol-v1}
       work-budget-identity: ${REVIEW_WORK_BUDGET_IDENTITY:legacy-work-budget-v1}
       max-review-attempts: ${REVIEW_MAX_ATTEMPTS:3}
       max-inline-comments: ${REVIEW_MAX_INLINE_COMMENTS:5}

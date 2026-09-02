@@ -18,7 +18,7 @@ public record ReviewIdentityProperties(
         pipelineVersion = defaultText(pipelineVersion, "pipeline-v3");
         promptVersion = defaultText(promptVersion, "review-prompt-v1");
         policyVersion = defaultText(policyVersion, "policy-v1");
-        modelDeploymentIdentity = defaultText(modelDeploymentIdentity, "moonshot-public-api-v1");
+        modelDeploymentIdentity = defaultText(modelDeploymentIdentity, "apemind-gpt-5.6-sol-v1");
         workBudgetIdentity = defaultText(workBudgetIdentity, "legacy-work-budget-v1");
         requireSafeIdentity(modelDeploymentIdentity, "modelDeploymentIdentity");
         if (maxReviewAttempts == null) {

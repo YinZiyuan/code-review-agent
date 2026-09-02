@@ -21,6 +21,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -38,6 +39,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
+@ActiveProfiles("server")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "code-review.runtime=server",
         "code-review.server.worker.poll-interval=1h",
@@ -115,6 +117,7 @@ class ServerReadinessTest {
         assertThat(context.getBeansOfType(PresentReviewFailure.class)).hasSize(1);
         assertThat(context.getBeansOfType(ReviewFailurePresentationJobHandler.class)).hasSize(1);
         assertThat(context.getBeansOfType(PostgresReviewOperationsRetention.class)).hasSize(1);
+        assertThat(context.getBeansOfType(ScheduledReviewJobPoller.class)).hasSize(1);
         assertThat(context.getBeansOfType(ScheduledReviewOperationsRetention.class)).hasSize(1);
         assertThat(context.getBeansOfType(ReviewOperationsMetrics.class)).hasSize(1);
         assertThat(context.getBeansOfType(ScheduledReviewOperationsMetrics.class)).hasSize(1);
@@ -123,7 +126,7 @@ class ServerReadinessTest {
         assertThat(context.getBean(ReviewWorkBudgetIdentityProvider.class).workBudgetIdentity())
                 .isEqualTo(workBudget.configurationHash());
         ReviewConfigurationSnapshot snapshot = context.getBean(ReviewConfigurationSnapshot.class);
-        assertThat(snapshot.modelName()).isEqualTo("moonshot-v1-8k");
+        assertThat(snapshot.modelName()).isEqualTo("gpt-5.6-sol");
         assertThat(snapshot.configurationVersion()).matches("cfg-sha256-[0-9a-f]{64}");
         assertThat(snapshot.toString())
                 .doesNotContain("readiness-webhook-secret")

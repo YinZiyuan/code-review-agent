@@ -26,6 +26,10 @@ public record ReviewWorkBudgetProperties(
     }
 
     public ReviewWorkBudget toBudget() {
+        return toBudget("gpt-5.6-sol");
+    }
+
+    ReviewWorkBudget toBudget(String defaultModelId) {
         Input resolvedInput = input == null ? new Input(null, null, null, null, null, null,
                 null, null, null, null) : input;
         Prompt resolvedPrompt = prompt == null
@@ -40,7 +44,7 @@ public record ReviewWorkBudgetProperties(
         return new ReviewWorkBudget(
                 defaultValue(version, "review-work-v1"),
                 resolvedInput.toLimits(),
-                resolvedPrompt.toLimits(),
+                resolvedPrompt.toLimits(defaultModelId),
                 resolvedProcess.toLimits(),
                 resolvedStages.toDeadlines(),
                 resolvedWorkspace.toLimits(),
@@ -83,9 +87,9 @@ public record ReviewWorkBudgetProperties(
             Integer completionReserveTokens,
             Integer inputFramingReserveTokens) {
 
-        ReviewWorkBudget.PromptLimits toLimits() {
+        ReviewWorkBudget.PromptLimits toLimits(String defaultModelId) {
             return new ReviewWorkBudget.PromptLimits(
-                    defaultValue(modelId, "moonshot-v1-8k"),
+                    defaultValue(modelId, defaultModelId),
                     defaultValue(tokenizerId, "cl100k_base"),
                     defaultValue(tokenizerVersion, "jtokkit-1.1.0"),
                     defaultValue(maxDiffTokens, 4_096),

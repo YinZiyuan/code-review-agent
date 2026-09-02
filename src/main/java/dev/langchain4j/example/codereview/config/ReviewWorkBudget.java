@@ -133,7 +133,7 @@ public record ReviewWorkBudget(
                 int modelContextTokens,
                 int completionReserveTokens,
                 int inputFramingReserveTokens) {
-            this("moonshot-v1-8k", "cl100k_base", "jtokkit-1.1.0",
+            this("gpt-5.6-sol", "cl100k_base", "jtokkit-1.1.0",
                     maxDiffTokens, modelContextTokens, completionReserveTokens,
                     inputFramingReserveTokens);
         }
