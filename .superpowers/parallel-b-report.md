@@ -1,81 +1,96 @@
 # Parallel stream B report
 
-Status: **DONE for C3, I3/Task 6, and the assigned I5 pipeline/resource slice.**
+Status: **DONE** for C3, I3/ledger Task 6, the assigned I5 pipeline/resource slice, and every Critical/Important item in the independent second-round review.
 
 Branch: `codex/issue4-final-b`
 
 Base checkpoint: `d547608`
 
+Independent review: `.superpowers/parallel-b-review.md`
+
 ## Commits
 
-- `127077a docs: plan review work budget hardening`
-- `64e7bab feat: add versioned review work budget`
-- `02342be feat: bound review pipeline context and stages`
-- `1ef58ed feat: isolate analyzers in bounded processes`
-- `6214f19 feat: own review artifacts and bound runtime resources`
-- `0650113 fix: reserve model framing and bound source discovery`
-- `adcf8cc test: cover analyzer and cleanup failure interleavings`
+- `127077a` docs: plan review work budget hardening
+- `64e7bab` feat: add versioned review work budget
+- `02342be` feat: bound review pipeline context and stages
+- `1ef58ed` feat: isolate analyzers in bounded processes
+- `6214f19` feat: own review artifacts and bound runtime resources
+- `0650113` fix: reserve model framing and bound source discovery
+- `adcf8cc` test: cover analyzer and cleanup failure interleavings
+- `7698e89` docs: report resource hardening verification
+- `3004d70` fix: bound source corpus and model context identity
+- `033efcf` fix: hard bound analyzer output and cleanup work
 
-## C3 outcome
+## C3 and second-round C1/I1/I2 outcome
 
-- Added one immutable `ReviewWorkBudget` (`review-work-v1`) with a stable, non-secret SHA-256 configuration hash. It covers diff bytes/tokens, changed-file count, Java file/source-byte totals, archive/download/expansion/entry totals, global snippets/findings, model context, completion and input-framing reserves, subprocess output, javac/SpotBugs heap, all four pipeline stage deadlines, both analyzer deadlines, and workspace stale age. Stream C can consume `version()` and `configurationHash()` when constructing `ReviewConfigurationSnapshot`.
-- `DiffAnalyzer`, `ToolFindingsProducer`, and `Summarizer` enforce deterministic global file/snippet/finding limits.
-- Added CL100K tokenizer-backed, deterministic hunk selection and section truncation. The prompt budget subtracts both the requested completion allowance and a fixed typed chat-framing allowance; `LlmReviewer` sets `maxOutputTokens` to the same completion reserve.
-- Each pipeline stage has a wall-clock deadline, cancellation, a bounded four-worker/16-queued-task executor, and safe capacity failure. A model/tool operation that ignores interruption cannot make the queue grow without bound.
-- javac now runs as a child process using the current JDK's executable, a source argument file, `-proc:none`, `-J-Xmx`, the compiler deadline, recursively terminated descendants, and bounded/discarded diagnostics. Java discovery stops immediately at the file/byte bound.
-- SpotBugs uses the same bounded process runner, explicit `-maxHeap`, its own deadline, bounded stdout/stderr, and a bounded XML report. Timeout, cancellation, missing binary, exit 137/OOM-equivalent, compile failure, and oversize report are safe non-blocking tool outcomes. No raw compiler/analyzer diagnostic is logged or returned as the safe reason.
-- `Dockerfile` constrains the runtime JVM with container-aware heap/direct-memory bounds and exit-on-OOM. `compose.yml` gives app and PostgreSQL explicit memory, CPU, and PID limits.
+- `ReviewWorkBudget` is one immutable, typed, versioned contract. Its SHA-256 hash covers every effective limit owned by B: diff/source/archive/file/line/snippet/finding caps, model/tokenizer/context/framing/completion data, compiler arguments, child-process output/heaps/deadlines, all stage deadlines, reviewer wall time, executor workers/queue, and janitor scan/delete/deadline bounds. `identity()` exposes the real `version:hash` seam to stream C.
+- Startup resolves the effective `langchain4j.open-ai.chat-model.model-name` and fails closed unless it exactly matches the allow-listed model, tokenizer id/version, and context size in the budget. The prompt invariant is `measured input + framing reserve + completion reserve <= model context`; the same completion reserve is sent as `maxOutputTokens`.
+- `DiffAnalyzer` extracts a deterministic bounded identifier set and invokes `CodeSearchTool` once. The search performs one sorted Java census, rejects file/source/archive-entry excess before content reads, then streams bounded lines with total byte accounting, a monotonic deadline, and per-byte interruption checks. It never uses `readAllLines`; partial or rejected context carries an explicit safe status into tool findings and the prompt.
+- Prompt inputs are canonicalized at the boundary: context files/snippets, violations, citations, and identifiers have stable ordering. Five fresh JVMs with rotated input order produce the same prompt SHA.
+- `PipelineCodeReviewer` caps every stage by both its own deadline and the remaining typed reviewer deadline. `PipelineStageExecutor` is wired from the budget's worker/queue values rather than constants.
 
-## I3 and ledger Task 6 outcome
+Adversarial coverage includes 2,000 no-match files plus one match (one corpus pass), a sparse oversized Java file rejected with zero content bytes read, overlong source lines, timeout/cancellation, a timed-out scan releasing a one-worker stage executor for the next task, oversized Unicode prompt/context, and non-empty cross-JVM prompt determinism.
 
-- `GitHubArchiveSourceProvider` now creates one `code-review-work-v1-*` workspace before exact-revision preparation. That root owns the exact marker, archive, extracted `source/`, compiler classes, javac argument file, and SpotBugs report.
-- The prepared source remains the top-level `AutoCloseable` owner. Analyzer scopes reuse that workspace and remove their own classes/report on success, compile failure, analyzer failure, timeout, and cancellation. CLI/external-source analysis receives a standalone marker-bearing workspace with the same cleanup contract.
-- Cleanup deletes the marker last. Any failure exposes only the path-free `ReviewWorkspaceCleanupException`, leaves/restores the exact marker, and therefore retains a safe local retry obligation even when a pipeline failure is already primary and cleanup is suppressed.
-- Startup and hourly cleanup inspect only direct temporary-root children with the exact reserved prefix, exact small marker content, real-directory/no-symlink checks, and configured age threshold. It never follows a workspace-named symlink or persists an arbitrary path. This closes the ledger's Task 6 retry-owner gap.
+## I3, ledger Task 6, and second-round I3/I4 outcome
 
-## I5 pipeline/resource slice
+- Every review attempt owns one exact-marker workspace containing archive, extracted source, javac classes/argument file, and SpotBugs report. The top-level prepared source closes it in `finally`; analyzer scopes reuse it and remove their artifacts on success, failure, timeout, and cancellation.
+- javac and SpotBugs run as child processes with typed wall time, heap, output, and cancellation bounds. The runner drains stdout/stderr separately, never logs or returns stderr diagnostics, kills the full process tree as soon as either stream exceeds the byte cap, and reports fixed safe outcomes. Exit 137/OOM-equivalent, timeout, cancellation, output flood, compile failure, and missing tools are non-blocking analyzer results.
+- SpotBugs emits XML to the bounded stdout collector. The report is materialized only after a successful, non-truncated process result, so XML cannot grow unbounded on disk before inspection.
+- Compiler argument paths are streamed into a workspace-owned response file with interruption and a typed byte cap; the former quadratic concatenation is gone.
+- Normal cleanup deletes the marker last. Failure exposes only a path-free exception and leaves/restores the marker. The restart/hourly janitor uses a non-materializing `DirectoryStream`, checks cancellation and a monotonic deadline, caps inspected children/deletion attempts/tree entries, records a closed outcome vocabulary, never follows symlinks, and resumes marker-bearing partial deletions on later runs.
 
-- `code.review.pipeline.stage.duration`: fixed `stage` and `outcome` tags.
-- `code.review.pipeline.process.duration`: fixed `process` and `outcome` tags.
-- `code.review.pipeline.tokens`: `prompt_estimated`, `input_actual`, and `output_actual` kinds.
-- `code.review.pipeline.prompt`: `full` or `truncated` outcome.
-- `code.review.work.budget.info`: effective version/hash.
-- `code.review.work.budget.limit`: fixed-name gauges for every input, prompt, heap, output, deadline, and cleanup-age bound.
-- Identifiers, paths, source, diagnostics, and secrets are not metric tags.
+Adversarial coverage includes real stdout flood termination at the exact capture cap, secret-bearing stderr, process-tree timeout, cancellation, compiler argument overflow, cleanup failure with a simultaneous pipeline failure, restart recovery, populations larger than one janitor batch, partial tree deletion over several runs, deadline/cancellation, invalid markers, and workspace-named symlinks.
 
-## Adversarial verification
+## Second-round I5/I6 and metrics semantics
 
-- Final full suite: `mvn test` — **569 tests, 0 failures/errors/skips**, including Testcontainers and server E2E (`2026-09-02 16:34 +08:00`).
-- Focused tests cover many-file/source-byte limits, deterministic oversized Unicode prompt/context truncation, completion/framing reserve, bounded process output, real process-tree timeout, cancellation/interrupt restoration, javac exit-137 equivalent, secret-bearing syntax errors, SpotBugs timeout/failure, success/compile-failure/analyzer-failure cleanup, simultaneous pipeline+cleanup failure, restart recovery, wrong/missing markers, and symlink escape safety.
-- `docker compose -f compose.yml config --format json` plus `jq` verified effective byte/CPU/PID limits.
-- `docker build -t code-review-agent:issue4-final-b .` — success.
-- `./scripts/smoke-review-runtime.sh code-review-agent:issue4-final-b` — PASS; the shipped non-root image ran bounded javac and SpotBugs against a compilable fixture.
-- `git diff --check d547608..HEAD` — clean.
+- Removed the unused duplicate `code-review.orchestration.reviewer-timeout` and `parallelism` settings. Actual reviewer timeout, four-worker/default worker count, and 16-slot/default queue capacity now come only from `ReviewWorkBudget` and therefore alter its hash and gauges when changed.
+- `JsonRepair` logs only fixed events (`model_json_parse_failed` and `model_json_base64_decode_failed`). Terminal repair exceptions have a fixed message, no parser message, raw token, prompt, diagnostic, throwable cause, or path; token counts remain available for billing.
+- B's `code_review_model_tokens_billed_total{direction,call_scope="main_and_repair"}` is a **process-lifetime counter** for provider-billed main and repair calls, including calls that may fail before durable persistence; it resets on process restart. `code_review_pipeline_prompt_tokens_estimated_total` is the main prompt estimate.
+- Stream C's database-derived operator metric must remain distinctly named `review_attempt_tokens_persisted`: a **durable retained-history gauge** with restart/retention semantics. It must not reuse B's name or imply provider billing equivalence.
 
-## Cross-stream stale-revision integration
+## Cross-stream integration contracts
 
-Stream A's `StaleReviewRevisionException` does not exist at this branch's checkpoint. Cherry-picking A's 30-file checkpoint would pollute ownership and create conflicts, so no A code was copied. After A checkpoint `b2a543c` is integrated, replace the generic mismatch in `GitHubRestClient.requireExactPullRequestHead` with:
+### Stream A exact stale-revision adapter
+
+A checkpoint `b2a543c` owns:
+
+- `dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException`
+- constructor `StaleReviewRevisionException(AuthoritativeRevision)`
+- accessor `authoritativeRevision()`
+
+B intentionally did not copy A production code or edit A-owned `ExecuteReviewRun`. The exact apply-ready adapter is:
+
+`.superpowers/sdd/2026-09-01-github-app-review-loop/stream-a-stale-revision-adapter.patch`
+
+It validates the authoritative head as a full SHA and changes only a valid exact-head mismatch to:
 
 ```java
-import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
-import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
-
-validateFullCommitSha(authoritativeHead);
-if (!revision.headSha().equals(authoritativeHead)) {
-    throw new StaleReviewRevisionException(new AuthoritativeRevision(authoritativeHead));
-}
+throw new StaleReviewRevisionException(new AuthoritativeRevision(authoritativeHead));
 ```
 
-Keep invalid/non-full authoritative SHA metadata on the existing deterministic-invalid-metadata path. Update the exact-head mismatch tests in `GitHubRestClientTest` and the two provider mismatch cases to assert `StaleReviewRevisionException.authoritativeRevision()` equals `new AuthoritativeRevision(authoritativeHead)`. `ExecuteReviewRun` must remain Stream A's owner; its new catch will then durably transition the run to `SUPERSEDED`.
+Malformed/non-full metadata remains `DETERMINISTIC_INPUT`. `git apply --check` passes on B. After A+B composition, add/retain tests in `GitHubRestClientTest` and both `GitHubArchiveSourceProviderTest` mismatch paths that assert the exception's `authoritativeRevision()`.
 
-## Conflict-risk files and exact hunks
+### Stream C snapshot identity
 
-- `pom.xml:35-39`: explicit `jtokkit:1.1.0` dependency.
-- `ServerConfiguration.java:5`, `:54`, and `:292-299`: imports `ReviewWorkBudget`/`ReviewWorkspaceFactory` and replaces six source-provider constants with the typed dependencies. This is the only intentional ServerConfiguration hunk and is likely to overlap streams A/C.
-- `AgentConfig.java:52-91`: bounded javac/SpotBugs process and analyzer bean wiring.
-- `GitHubArchiveSourceProvider.java`: constructor changes from primitive limits/temp path to `ReviewWorkspaceFactory` + `ReviewWorkBudget`; preparation lifecycle now belongs to the workspace.
-- `Dockerfile`, `compose.yml`, and `scripts/smoke-review-runtime.sh`: runtime/resource wiring.
-- `ReviewWorkBudget*` files are new/focused; no shared application YAML was edited.
-- Pipeline constructors changed to accept the budget, prompt assembler, stage executor, and meter registry; affected tests were updated.
+Inject the actual `ReviewWorkBudget` bean into C's `ReviewConfigurationSnapshotFactory` and consume `budget.identity()` (or its `version()` plus `configurationHash()` components) directly. Remove `ReviewIdentityProperties.workBudgetIdentity` and `REVIEW_WORK_BUDGET_IDENTITY`; do not separately hash the removed legacy orchestration settings. No C-owned snapshot, datasource, migration, retention, or logging production code was edited here.
 
-No Review Operations aggregate/job/publication/supersession production code, datasource/migration/retention code, snapshot identity, or central structured logging dependency was edited.
+## Verification
+
+- Focused second-round suites: PASS, including corpus/search, prompt determinism, executor release, process isolation, compiler bounds, SpotBugs wiring, JsonRepair redaction, budget binding/hash/gauges, and janitor bounds.
+- Fresh full `mvn test` on final HEAD: **588 tests, 0 failures, 0 errors, 0 skipped; BUILD SUCCESS**, 1:08 min, completed `2026-09-02T17:50:31+08:00`.
+- Fresh `docker build -t code-review-agent:issue4-final-b-r2 .`: PASS; image id starts `sha256:12219b2ecd17`, size 442,648,716 bytes.
+- `./scripts/smoke-review-runtime.sh code-review-agent:issue4-final-b-r2`: PASS; the shipped non-root image ran javac and SpotBugs against a compilable fixture with the configured JVM limits.
+- Compose effective limits (validated with the API-key variable removed): app `1 CPU / 1 GiB / 256 PIDs`; PostgreSQL `0.5 CPU / 512 MiB / 128 PIDs`.
+- `git diff --check d547608..HEAD`: PASS.
+- Branch-added production lines contain no credential-shaped or literal secret values. Two whole-tree pattern hits are pre-existing baseline material (`UserService`'s intentional credential-shaped review fixture and the GitHub PEM delimiter constant), unchanged from `d547608`; no B change introduced them.
+
+## Conflict-risk files
+
+- `src/main/resources/application.yml`: removed the three-line unused legacy orchestration block. Stream C should retain its unrelated server settings and hash only effective budget fields.
+- `src/main/java/dev/langchain4j/example/codereview/config/CodeReviewProperties.java`: removed only the unused `Orchestration` component/record.
+- `pom.xml`: keeps B's explicit `jtokkit:1.1.0`; merge additively with C dependencies.
+- `src/main/java/dev/langchain4j/example/codereview/server/ServerConfiguration.java`: B's source-provider wiring uses `ReviewWorkBudget` and `ReviewWorkspaceFactory`; preserve C's datasource/observability beans.
+- `src/main/java/dev/langchain4j/example/codereview/config/AgentConfig.java`: bounded javac/SpotBugs bean wiring.
+- `src/main/java/dev/langchain4j/example/codereview/reviewops/infrastructure/github/GitHubArchiveSourceProvider.java`: workspace/source lifecycle only; no publication/supersession logic.
+
+Review Operations aggregate/job/publication/supersession code and C-owned persistence/snapshot/logging production code remain untouched.

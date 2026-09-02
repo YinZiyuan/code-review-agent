@@ -1,0 +1,20 @@
+diff --git a/src/main/java/dev/langchain4j/example/codereview/reviewops/infrastructure/github/GitHubRestClient.java b/src/main/java/dev/langchain4j/example/codereview/reviewops/infrastructure/github/GitHubRestClient.java
+--- a/src/main/java/dev/langchain4j/example/codereview/reviewops/infrastructure/github/GitHubRestClient.java
++++ b/src/main/java/dev/langchain4j/example/codereview/reviewops/infrastructure/github/GitHubRestClient.java
+@@ -5,3 +5,5 @@ import com.fasterxml.jackson.databind.ObjectMapper;
+ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
+ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubInstallationGateway;
++import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
++import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
+ import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
+@@ -118,7 +120,9 @@ public final class GitHubRestClient implements GitHubInstallationGateway {
+             JsonNode json = objectMapper.readTree(response);
+             String authoritativeHead = requiredText(json.path("head"), "sha");
++            validateFullCommitSha(authoritativeHead);
+             if (!revision.headSha().equals(authoritativeHead)) {
+-                throw deterministic("GitHub pull request head does not match requested revision");
++                throw new StaleReviewRevisionException(
++                        new AuthoritativeRevision(authoritativeHead));
+             }
+         } catch (GitHubFailureException exception) {
+             throw exception;
