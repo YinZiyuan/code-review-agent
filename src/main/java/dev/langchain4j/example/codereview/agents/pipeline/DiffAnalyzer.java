@@ -1,5 +1,6 @@
 package dev.langchain4j.example.codereview.agents.pipeline;
 
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.tools.CodeSearchTool;
 import org.springframework.stereotype.Component;
@@ -31,30 +32,41 @@ public class DiffAnalyzer {
 
     private final DiffParser parser;
     private final CodeSearchTool search;
+    private final ReviewWorkBudget budget;
 
-    public DiffAnalyzer(DiffParser parser, CodeSearchTool search) {
+    public DiffAnalyzer(DiffParser parser, CodeSearchTool search, ReviewWorkBudget budget) {
         this.parser = parser;
         this.search = search;
+        this.budget = budget;
     }
 
     public ReviewContext analyze(String rawDiff, Path sourceRoot) {
-        List<DiffParser.FileDiff> files = parser.parse(rawDiff);
+        List<DiffParser.FileDiff> parsed = parser.parse(rawDiff);
+        int fileCount = Math.min(parsed.size(), budget.input().maxChangedFiles());
+        List<DiffParser.FileDiff> files = List.copyOf(parsed.subList(0, fileCount));
         if (sourceRoot == null || !Files.isDirectory(sourceRoot)) {
             return new ReviewContext(rawDiff, files, Map.of(), sourceRoot);
         }
 
         Map<String, List<CodeSnippet>> byFile = new LinkedHashMap<>();
+        int remainingSnippets = budget.input().maxSnippets();
         for (DiffParser.FileDiff file : files) {
-            List<CodeSnippet> snippets = snippetsFor(file, sourceRoot);
+            List<CodeSnippet> snippets = snippetsFor(file, sourceRoot, remainingSnippets);
             if (!snippets.isEmpty()) {
                 byFile.put(file.path(), List.copyOf(snippets));
+                remainingSnippets -= snippets.size();
+                if (remainingSnippets == 0) {
+                    break;
+                }
             }
         }
         return new ReviewContext(rawDiff, files, byFile, sourceRoot);
     }
 
-    private List<CodeSnippet> snippetsFor(DiffParser.FileDiff file, Path sourceRoot) {
+    private List<CodeSnippet> snippetsFor(
+            DiffParser.FileDiff file, Path sourceRoot, int remainingSnippets) {
         List<CodeSnippet> snippets = new ArrayList<>();
+        int limit = Math.min(MAX_HITS_PER_FILE, remainingSnippets);
         for (String identifier : extractIdentifiers(file)) {
             String raw = search.grep(sourceRoot.toString(), identifier);
             if (raw == null || raw.startsWith("No matches") || raw.startsWith("Not a directory")) {
@@ -68,11 +80,11 @@ public class DiffAnalyzer {
                 if (snippet != null) {
                     snippets.add(snippet);
                 }
-                if (snippets.size() >= MAX_HITS_PER_FILE) {
+                if (snippets.size() >= limit) {
                     break;
                 }
             }
-            if (snippets.size() >= MAX_HITS_PER_FILE) {
+            if (snippets.size() >= limit) {
                 break;
             }
         }

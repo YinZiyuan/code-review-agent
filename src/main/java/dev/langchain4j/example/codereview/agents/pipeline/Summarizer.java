@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.agents.pipeline;
 
 import dev.langchain4j.example.codereview.analyzer.Violation;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.model.Category;
 import dev.langchain4j.example.codereview.model.Citation;
 import dev.langchain4j.example.codereview.model.ReviewFinding;
@@ -19,9 +20,11 @@ import java.util.Map;
 public class Summarizer {
 
     private final CitationKeywordInjector citationInjector;
+    private final ReviewWorkBudget budget;
 
-    public Summarizer(CitationKeywordInjector citationInjector) {
+    public Summarizer(CitationKeywordInjector citationInjector, ReviewWorkBudget budget) {
         this.citationInjector = citationInjector;
+        this.budget = budget;
     }
 
     public ReviewResult summarize(ReviewResult draft, ToolFindings tools, List<Citation> citationCandidates) {
@@ -42,9 +45,11 @@ public class Summarizer {
                 .toList();
         List<ReviewFinding> trustedCitations = validateCitations(calibrated, citationCandidates);
         List<ReviewFinding> withCitations = citationInjector.inject(trustedCitations, citationCandidates);
+        List<ReviewFinding> sorted = sort(withCitations);
+        int findingCount = Math.min(sorted.size(), budget.input().maxFindings());
         return new ReviewResult(
                 draft.summary() == null ? "" : draft.summary(),
-                sort(withCitations),
+                sorted.subList(0, findingCount),
                 tools.statuses());
     }
 

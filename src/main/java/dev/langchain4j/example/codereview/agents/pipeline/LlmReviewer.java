@@ -3,6 +3,7 @@ package dev.langchain4j.example.codereview.agents.pipeline;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.example.codereview.analyzer.Violation;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.infra.JsonRepair;
 import dev.langchain4j.example.codereview.model.Citation;
@@ -14,6 +15,7 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.query.Query;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -76,15 +78,24 @@ public class LlmReviewer {
     private final ContentRetriever retriever;
     private final CitationTracker tracker;
     private final JsonRepair jsonRepair;
+    private final ReviewPromptAssembler promptAssembler;
+    private final ReviewWorkBudget budget;
+    private final MeterRegistry metrics;
 
     public LlmReviewer(ChatModel chatModel,
                        ContentRetriever retriever,
                        CitationTracker tracker,
-                       JsonRepair jsonRepair) {
+                       JsonRepair jsonRepair,
+                       ReviewPromptAssembler promptAssembler,
+                       ReviewWorkBudget budget,
+                       MeterRegistry metrics) {
         this.chatModel = chatModel;
         this.retriever = retriever;
         this.tracker = tracker;
         this.jsonRepair = jsonRepair;
+        this.promptAssembler = promptAssembler;
+        this.budget = budget;
+        this.metrics = metrics;
     }
 
     public Draft review(ReviewContext ctx, ToolFindings tools) {
@@ -95,31 +106,41 @@ public class LlmReviewer {
         List<Content> hits = retriever.retrieve(Query.from(query));
         List<Citation> candidates = tracker.toCitations(hits);
 
-        String prompt = SYSTEM
-                + "\n\n[DIFF]\n" + ctx.rawDiff()
-                + "\n\n[TOOL FINDINGS]\n" + renderViolations(tools.violations())
-                + "\n\n[CROSS-FILE CONTEXT]\n" + renderContext(ctx)
-                + "\n\n[CITATION CANDIDATES]\n" + renderCitations(candidates);
+        ReviewPromptAssembler.AssembledPrompt prompt =
+                promptAssembler.assemble(SYSTEM, ctx, tools, candidates);
+        metrics.counter("code.review.pipeline.tokens", "kind", "prompt_estimated")
+                .increment(prompt.tokenCount());
+        metrics.counter("code.review.pipeline.prompt", "outcome",
+                        prompt.truncated() ? "truncated" : "full")
+                .increment();
 
         var response = chatModel.chat(ChatRequest.builder()
-                .messages(UserMessage.from(prompt))
+                .messages(UserMessage.from(prompt.text()))
+                .maxOutputTokens(budget.prompt().completionReserveTokens())
                 .build());
         int mainInputTokens = inputTokens(response);
         int mainOutputTokens = outputTokens(response);
         try {
             JsonRepair.ParseResult<ReviewResult> parsed = jsonRepair.parseOrRepairWithUsage(
                     response.aiMessage().text(), ReviewResult.class);
+            int totalInput = Math.addExact(mainInputTokens, parsed.inputTokens());
+            int totalOutput = Math.addExact(mainOutputTokens, parsed.outputTokens());
+            recordActualTokens(totalInput, totalOutput);
             return new Draft(
                     parsed.value(),
                     candidates,
-                    Math.addExact(mainInputTokens, parsed.inputTokens()),
-                    Math.addExact(mainOutputTokens, parsed.outputTokens()));
+                    totalInput,
+                    totalOutput);
         } catch (JsonRepair.RepairFailedException failure) {
+            int totalInput = Math.addExact(mainInputTokens, failure.inputTokens());
+            int totalOutput = Math.addExact(mainOutputTokens, failure.outputTokens());
+            recordActualTokens(totalInput, totalOutput);
             throw new CodeReviewAgent.ReviewExecutionException(
                     failure,
-                    Math.addExact(mainInputTokens, failure.inputTokens()),
-                    Math.addExact(mainOutputTokens, failure.outputTokens()));
+                    totalInput,
+                    totalOutput);
         } catch (RuntimeException failure) {
+            recordActualTokens(mainInputTokens, mainOutputTokens);
             throw new CodeReviewAgent.ReviewExecutionException(
                     failure, mainInputTokens, mainOutputTokens);
         }
@@ -162,46 +183,10 @@ public class LlmReviewer {
         return sb.toString().trim();
     }
 
-    private String renderViolations(List<Violation> violations) {
-        if (violations.isEmpty()) {
-            return "(none)";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (Violation v : violations) {
-            sb.append("- [").append(v.severity()).append("] ")
-                    .append(v.file()).append(':').append(v.line())
-                    .append(" (").append(v.rule()).append(") ")
-                    .append(v.message()).append('\n');
-        }
-        return sb.toString();
-    }
-
-    private String renderContext(ReviewContext ctx) {
-        if (ctx.contextByFile().isEmpty()) {
-            return "(none)";
-        }
-        StringBuilder sb = new StringBuilder();
-        ctx.contextByFile().forEach((file, snippets) -> {
-            sb.append("// for ").append(file).append('\n');
-            for (CodeSnippet snippet : snippets) {
-                sb.append(snippet.file()).append(':').append(snippet.line()).append(": ")
-                        .append(snippet.text()).append('\n');
-            }
-        });
-        return sb.toString();
-    }
-
-    private String renderCitations(List<Citation> citations) {
-        if (citations.isEmpty()) {
-            return "(none)";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < citations.size(); i++) {
-            Citation c = citations.get(i);
-            sb.append(i + 1).append(") id=").append(c.id())
-                    .append(" source=").append(c.source())
-                    .append(" section=").append(c.section()).append('\n');
-        }
-        return sb.toString();
+    private void recordActualTokens(int inputTokens, int outputTokens) {
+        metrics.counter("code.review.pipeline.tokens", "kind", "input_actual")
+                .increment(inputTokens);
+        metrics.counter("code.review.pipeline.tokens", "kind", "output_actual")
+                .increment(outputTokens);
     }
 }

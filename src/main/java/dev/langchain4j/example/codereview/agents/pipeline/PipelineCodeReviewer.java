@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.agents.pipeline;
 
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.model.ReviewResult;
 import org.springframework.stereotype.Component;
 
@@ -13,15 +14,21 @@ public class PipelineCodeReviewer implements CodeReviewAgent {
     private final ToolFindingsProducer toolFindingsProducer;
     private final LlmReviewer llmReviewer;
     private final Summarizer summarizer;
+    private final ReviewWorkBudget budget;
+    private final PipelineStageExecutor stages;
 
     public PipelineCodeReviewer(DiffAnalyzer diffAnalyzer,
                                 ToolFindingsProducer toolFindingsProducer,
                                 LlmReviewer llmReviewer,
-                                Summarizer summarizer) {
+                                Summarizer summarizer,
+                                ReviewWorkBudget budget,
+                                PipelineStageExecutor stages) {
         this.diffAnalyzer = diffAnalyzer;
         this.toolFindingsProducer = toolFindingsProducer;
         this.llmReviewer = llmReviewer;
         this.summarizer = summarizer;
+        this.budget = budget;
+        this.stages = stages;
     }
 
     @Override
@@ -32,12 +39,24 @@ public class PipelineCodeReviewer implements CodeReviewAgent {
     @Override
     public ReviewExecution reviewWithTelemetry(String request, Path sourceRoot) {
         String diff = extractDiff(request);
-        ReviewContext ctx = diffAnalyzer.analyze(diff, sourceRoot);
-        ToolFindings tools = toolFindingsProducer.produce(ctx);
-        LlmReviewer.Draft draft = llmReviewer.review(ctx, tools);
+        ReviewContext ctx = stages.run(
+                PipelineStageExecutor.Stage.DIFF_ANALYSIS,
+                budget.stages().diffAnalysis(),
+                () -> diffAnalyzer.analyze(diff, sourceRoot));
+        ToolFindings tools = stages.run(
+                PipelineStageExecutor.Stage.TOOL_ANALYSIS,
+                budget.stages().toolAnalysis(),
+                () -> toolFindingsProducer.produce(ctx));
+        LlmReviewer.Draft draft = stages.run(
+                PipelineStageExecutor.Stage.REVIEW_MODEL,
+                budget.stages().reviewModel(),
+                () -> llmReviewer.review(ctx, tools));
         try {
-            ReviewResult result = summarizer.summarize(
-                    draft.result(), tools, draft.citationCandidates());
+            ReviewResult result = stages.run(
+                    PipelineStageExecutor.Stage.SUMMARIZATION,
+                    budget.stages().summarization(),
+                    () -> summarizer.summarize(
+                            draft.result(), tools, draft.citationCandidates()));
             return new ReviewExecution(result, draft.inputTokens(), draft.outputTokens());
         } catch (RuntimeException failure) {
             throw new ReviewExecutionException(

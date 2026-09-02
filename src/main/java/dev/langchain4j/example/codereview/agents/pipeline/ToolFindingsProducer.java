@@ -4,6 +4,7 @@ import dev.langchain4j.example.codereview.analyzer.RegexAnalyzer;
 import dev.langchain4j.example.codereview.analyzer.SpotBugsResult;
 import dev.langchain4j.example.codereview.analyzer.SpotBugsAnalyzer;
 import dev.langchain4j.example.codereview.analyzer.Violation;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.model.ToolRunState;
 import dev.langchain4j.example.codereview.model.ToolStatus;
 import org.springframework.stereotype.Component;
@@ -18,10 +19,13 @@ public class ToolFindingsProducer {
 
     private final RegexAnalyzer regex;
     private final SpotBugsAnalyzer spotbugs;
+    private final ReviewWorkBudget budget;
 
-    public ToolFindingsProducer(RegexAnalyzer regex, SpotBugsAnalyzer spotbugs) {
+    public ToolFindingsProducer(
+            RegexAnalyzer regex, SpotBugsAnalyzer spotbugs, ReviewWorkBudget budget) {
         this.regex = regex;
         this.spotbugs = spotbugs;
+        this.budget = budget;
     }
 
     public ToolFindings produce(ReviewContext ctx) {
@@ -31,8 +35,8 @@ public class ToolFindingsProducer {
         try {
             all.addAll(regex.analyze(ctx.fileDiffs()));
             statuses.add(new ToolStatus("regex", ToolRunState.RAN, null));
-        } catch (RuntimeException e) {
-            statuses.add(new ToolStatus("regex", ToolRunState.FAILED, e.toString()));
+        } catch (RuntimeException ignored) {
+            statuses.add(new ToolStatus("regex", ToolRunState.FAILED, "analyzer failed"));
         }
 
         try {
@@ -44,11 +48,13 @@ public class ToolFindingsProducer {
                 statuses.add(new ToolStatus("spotbugs", ToolRunState.RAN, null));
                 all.addAll(sb.violations());
             }
-        } catch (RuntimeException e) {
-            statuses.add(new ToolStatus("spotbugs", ToolRunState.FAILED, e.toString()));
+        } catch (RuntimeException ignored) {
+            statuses.add(new ToolStatus("spotbugs", ToolRunState.FAILED, "analyzer failed"));
         }
 
-        return new ToolFindings(dedupe(all), statuses);
+        List<Violation> deduped = dedupe(all);
+        int findingCount = Math.min(deduped.size(), budget.input().maxFindings());
+        return new ToolFindings(deduped.subList(0, findingCount), statuses);
     }
 
     private List<Violation> dedupe(List<Violation> in) {
