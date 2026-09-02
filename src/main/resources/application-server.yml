@@ -25,15 +25,13 @@ spring:
 langchain4j:
   open-ai:
     chat-model:
-      api-key: ${APEMIND_API_KEY:${MOONSHOT_API_KEY:}}
-
 code-review:
   server:
     database:
       maximum-pool-size: ${DB_POOL_MAX_SIZE:8}
       minimum-idle: ${DB_POOL_MIN_IDLE:1}
-      acquisition-timeout: ${DB_POOL_ACQUISITION_TIMEOUT:2s}
-      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT:1s}
+      acquisition-timeout: ${DB_POOL_ACQUISITION_TIMEOUT_MS:2000}ms
+      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT_MS:1000}ms
       connect-timeout-seconds: ${DB_CONNECT_TIMEOUT_SECONDS:5}
       socket-timeout-seconds: ${DB_SOCKET_TIMEOUT_SECONDS:15}
       cancel-timeout-seconds: ${DB_CANCEL_TIMEOUT_SECONDS:2}

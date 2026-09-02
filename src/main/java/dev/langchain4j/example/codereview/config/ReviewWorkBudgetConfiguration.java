@@ -19,9 +19,9 @@ public class ReviewWorkBudgetConfiguration {
     @Bean
     ReviewWorkBudget reviewWorkBudget(
             ReviewWorkBudgetProperties properties, Environment environment) {
-        ReviewWorkBudget budget = properties.toBudget();
         String effectiveModel = environment.getProperty(
                 "langchain4j.open-ai.chat-model.model-name", "gpt-5.6-sol");
+        ReviewWorkBudget budget = properties.toBudget(effectiveModel);
         ReviewModelContextContract.verify(effectiveModel, budget.prompt());
         return budget;
     }

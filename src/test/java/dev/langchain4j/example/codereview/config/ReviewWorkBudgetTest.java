@@ -88,8 +88,7 @@ class ReviewWorkBudgetTest {
     @Test
     void retainsTheValidatedMoonshotContractForExplicitLegacyConfiguration() {
         contextRunner.withPropertyValues(
-                        "langchain4j.open-ai.chat-model.model-name=moonshot-v1-8k",
-                        "code-review.work-budget.prompt.model-id=moonshot-v1-8k")
+                        "langchain4j.open-ai.chat-model.model-name=moonshot-v1-8k")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context.getBean(ReviewWorkBudget.class).prompt().modelId())
