@@ -19,10 +19,6 @@ spring:
         tcpKeepAlive: true
   flyway:
     enabled: true
-    postgresql:
-      # CREATE INDEX CONCURRENTLY must not wait on Flyway's own transaction-scoped lock.
-      # Flyway still serializes migration processes with its PostgreSQL session advisory lock.
-      transactional-lock: false
   transaction:
     default-timeout: ${code-review.server.database.transaction-timeout}
 
@@ -74,6 +70,7 @@ code-review:
       pipeline-version: ${REVIEW_PIPELINE_VERSION:pipeline-v3}
       prompt-version: ${REVIEW_PROMPT_VERSION:review-prompt-v1}
       policy-version: ${REVIEW_POLICY_VERSION:policy-v1}
+      model-deployment-identity: ${REVIEW_MODEL_DEPLOYMENT_IDENTITY:moonshot-public-api-v1}
       work-budget-identity: ${REVIEW_WORK_BUDGET_IDENTITY:legacy-work-budget-v1}
       max-review-attempts: ${REVIEW_MAX_ATTEMPTS:3}
       max-inline-comments: ${REVIEW_MAX_INLINE_COMMENTS:5}

@@ -51,9 +51,11 @@ public final class ScheduledReviewOperationsMetrics {
             nextRefreshAt = now.plus(failureBackoff());
             operations.log(
                     new ReviewCorrelation(null, null, null, null, null, null, null, null),
-                    ReviewOperationLogger.Event.OBSERVABILITY,
-                    ReviewOperationLogger.Outcome.FAILED,
-                    ReviewOperationLogger.SafeCode.DATABASE_UNAVAILABLE);
+                    new ReviewOperationSignal(
+                            ReviewOperationLogger.Event.OBSERVABILITY,
+                            ReviewOperationLogger.Action.OBSERVABILITY_REFRESH,
+                            ReviewOperationLogger.Outcome.FAILED,
+                            ReviewOperationLogger.SafeCode.DATABASE_UNAVAILABLE));
         } finally {
             refreshing.set(false);
         }

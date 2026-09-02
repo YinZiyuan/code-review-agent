@@ -175,6 +175,7 @@ class ApplicationModeTest {
                         "code-review.server.identity.pipeline-version=pipeline-v4",
                         "code-review.server.identity.prompt-version=review-prompt-v2",
                         "code-review.server.identity.policy-version=policy-v3",
+                        "code-review.server.identity.model-deployment-identity=moonshot-cn-prod",
                         "code-review.server.identity.work-budget-identity=budget-sha256-abc",
                         "code-review.server.identity.max-review-attempts=4",
                         "code-review.server.identity.max-inline-comments=7")
@@ -183,10 +184,21 @@ class ApplicationModeTest {
                     assertThat(identity.pipelineVersion()).isEqualTo("pipeline-v4");
                     assertThat(identity.promptVersion()).isEqualTo("review-prompt-v2");
                     assertThat(identity.policyVersion()).isEqualTo("policy-v3");
+                    assertThat(identity.modelDeploymentIdentity()).isEqualTo("moonshot-cn-prod");
                     assertThat(identity.workBudgetIdentity()).isEqualTo("budget-sha256-abc");
                     assertThat(identity.maxReviewAttempts()).isEqualTo(4);
                     assertThat(identity.maxInlineComments()).isEqualTo(7);
                 });
+    }
+
+    @Test
+    void rejectsCredentialBearingDeploymentIdentity() {
+        contextRunner.withPropertyValues(
+                        "code-review.server.identity.model-deployment-identity=https://user:secret@host/v1")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues(
+                        "code-review.server.identity.model-deployment-identity=host/v1?token=secret")
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Test

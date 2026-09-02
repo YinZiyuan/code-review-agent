@@ -45,9 +45,11 @@ class ReviewOperationLoggerTest {
                         "delivery-123", reviewRunId, 73L, 12,
                         "0123456789abcdef0123456789abcdef01234567", jobId,
                         "pipeline-v3", "sha256-abc123"),
-                ReviewOperationLogger.Event.JOB,
-                ReviewOperationLogger.Outcome.DEAD,
-                ReviewOperationLogger.SafeCode.RETRY_EXHAUSTED);
+                new ReviewOperationSignal(
+                        ReviewOperationLogger.Event.JOB,
+                        ReviewOperationLogger.Action.JOB_DEAD_LETTERED,
+                        ReviewOperationLogger.Outcome.DEAD,
+                        ReviewOperationLogger.SafeCode.RETRY_EXHAUSTED));
         appender.stop();
         logger.detachAppender(appender);
 
@@ -64,6 +66,7 @@ class ReviewOperationLoggerTest {
         assertThat(event.path("pipeline_version").asText()).isEqualTo("pipeline-v3");
         assertThat(event.path("configuration_version").asText()).isEqualTo("sha256-abc123");
         assertThat(event.path("event").asText()).isEqualTo("job");
+        assertThat(event.path("action").asText()).isEqualTo("job_dead_lettered");
         assertThat(event.path("outcome").asText()).isEqualTo("dead");
         assertThat(event.path("safe_code").asText()).isEqualTo("retry_exhausted");
         assertThat(json)

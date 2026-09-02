@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ReviewConfigurationSnapshotFactoryTest {
 
@@ -44,12 +45,12 @@ class ReviewConfigurationSnapshotFactoryTest {
         assertDifferent(baseline, create(
                 modelEnvironment("kimi-k2.5", "secret-a"),
                 properties(3), new ReviewIdentityProperties(
-                        "pipeline-v3", "review-prompt-v2", "policy-v1",
+                        "pipeline-v3", "review-prompt-v2", "policy-v1", "moonshot-cn-v1",
                         "budget-sha256-a", 3, 5), worker()));
         assertDifferent(baseline, create(
                 modelEnvironment("kimi-k2.5", "secret-a"),
                 properties(3), new ReviewIdentityProperties(
-                        "pipeline-v3", "review-prompt-v1", "policy-v2",
+                        "pipeline-v3", "review-prompt-v1", "policy-v2", "moonshot-cn-v1",
                         "budget-sha256-a", 3, 6), worker()));
         assertDifferent(baseline, create(
                 modelEnvironment("kimi-k2.5", "secret-a"),
@@ -57,8 +58,54 @@ class ReviewConfigurationSnapshotFactoryTest {
         assertDifferent(baseline, create(
                 modelEnvironment("kimi-k2.5", "secret-a"),
                 properties(3), new ReviewIdentityProperties(
-                        "pipeline-v3", "review-prompt-v1", "policy-v1",
+                        "pipeline-v3", "review-prompt-v1", "policy-v1", "moonshot-cn-v1",
                         "budget-sha256-a", 4, 5), worker()));
+        assertDifferent(baseline, create(
+                modelEnvironment("kimi-k2.5", "secret-a"),
+                properties(3), new ReviewIdentityProperties(
+                        "pipeline-v3", "review-prompt-v1", "policy-v1", "moonshot-us-v1",
+                        "budget-sha256-a", 3, 5), worker()));
+    }
+
+    @Test
+    void directlyInjectedWorkBudgetIdentityOverridesTheLegacyPropertySeam() {
+        MockEnvironment environment = modelEnvironment("kimi-k2.5", "secret-a");
+        ReviewIdentityProperties identity = identity("legacy-budget-property");
+        ReviewConfigurationSnapshot first = new ReviewConfigurationSnapshotFactory(environment)
+                .create(properties(3), identity, worker(), () -> "budget-computed-by-stream-b-a");
+        ReviewConfigurationSnapshot second = new ReviewConfigurationSnapshotFactory(environment)
+                .create(properties(3), identity, worker(), () -> "budget-computed-by-stream-b-b");
+
+        assertDifferent(first, second);
+    }
+
+    @Test
+    void rejectsCredentialBearingModelEndpointsWithoutEchoingSecrets() {
+        for (String endpoint : new String[]{
+                "https://user:password-secret@api.example.test/v1",
+                "https://api.example.test/v1?api_key=query-secret",
+                "https://api.example.test/v1/token=path-secret"
+        }) {
+            MockEnvironment environment = modelEnvironment("kimi-k2.5", "secret-a")
+                    .withProperty("langchain4j.open-ai.chat-model.base-url", endpoint);
+
+            assertThatThrownBy(() -> create(
+                    environment, properties(3), identity("budget-sha256-a"), worker()))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("model base URL must not contain credentials")
+                    .hasMessageNotContaining("password-secret")
+                    .hasMessageNotContaining("query-secret")
+                    .hasMessageNotContaining("path-secret");
+        }
+    }
+
+    @Test
+    void rejectsEndpointUrisAsExplicitDeploymentIdentity() {
+        assertThatThrownBy(() -> new ReviewIdentityProperties(
+                "pipeline-v3", "review-prompt-v1", "policy-v1",
+                "https://api.example.test/v1/token=secret", "budget", 3, 5))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("modelDeploymentIdentity");
     }
 
     @Test
@@ -86,7 +133,7 @@ class ReviewConfigurationSnapshotFactoryTest {
             ReviewIdentityProperties identity,
             ServerProperties.Worker worker) {
         return new ReviewConfigurationSnapshotFactory(environment)
-                .create(properties, identity, worker);
+                .create(properties, identity, worker, identity::workBudgetIdentity);
     }
 
     private static void assertDifferent(
@@ -120,7 +167,7 @@ class ReviewConfigurationSnapshotFactoryTest {
 
     private static ReviewIdentityProperties identity(String workBudgetIdentity) {
         return new ReviewIdentityProperties(
-                "pipeline-v3", "review-prompt-v1", "policy-v1",
+                "pipeline-v3", "review-prompt-v1", "policy-v1", "moonshot-cn-v1",
                 workBudgetIdentity, 3, 5);
     }
 

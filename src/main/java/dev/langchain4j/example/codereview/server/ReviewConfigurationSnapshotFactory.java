@@ -18,11 +18,14 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 /** Builds the persisted run identity from an explicit allow-list of non-secret runtime settings. */
 public final class ReviewConfigurationSnapshotFactory {
 
     private static final String MODEL_PREFIX = "langchain4j.open-ai.chat-model.";
+    private static final Pattern CREDENTIAL_PATH = Pattern.compile(
+            "(?i)(?:^|/)[^/]*(?:token|secret|password|api[-_]?key)[=:_-][^/]*");
 
     private final Environment environment;
 
@@ -33,10 +36,12 @@ public final class ReviewConfigurationSnapshotFactory {
     public ReviewConfigurationSnapshot create(
             CodeReviewProperties properties,
             ReviewIdentityProperties identity,
-            ServerProperties.Worker worker) {
+            ServerProperties.Worker worker,
+            ReviewWorkBudgetIdentityProvider workBudgetIdentityProvider) {
         Objects.requireNonNull(properties, "properties");
         Objects.requireNonNull(identity, "identity");
         Objects.requireNonNull(worker, "worker");
+        Objects.requireNonNull(workBudgetIdentityProvider, "workBudgetIdentityProvider");
         ModelRuntimeMetadata model = new ModelRuntimeMetadataResolver(environment).resolve();
         if ("unknown".equals(model.reviewerModel())) {
             throw new IllegalStateException("Reviewer model name must be configured");
@@ -47,14 +52,16 @@ public final class ReviewConfigurationSnapshotFactory {
         put(settings, "prompt.version", identity.promptVersion());
         put(settings, "policy.version", identity.policyVersion());
         put(settings, "policy.max-inline-comments", identity.maxInlineComments());
-        put(settings, "work-budget.identity", identity.workBudgetIdentity());
+        put(settings, "work-budget.identity", requireIdentity(
+                workBudgetIdentityProvider.workBudgetIdentity(), "workBudgetIdentity"));
         put(settings, "retry.max-review-attempts", identity.maxReviewAttempts());
         put(settings, "retry.initial-backoff", worker.initialBackoff());
         put(settings, "retry.max-backoff", worker.maxBackoff());
         put(settings, "retry.jitter-ratio", decimal(worker.jitterRatio()));
 
         put(settings, "model.provider", model.provider());
-        put(settings, "model.endpoint", safeEndpoint(environment.getProperty(MODEL_PREFIX + "base-url")));
+        validateEndpointDoesNotContainCredentials(environment.getProperty(MODEL_PREFIX + "base-url"));
+        put(settings, "model.deployment", identity.modelDeploymentIdentity());
         put(settings, "model.name", model.reviewerModel());
         put(settings, "model.temperature", decimal(property("temperature", "0")));
         put(settings, "model.max-tokens", integer(property("max-tokens", "4096")));
@@ -86,22 +93,35 @@ public final class ReviewConfigurationSnapshotFactory {
         return value == null || value.isBlank() ? fallback : value.trim();
     }
 
-    private static String safeEndpoint(String value) {
+    private static void validateEndpointDoesNotContainCredentials(String value) {
         if (value == null || value.isBlank()) {
-            return "unknown";
+            return;
         }
         try {
             URI uri = URI.create(value.trim()).normalize();
             if (uri.getScheme() == null || uri.getHost() == null) {
-                return "unknown";
+                throw new IllegalArgumentException("model base URL must be absolute");
             }
-            String port = uri.getPort() < 0 ? "" : ":" + uri.getPort();
-            String path = uri.getPath() == null ? "" : uri.getPath();
-            return uri.getScheme().toLowerCase() + "://"
-                    + uri.getHost().toLowerCase() + port + path;
+            String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+            if (uri.getRawUserInfo() != null
+                    || uri.getRawQuery() != null
+                    || uri.getRawFragment() != null
+                    || CREDENTIAL_PATH.matcher(path).find()) {
+                throw new IllegalArgumentException("model base URL must not contain credentials");
+            }
         } catch (IllegalArgumentException invalidUri) {
-            return "unknown";
+            if ("model base URL must not contain credentials".equals(invalidUri.getMessage())) {
+                throw invalidUri;
+            }
+            throw new IllegalArgumentException("model base URL must be absolute", invalidUri);
         }
+    }
+
+    private static String requireIdentity(String value, String name) {
+        if (value == null || !value.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")) {
+            throw new IllegalArgumentException(name + " must be a non-secret configuration identifier");
+        }
+        return value;
     }
 
     private static String decimal(String value) {

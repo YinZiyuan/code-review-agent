@@ -37,11 +37,13 @@ public final class ReviewCorrelationFilter extends OncePerRequestFilter {
         } finally {
             operations.log(
                     correlation,
-                    ReviewOperationLogger.Event.WEBHOOK,
-                    response.getStatus() < 400
-                            ? ReviewOperationLogger.Outcome.ACCEPTED
-                            : ReviewOperationLogger.Outcome.REJECTED,
-                    ReviewOperationLogger.SafeCode.NONE);
+                    new ReviewOperationSignal(
+                            ReviewOperationLogger.Event.WEBHOOK,
+                            ReviewOperationLogger.Action.WEBHOOK_RECEIVED,
+                            response.getStatus() < 400
+                                    ? ReviewOperationLogger.Outcome.ACCEPTED
+                                    : ReviewOperationLogger.Outcome.REJECTED,
+                            ReviewOperationLogger.SafeCode.NONE));
         }
     }
 }

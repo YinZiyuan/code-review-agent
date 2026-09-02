@@ -59,6 +59,7 @@ import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.T
 import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.health.AdditionalHealthEndpointPath;
 import org.springframework.boot.actuate.health.HealthEndpointGroup;
 import org.springframework.boot.actuate.health.HealthEndpointGroups;
@@ -67,6 +68,7 @@ import org.springframework.boot.actuate.health.HttpCodeStatusMapper;
 import org.springframework.boot.actuate.health.StatusAggregator;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.flyway.FlywayConfigurationCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -94,6 +96,13 @@ import java.util.concurrent.ThreadLocalRandom;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "code-review.runtime", havingValue = "server")
 public class ServerConfiguration {
+
+    @Bean
+    FlywayConfigurationCustomizer postgresFlywaySessionLock() {
+        // A transaction-scoped Flyway schema lock self-blocks PostgreSQL CONCURRENTLY builds.
+        return configuration -> configuration.configuration(
+                Map.of("flyway.postgresql.transactional.lock", "false"));
+    }
 
     @Bean
     TransactionOperations transactionOperations(PlatformTransactionManager transactionManager) {
@@ -149,9 +158,12 @@ public class ServerConfiguration {
             CodeReviewProperties codeReviewProperties,
             ReviewIdentityProperties identity,
             ServerProperties serverProperties,
+            ObjectProvider<ReviewWorkBudgetIdentityProvider> workBudgetIdentityProvider,
             Environment environment) {
         return new ReviewConfigurationSnapshotFactory(environment)
-                .create(codeReviewProperties, identity, serverProperties.worker());
+                .create(codeReviewProperties, identity, serverProperties.worker(),
+                        workBudgetIdentityProvider.getIfAvailable(
+                                () -> identity::workBudgetIdentity));
     }
 
     @Bean

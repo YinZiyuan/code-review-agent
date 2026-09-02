@@ -26,10 +26,15 @@ public final class ReviewOperationLogger {
             Event event,
             Outcome outcome,
             SafeCode safeCode) {
+        log(correlation, new ReviewOperationSignal(
+                event, Action.UNSPECIFIED, outcome, safeCode));
+    }
+
+    public void log(
+            ReviewCorrelation correlation,
+            ReviewOperationSignal signal) {
         Objects.requireNonNull(correlation, "correlation");
-        Objects.requireNonNull(event, "event");
-        Objects.requireNonNull(outcome, "outcome");
-        Objects.requireNonNull(safeCode, "safeCode");
+        Objects.requireNonNull(signal, "signal");
         Map<String, String> prior = MDC.getCopyOfContextMap();
         try {
             MDC.clear();
@@ -41,10 +46,11 @@ public final class ReviewOperationLogger {
             put("job_id", text(correlation.jobId()));
             put("pipeline_version", correlation.pipelineVersion());
             put("configuration_version", correlation.configurationVersion());
-            put("event", event.value);
-            put("outcome", outcome.value);
-            if (safeCode != SafeCode.NONE) {
-                put("safe_code", safeCode.value);
+            put("event", signal.event().value);
+            put("action", signal.action().value);
+            put("outcome", signal.outcome().value);
+            if (signal.safeCode() != SafeCode.NONE) {
+                put("safe_code", signal.safeCode().value);
             }
             logger.info("review_operation");
         } finally {
@@ -96,6 +102,32 @@ public final class ReviewOperationLogger {
         private final String value;
 
         Outcome(String value) {
+            this.value = value;
+        }
+    }
+
+    /** Detailed operation names anticipated at stream A/B integration boundaries. */
+    public enum Action {
+        UNSPECIFIED(null),
+        WEBHOOK_RECEIVED("webhook_received"),
+        RUN_ADMITTED("run_admitted"),
+        JOB_LEASED("job_leased"),
+        JOB_HEARTBEAT("job_heartbeat"),
+        JOB_RETRY_SCHEDULED("job_retry_scheduled"),
+        JOB_DEAD_LETTERED("job_dead_lettered"),
+        REVIEW_EXECUTED("review_executed"),
+        PIPELINE_STAGE("pipeline_stage"),
+        MODEL_CALL("model_call"),
+        GITHUB_CALL("github_call"),
+        PUBLICATION_DECIDED("publication_decided"),
+        PUBLICATION_SENT("publication_sent"),
+        STALE_WRITE_PREVENTED("stale_write_prevented"),
+        OBSERVABILITY_REFRESH("observability_refresh"),
+        RETENTION_ARCHIVE("retention_archive");
+
+        private final String value;
+
+        Action(String value) {
             this.value = value;
         }
     }
