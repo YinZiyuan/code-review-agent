@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
+import java.io.BufferedWriter;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
@@ -55,8 +57,14 @@ public final class SourceCompiler {
 
             argumentFile = Files.createTempFile(
                     classesDirectory.getParent(), "javac-", ".args");
-            Files.writeString(argumentFile, sourceArguments(sources),
-                    StandardOpenOption.TRUNCATE_EXISTING);
+            ArgumentWriteOutcome argumentWrite = writeSourceArguments(argumentFile, sources);
+            if (argumentWrite == ArgumentWriteOutcome.LIMIT_EXCEEDED) {
+                return result(CompilationResult.Status.LIMIT_EXCEEDED,
+                        "compiler argument limit exceeded");
+            }
+            if (argumentWrite == ArgumentWriteOutcome.CANCELLED) {
+                return result(CompilationResult.Status.CANCELLED, "compiler cancelled");
+            }
             List<String> command = List.of(
                     javacExecutable(),
                     "-J-Xmx" + budget.process().compilerMaxHeapMb() + "m",
@@ -114,10 +122,26 @@ public final class SourceCompiler {
         return sources;
     }
 
-    private static String sourceArguments(List<Path> sources) {
-        return sources.stream().map(path -> path.toAbsolutePath().toString())
-                .map(SourceCompiler::quoteArgument)
-                .reduce("", (left, right) -> left + right + System.lineSeparator());
+    private ArgumentWriteOutcome writeSourceArguments(Path argumentFile, List<Path> sources)
+            throws IOException {
+        long writtenBytes = 0;
+        try (BufferedWriter writer = Files.newBufferedWriter(
+                argumentFile, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING)) {
+            for (Path source : sources) {
+                if (Thread.currentThread().isInterrupted()) {
+                    return ArgumentWriteOutcome.CANCELLED;
+                }
+                String line = quoteArgument(source.toAbsolutePath().toString())
+                        + System.lineSeparator();
+                int bytes = line.getBytes(StandardCharsets.UTF_8).length;
+                if (bytes > budget.process().maxCompilerArgumentBytes() - writtenBytes) {
+                    return ArgumentWriteOutcome.LIMIT_EXCEEDED;
+                }
+                writer.write(line);
+                writtenBytes += bytes;
+            }
+        }
+        return ArgumentWriteOutcome.COMPLETE;
     }
 
     private static String quoteArgument(String value) {
@@ -134,6 +158,8 @@ public final class SourceCompiler {
         return switch (processResult.outcome()) {
             case TIMED_OUT -> result(CompilationResult.Status.TIMED_OUT, "compiler timed out");
             case CANCELLED -> result(CompilationResult.Status.CANCELLED, "compiler cancelled");
+            case OUTPUT_LIMIT_EXCEEDED -> result(
+                    CompilationResult.Status.LIMIT_EXCEEDED, "compiler output limit exceeded");
             case START_FAILED -> result(CompilationResult.Status.FAILED, "compiler unavailable");
             case COMPLETED -> processResult.exitCode().orElse(-1) == 0
                     ? result(CompilationResult.Status.COMPILED, "compiled")
@@ -144,5 +170,11 @@ public final class SourceCompiler {
     private static CompilationResult result(
             CompilationResult.Status status, String safeReason) {
         return new CompilationResult(status, safeReason);
+    }
+
+    private enum ArgumentWriteOutcome {
+        COMPLETE,
+        LIMIT_EXCEEDED,
+        CANCELLED
     }
 }

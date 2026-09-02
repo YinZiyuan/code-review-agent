@@ -11,7 +11,6 @@ import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Field;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -49,7 +48,6 @@ class EvalCommandTest {
 
         CodeReviewProperties props = new CodeReviewProperties(
                 new CodeReviewProperties.Rag(tmp, 3, 0.4, false, 8, 4, 60),
-                new CodeReviewProperties.Orchestration(Duration.ofSeconds(60), 3),
                 new CodeReviewProperties.Eval("m", 1, tmp, tmp));
         EvalCommand cmd = new EvalCommand(runner, props);
         setField(cmd, "version", "v-test");
@@ -72,7 +70,6 @@ class EvalCommandTest {
 
         CodeReviewProperties props = new CodeReviewProperties(
                 new CodeReviewProperties.Rag(tmp, 3, 0.4, false, 8, 4, 60),
-                new CodeReviewProperties.Orchestration(Duration.ofSeconds(60), 3),
                 new CodeReviewProperties.Eval("m", 1, tmp, tmp));
         EvalCommand cmd = new EvalCommand(runner, props);
         setField(cmd, "version", "v-runs");

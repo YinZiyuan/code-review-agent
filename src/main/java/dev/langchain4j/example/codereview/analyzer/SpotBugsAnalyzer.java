@@ -32,6 +32,7 @@ public class SpotBugsAnalyzer implements StaticAnalyzer {
         COMPLETED,
         TIMED_OUT,
         CANCELLED,
+        OUTPUT_LIMIT_EXCEEDED,
         FAILED,
         UNAVAILABLE
     }
@@ -99,6 +100,7 @@ public class SpotBugsAnalyzer implements StaticAnalyzer {
         return switch (outcome) {
             case TIMED_OUT -> "analyzer timed out";
             case CANCELLED -> "analyzer cancelled";
+            case OUTPUT_LIMIT_EXCEEDED -> "analyzer output limit exceeded";
             case FAILED -> "analyzer failed";
             case UNAVAILABLE -> "analyzer unavailable";
             case COMPLETED -> "completed";

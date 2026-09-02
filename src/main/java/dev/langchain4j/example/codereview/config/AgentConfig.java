@@ -62,18 +62,28 @@ public class AgentConfig {
                     java.util.List.of(
                             "spotbugs", "-maxHeap",
                             Integer.toString(budget.process().analyzerMaxHeapMb()),
-                            "-textui", "-quiet", "-xml", "-output",
-                            output.toString(), classesDir.toString()),
+                            "-textui", "-quiet", "-xml:withMessages", classesDir.toString()),
                     classesDir.getParent(),
                     budget.stages().spotbugs(),
                     budget.process().maxOutputBytes()));
             return switch (result.outcome()) {
                 case TIMED_OUT -> SpotBugsAnalyzer.RunOutcome.TIMED_OUT;
                 case CANCELLED -> SpotBugsAnalyzer.RunOutcome.CANCELLED;
+                case OUTPUT_LIMIT_EXCEEDED -> SpotBugsAnalyzer.RunOutcome.OUTPUT_LIMIT_EXCEEDED;
                 case START_FAILED -> SpotBugsAnalyzer.RunOutcome.UNAVAILABLE;
-                case COMPLETED -> result.exitCode().orElse(-1) == 0
-                        ? SpotBugsAnalyzer.RunOutcome.COMPLETED
-                        : SpotBugsAnalyzer.RunOutcome.FAILED;
+                case COMPLETED -> {
+                    byte[] xml = result.output();
+                    if (result.exitCode().orElse(-1) != 0) {
+                        yield SpotBugsAnalyzer.RunOutcome.FAILED;
+                    }
+                    if (result.outputTruncated() || xml.length > budget.process().maxOutputBytes()) {
+                        yield SpotBugsAnalyzer.RunOutcome.OUTPUT_LIMIT_EXCEEDED;
+                    }
+                    java.nio.file.Files.write(output, xml,
+                            java.nio.file.StandardOpenOption.CREATE,
+                            java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+                    yield SpotBugsAnalyzer.RunOutcome.COMPLETED;
+                }
             };
         };
     }

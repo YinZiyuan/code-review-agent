@@ -18,7 +18,7 @@ class BoundedProcessRunnerTest {
     Path workingDirectory;
 
     @Test
-    void drainsFloodingOutputWithoutCapturingPastTheByteBudget() {
+    void terminatesFloodingOutputAtTheByteBudget() {
         SimpleMeterRegistry metrics = new SimpleMeterRegistry();
         BoundedProcessRunner runner = new BoundedProcessRunner(metrics);
 
@@ -29,13 +29,29 @@ class BoundedProcessRunnerTest {
                 Duration.ofSeconds(5),
                 257));
 
-        assertThat(result.outcome()).isEqualTo(BoundedProcessRunner.Outcome.COMPLETED);
-        assertThat(result.exitCode()).hasValue(0);
+        assertThat(result.outcome()).isEqualTo(BoundedProcessRunner.Outcome.OUTPUT_LIMIT_EXCEEDED);
         assertThat(result.output()).hasSize(257);
         assertThat(result.outputTruncated()).isTrue();
         assertThat(metrics.get("code.review.pipeline.process.duration")
-                .tag("process", "javac").tag("outcome", "completed")
+                .tag("process", "javac").tag("outcome", "output_limit_exceeded")
                 .timer().count()).isEqualTo(1);
+    }
+
+    @Test
+    void keepsUntrustedStderrOutOfTheBoundedMachineReadableOutput() {
+        BoundedProcessRunner runner = new BoundedProcessRunner(new SimpleMeterRegistry());
+
+        BoundedProcessRunner.Result result = runner.run(new BoundedProcessRunner.Request(
+                BoundedProcessRunner.ProcessKind.SPOTBUGS,
+                List.of("sh", "-c", "printf '<BugCollection/>'; printf 'secret-token' >&2"),
+                workingDirectory,
+                Duration.ofSeconds(2),
+                128));
+
+        assertThat(result.outcome()).isEqualTo(BoundedProcessRunner.Outcome.COMPLETED);
+        assertThat(new String(result.output(), StandardCharsets.UTF_8))
+                .isEqualTo("<BugCollection/>")
+                .doesNotContain("secret-token");
     }
 
     @Test

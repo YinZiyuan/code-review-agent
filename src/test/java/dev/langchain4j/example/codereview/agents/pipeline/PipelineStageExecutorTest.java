@@ -2,8 +2,15 @@ package dev.langchain4j.example.codereview.agents.pipeline;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudgetProperties;
+import dev.langchain4j.example.codereview.tools.CodeSearchTool;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -13,6 +20,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PipelineStageExecutorTest {
+
+    @TempDir
+    Path temporaryDirectory;
 
     @Test
     void deadlineCancelsTheStageAndRecordsOnlyLowCardinalityOutcome() throws Exception {
@@ -96,6 +106,37 @@ class PipelineStageExecutorTest {
             release.countDown();
             first.get(1, TimeUnit.SECONDS);
             queued.get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void timedOutCorpusScanObservesInterruptAndReleasesTheOnlyWorker() throws Exception {
+        Path source = temporaryDirectory.resolve("Large.java");
+        Files.writeString(source, "x".repeat(4 * 1024 * 1024));
+        ReviewWorkBudget base = new ReviewWorkBudgetProperties(
+                null, null, null, null, null, null).toBudget();
+        ReviewWorkBudget.InputLimits input = base.input();
+        ReviewWorkBudget budget = new ReviewWorkBudget(
+                base.version(),
+                new ReviewWorkBudget.InputLimits(
+                        input.maxDiffBytes(), input.maxChangedFiles(),
+                        input.maxJavaSourceFiles(), input.maxJavaSourceBytes(), 5 * 1024 * 1024,
+                        input.maxArchiveBytes(), input.maxExpandedBytes(),
+                        input.maxArchiveEntries(), input.maxSnippets(), input.maxFindings()),
+                base.prompt(), base.process(), base.stages(), base.workspace(), base.execution());
+        CodeSearchTool search = new CodeSearchTool();
+        try (PipelineStageExecutor executor = new PipelineStageExecutor(
+                new SimpleMeterRegistry(), 1, 1)) {
+            assertThatThrownBy(() -> executor.run(
+                    PipelineStageExecutor.Stage.DIFF_ANALYSIS,
+                    Duration.ofMillis(5),
+                    () -> search.search(temporaryDirectory, List.of("absent"), budget)))
+                    .isInstanceOf(ReviewStageTimeoutException.class);
+
+            assertThat(executor.run(
+                    PipelineStageExecutor.Stage.DIFF_ANALYSIS,
+                    Duration.ofSeconds(1),
+                    () -> "worker-released")).isEqualTo("worker-released");
         }
     }
 

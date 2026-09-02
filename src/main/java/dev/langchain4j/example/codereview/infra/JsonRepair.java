@@ -61,7 +61,7 @@ public class JsonRepair {
         try {
             return new ParsedResponse<>(readValue(extractJson(normalized), type), null);
         } catch (JsonProcessingException first) {
-            log.warn("JSON parse failed ({}); attempting repair", first.getOriginalMessage());
+            log.warn("model_json_parse_failed; attempting repair");
             ChatResponse repairResponse = askForRepair(normalized);
             try {
                 return new ParsedResponse<>(
@@ -69,8 +69,6 @@ public class JsonRepair {
                         repairResponse);
             } catch (JsonProcessingException second) {
                 throw new RepairFailedException(
-                        "Repair did not produce valid JSON: " + second.getOriginalMessage(),
-                        second,
                         requiredInputTokens(repairResponse),
                         requiredOutputTokens(repairResponse));
             }
@@ -83,8 +81,6 @@ public class JsonRepair {
             return readValue(extractJson(repairResponse.aiMessage().text()), type);
         } catch (JsonProcessingException e) {
             throw new RepairFailedException(
-                    "Repair did not produce valid JSON: " + e.getOriginalMessage(),
-                    e,
                     requiredInputTokens(repairResponse),
                     requiredOutputTokens(repairResponse));
         }
@@ -139,7 +135,7 @@ public class JsonRepair {
                 byte[] decoded = Base64.getDecoder().decode(matcher.group(1));
                 return new String(decoded, StandardCharsets.UTF_8);
             } catch (IllegalArgumentException e) {
-                log.warn("Could not decode base64 JSON payload: {}", e.getMessage());
+                log.warn("model_json_base64_decode_failed");
             }
         }
         return raw;
@@ -163,7 +159,11 @@ public class JsonRepair {
 
         public RepairFailedException(
                 String message, Throwable cause, int inputTokens, int outputTokens) {
-            super(message, cause);
+            this(inputTokens, outputTokens);
+        }
+
+        public RepairFailedException(int inputTokens, int outputTokens) {
+            super("model JSON repair failed");
             if (inputTokens < 0 || outputTokens < 0) {
                 throw new IllegalArgumentException("model token usage must be non-negative");
             }

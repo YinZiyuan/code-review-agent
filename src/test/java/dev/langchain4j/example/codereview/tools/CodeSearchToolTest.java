@@ -11,6 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -95,6 +97,39 @@ class CodeSearchToolTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    @Test
+    void rejectsAnUntrustedLineAtItsByteBoundaryWithoutReadingTheRest() throws Exception {
+        Path source = temporaryDirectory.resolve("LongLine.java");
+        Files.writeString(source, "x".repeat(70_000) + "\nsecretNeedle\n");
+
+        CodeSearchTool.SearchResult result = tool.search(
+                temporaryDirectory, List.of("secretNeedle"), defaults());
+
+        assertThat(result.status()).isEqualTo(CodeSearchTool.SearchStatus.LIMIT_EXCEEDED);
+        assertThat(result.bytesRead()).isLessThan(Files.size(source));
+        assertThat(result.hits()).isEmpty();
+    }
+
+    @Test
+    void monotonicDeadlineStopsTheCorpusCensus() throws Exception {
+        Files.writeString(temporaryDirectory.resolve("Deadline.java"), "class Deadline {}\n");
+        ReviewWorkBudget base = defaults();
+        ReviewWorkBudget.StageDeadlines stages = base.stages();
+        ReviewWorkBudget budget = new ReviewWorkBudget(
+                base.version(), base.input(), base.prompt(), base.process(),
+                new ReviewWorkBudget.StageDeadlines(
+                        Duration.ofNanos(2), stages.toolAnalysis(), stages.reviewModel(),
+                        stages.summarization(), stages.compiler(), stages.spotbugs()),
+                base.workspace(), base.execution());
+        AtomicLong ticks = new AtomicLong();
+
+        CodeSearchTool.SearchResult result = new CodeSearchTool(ticks::incrementAndGet)
+                .search(temporaryDirectory, List.of("anything"), budget);
+
+        assertThat(result.status()).isEqualTo(CodeSearchTool.SearchStatus.TIMED_OUT);
+        assertThat(result.bytesRead()).isZero();
     }
 
     private static ReviewWorkBudget defaults() {

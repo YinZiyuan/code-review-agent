@@ -11,6 +11,9 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -23,6 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(OutputCaptureExtension.class)
 class JsonRepairTest {
 
     record Box(String a, int b) {
@@ -107,5 +111,28 @@ class JsonRepairTest {
 
         assertThat(result.findings().get(0).category()).isEqualTo(Category.OTHER);
         verifyNoInteractions(model);
+    }
+
+    @Test
+    void malformedModelOutputNeverEscapesThroughLogsOrRetainedExceptions(
+            CapturedOutput output) {
+        String secret = "ghp_repository_secret_must_not_escape_987";
+        ChatModel model = mock(ChatModel.class);
+        when(model.chat(any(ChatRequest.class)))
+                .thenReturn(ChatResponse.builder()
+                        .aiMessage(AiMessage.from("still-broken-" + secret))
+                        .tokenUsage(new TokenUsage(20, 4))
+                        .build());
+
+        Throwable failure = org.assertj.core.api.Assertions.catchThrowable(
+                () -> new JsonRepair(model, mapper).parseOrRepair(secret, Box.class));
+
+        assertThat(failure).isInstanceOf(JsonRepair.RepairFailedException.class)
+                .hasMessage("model JSON repair failed")
+                .hasNoCause();
+        assertThat(failure.toString()).doesNotContain(secret, "Unrecognized token");
+        assertThat(output.getAll())
+                .contains("model_json_parse_failed")
+                .doesNotContain(secret, "Unrecognized token", "Broken JSON:");
     }
 }

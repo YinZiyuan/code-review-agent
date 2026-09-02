@@ -208,11 +208,13 @@ class LlmReviewerTest {
         assertThat(request.maxOutputTokens())
                 .isEqualTo(budget.prompt().completionReserveTokens());
         assertThat(tokenizer.count(prompt)).isLessThanOrEqualTo(budget.maxPromptTokens());
-        assertThat(metrics.get("code.review.pipeline.tokens").tag("kind", "prompt_estimated")
+        assertThat(metrics.get("code.review.pipeline.prompt.tokens.estimated")
                 .counter().count()).isPositive();
-        assertThat(metrics.get("code.review.pipeline.tokens").tag("kind", "input_actual")
+        assertThat(metrics.get("code.review.model.tokens.billed")
+                .tag("direction", "input").tag("call_scope", "main_and_repair")
                 .counter().count()).isEqualTo(30);
-        assertThat(metrics.get("code.review.pipeline.tokens").tag("kind", "output_actual")
+        assertThat(metrics.get("code.review.model.tokens.billed")
+                .tag("direction", "output").tag("call_scope", "main_and_repair")
                 .counter().count()).isEqualTo(6);
     }
 

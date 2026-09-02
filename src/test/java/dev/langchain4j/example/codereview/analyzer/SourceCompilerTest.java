@@ -118,6 +118,30 @@ class SourceCompilerTest {
                 .isEqualTo(CompilationResult.Status.NO_SOURCES);
     }
 
+    @Test
+    void streamsCompilerArgumentsAndRejectsTheirByteBudgetBeforeStartingJavac() throws Exception {
+        Path source = Files.createDirectories(tmp.resolve("deep/path/for/source"));
+        Files.writeString(source.resolve("LongName.java"), "class LongName {}\n");
+        Path classes = Files.createDirectory(tmp.resolve("argument-classes"));
+        AtomicBoolean started = new AtomicBoolean();
+        ReviewWorkBudget base = defaults();
+        ReviewWorkBudget constrained = new ReviewWorkBudget(
+                base.version(), base.input(), base.prompt(),
+                new ReviewWorkBudget.ProcessLimits(
+                        base.process().maxOutputBytes(), 16,
+                        base.process().compilerMaxHeapMb(), base.process().analyzerMaxHeapMb()),
+                base.stages(), base.workspace(), base.execution());
+
+        CompilationResult result = new SourceCompiler(request -> {
+            started.set(true);
+            throw new AssertionError("javac must not start");
+        }, constrained).compile(source, classes);
+
+        assertThat(result.status()).isEqualTo(CompilationResult.Status.LIMIT_EXCEEDED);
+        assertThat(result.safeReason()).isEqualTo("compiler argument limit exceeded");
+        assertThat(started).isFalse();
+    }
+
     private static SourceCompiler realCompiler(ReviewWorkBudget budget) {
         return new SourceCompiler(
                 new BoundedProcessRunner(new SimpleMeterRegistry())::run, budget);

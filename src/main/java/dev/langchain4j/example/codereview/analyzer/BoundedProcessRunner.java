@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class BoundedProcessRunner {
 
@@ -29,6 +30,7 @@ public final class BoundedProcessRunner {
 
     public enum Outcome {
         COMPLETED("completed"),
+        OUTPUT_LIMIT_EXCEEDED("output_limit_exceeded"),
         TIMED_OUT("timed_out"),
         CANCELLED("cancelled"),
         START_FAILED("start_failed");
@@ -93,18 +95,31 @@ public final class BoundedProcessRunner {
         long started = System.nanoTime();
         Outcome outcome = Outcome.START_FAILED;
         Process process = null;
-        OutputCollector collector = null;
-        Thread drain = null;
+        OutputCollector outputCollector = null;
+        OutputCollector diagnosticCollector = null;
+        Thread outputDrain = null;
+        Thread diagnosticDrain = null;
+        AtomicBoolean outputLimitExceeded = new AtomicBoolean();
         boolean interrupted = false;
         try {
             process = new ProcessBuilder(request.command())
                     .directory(request.workingDirectory().toFile())
-                    .redirectErrorStream(true)
+                    .redirectErrorStream(false)
                     .start();
-            collector = new OutputCollector(process.getInputStream(), request.maxOutputBytes());
-            drain = new Thread(collector, "review-process-output-" + request.kind().metricValue);
-            drain.setDaemon(true);
-            drain.start();
+            Process child = process;
+            Runnable terminateAtLimit = () -> {
+                if (outputLimitExceeded.compareAndSet(false, true)) {
+                    terminateTree(child);
+                }
+            };
+            outputCollector = new OutputCollector(
+                    process.getInputStream(), request.maxOutputBytes(), true, terminateAtLimit);
+            diagnosticCollector = new OutputCollector(
+                    process.getErrorStream(), request.maxOutputBytes(), false, terminateAtLimit);
+            outputDrain = drain(outputCollector,
+                    "review-process-output-" + request.kind().metricValue);
+            diagnosticDrain = drain(diagnosticCollector,
+                    "review-process-diagnostic-" + request.kind().metricValue);
 
             if (!process.waitFor(request.timeout().toNanos(), TimeUnit.NANOSECONDS)) {
                 outcome = Outcome.TIMED_OUT;
@@ -122,7 +137,11 @@ public final class BoundedProcessRunner {
             if (process != null && process.isAlive()) {
                 terminateTree(process);
             }
-            awaitDrain(drain, collector);
+            awaitDrain(outputDrain, outputCollector);
+            awaitDrain(diagnosticDrain, diagnosticCollector);
+            if (outcome == Outcome.COMPLETED && outputLimitExceeded.get()) {
+                outcome = Outcome.OUTPUT_LIMIT_EXCEEDED;
+            }
             Timer.builder("code.review.pipeline.process.duration")
                     .tag("process", request.kind().metricValue)
                     .tag("outcome", outcome.metricValue)
@@ -139,8 +158,15 @@ public final class BoundedProcessRunner {
         return new Result(
                 outcome,
                 exitCode,
-                collector == null ? new byte[0] : collector.bytes(),
-                collector != null && collector.truncated());
+                outputCollector == null ? new byte[0] : outputCollector.bytes(),
+                outputCollector != null && outputCollector.truncated());
+    }
+
+    private static Thread drain(OutputCollector collector, String name) {
+        Thread thread = new Thread(collector, name);
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
     }
 
     private static void terminateTree(Process process) {
@@ -182,12 +208,17 @@ public final class BoundedProcessRunner {
     private static final class OutputCollector implements Runnable {
         private final InputStream input;
         private final int maxBytes;
+        private final boolean capture;
+        private final Runnable onLimit;
         private final ByteArrayOutputStream captured;
         private volatile boolean truncated;
 
-        private OutputCollector(InputStream input, int maxBytes) {
+        private OutputCollector(
+                InputStream input, int maxBytes, boolean capture, Runnable onLimit) {
             this.input = input;
             this.maxBytes = maxBytes;
+            this.capture = capture;
+            this.onLimit = onLimit;
             this.captured = new ByteArrayOutputStream(Math.min(maxBytes, 8_192));
         }
 
@@ -197,18 +228,31 @@ public final class BoundedProcessRunner {
             try (input) {
                 int read;
                 while ((read = input.read(buffer)) != -1) {
-                    int remaining = maxBytes - captured.size();
-                    if (remaining > 0) {
+                    int consumed = capture ? captured.size() : 0;
+                    int remaining = maxBytes - consumed;
+                    if (capture && remaining > 0) {
                         captured.write(buffer, 0, Math.min(remaining, read));
                     }
                     if (read > remaining) {
                         truncated = true;
+                        onLimit.run();
+                        return;
+                    }
+                    if (!capture) {
+                        maxDiagnosticBytesRead += read;
+                        if (maxDiagnosticBytesRead > maxBytes) {
+                            truncated = true;
+                            onLimit.run();
+                            return;
+                        }
                     }
                 }
             } catch (IOException ignored) {
                 // Process output is untrusted diagnostics and is intentionally never logged.
             }
         }
+
+        private int maxDiagnosticBytesRead;
 
         private byte[] bytes() {
             return captured.toByteArray();

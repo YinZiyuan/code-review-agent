@@ -25,7 +25,7 @@ class AgentConfigProcessIsolationTest {
         when(process.run(any())).thenReturn(new BoundedProcessRunner.Result(
                 BoundedProcessRunner.Outcome.COMPLETED,
                 OptionalInt.of(0),
-                new byte[0],
+                "<BugCollection/>".getBytes(java.nio.charset.StandardCharsets.UTF_8),
                 false));
         Path workspace = Files.createTempDirectory("agent-config-process-");
         try {
@@ -43,10 +43,13 @@ class AgentConfigProcessIsolationTest {
                     .isEqualTo(BoundedProcessRunner.ProcessKind.SPOTBUGS);
             assertThat(request.getValue().command()).containsSubsequence(
                     "spotbugs", "-maxHeap", "256", "-textui");
+            assertThat(request.getValue().command()).doesNotContain("-output", output.toString());
             assertThat(request.getValue().timeout()).isEqualTo(budget.stages().spotbugs());
             assertThat(request.getValue().maxOutputBytes())
                     .isEqualTo(budget.process().maxOutputBytes());
+            assertThat(output).hasContent("<BugCollection/>");
         } finally {
+            Files.deleteIfExists(workspace.resolve("report.xml"));
             Files.deleteIfExists(workspace.resolve("classes"));
             Files.deleteIfExists(workspace);
         }

@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -109,5 +110,25 @@ class ReviewPromptAssemblerTest {
         assertThat(first).isEqualTo(second);
         assertThat(first.indexOf("a/A.java")).isLessThan(first.indexOf("z/Z.java"));
         assertThat(first.indexOf("id=a ")).isLessThan(first.indexOf("id=z "));
+    }
+
+    @Test
+    void assembledPromptIsByteIdenticalAcrossFreshJvmProcesses() throws Exception {
+        String javaExecutable = Path.of(
+                System.getProperty("java.home"), "bin", "java").toString();
+        String classPath = System.getProperty("java.class.path");
+        HashSet<String> hashes = new HashSet<>();
+        for (int process = 0; process < 5; process++) {
+            Process child = new ProcessBuilder(
+                    javaExecutable, "-cp", classPath, PromptDeterminismProbe.class.getName(),
+                    Integer.toString(process))
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(child.getInputStream().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(child.waitFor()).isZero();
+            hashes.add(output.trim());
+        }
+        assertThat(hashes).hasSize(1);
     }
 }

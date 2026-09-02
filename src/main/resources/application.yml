@@ -19,9 +19,6 @@ code-review:
     bm25-top-k: 8
     rerank-top-k: 4
     rrf-k: 60
-  orchestration:
-    reviewer-timeout: 60s
-    parallelism: 3
   eval:
     judge-model: ${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:moonshot-v1-8k}
     runs-per-sample: 1      # W1 keeps it 1; release uses 3

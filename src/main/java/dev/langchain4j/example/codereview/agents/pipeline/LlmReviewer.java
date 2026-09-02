@@ -108,7 +108,7 @@ public class LlmReviewer {
 
         ReviewPromptAssembler.AssembledPrompt prompt =
                 promptAssembler.assemble(SYSTEM, ctx, tools, candidates);
-        metrics.counter("code.review.pipeline.tokens", "kind", "prompt_estimated")
+        metrics.counter("code.review.pipeline.prompt.tokens.estimated")
                 .increment(prompt.tokenCount());
         metrics.counter("code.review.pipeline.prompt", "outcome",
                         prompt.truncated() ? "truncated" : "full")
@@ -184,9 +184,11 @@ public class LlmReviewer {
     }
 
     private void recordActualTokens(int inputTokens, int outputTokens) {
-        metrics.counter("code.review.pipeline.tokens", "kind", "input_actual")
+        metrics.counter("code.review.model.tokens.billed",
+                        "direction", "input", "call_scope", "main_and_repair")
                 .increment(inputTokens);
-        metrics.counter("code.review.pipeline.tokens", "kind", "output_actual")
+        metrics.counter("code.review.model.tokens.billed",
+                        "direction", "output", "call_scope", "main_and_repair")
                 .increment(outputTokens);
     }
 }
