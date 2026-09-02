@@ -6,21 +6,21 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: review-operations
-      maximum-pool-size: ${DB_POOL_MAX_SIZE:8}
-      minimum-idle: ${DB_POOL_MIN_IDLE:1}
-      connection-timeout: ${DB_POOL_ACQUISITION_TIMEOUT_MS:2000}
-      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT_MS:1000}
+      maximum-pool-size: ${code-review.server.database.maximum-pool-size}
+      minimum-idle: ${code-review.server.database.minimum-idle}
+      connection-timeout: ${code-review.server.database.acquisition-timeout}
+      validation-timeout: ${code-review.server.database.validation-timeout}
       connection-init-sql: >-
-        SET statement_timeout = '10s'; SET lock_timeout = '2s'; SET idle_in_transaction_session_timeout = '15s'
+        SET statement_timeout = '${code-review.server.database.statement-timeout}'; SET lock_timeout = '${code-review.server.database.lock-timeout}'; SET idle_in_transaction_session_timeout = '${code-review.server.database.idle-transaction-timeout}'
       data-source-properties:
-        connectTimeout: ${DB_CONNECT_TIMEOUT_SECONDS:5}
-        socketTimeout: ${DB_SOCKET_TIMEOUT_SECONDS:15}
-        cancelSignalTimeout: ${DB_CANCEL_TIMEOUT_SECONDS:2}
+        connectTimeout: ${code-review.server.database.connect-timeout-seconds}
+        socketTimeout: ${code-review.server.database.socket-timeout-seconds}
+        cancelSignalTimeout: ${code-review.server.database.cancel-timeout-seconds}
         tcpKeepAlive: true
   flyway:
     enabled: true
   transaction:
-    default-timeout: 10s
+    default-timeout: ${code-review.server.database.transaction-timeout}
 
 langchain4j:
   open-ai:
@@ -29,6 +29,18 @@ langchain4j:
 
 code-review:
   server:
+    database:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:8}
+      minimum-idle: ${DB_POOL_MIN_IDLE:1}
+      acquisition-timeout: ${DB_POOL_ACQUISITION_TIMEOUT:2s}
+      validation-timeout: ${DB_POOL_VALIDATION_TIMEOUT:1s}
+      connect-timeout-seconds: ${DB_CONNECT_TIMEOUT_SECONDS:5}
+      socket-timeout-seconds: ${DB_SOCKET_TIMEOUT_SECONDS:15}
+      cancel-timeout-seconds: ${DB_CANCEL_TIMEOUT_SECONDS:2}
+      statement-timeout: ${DB_STATEMENT_TIMEOUT:10s}
+      lock-timeout: ${DB_LOCK_TIMEOUT:2s}
+      idle-transaction-timeout: ${DB_IDLE_TRANSACTION_TIMEOUT:15s}
+      transaction-timeout: ${DB_TRANSACTION_TIMEOUT:10s}
     github:
       app-id: ${GITHUB_APP_ID}
       private-key: ${GITHUB_APP_PRIVATE_KEY}

@@ -7,9 +7,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.TransactionTimedOutException;
+import org.springframework.transaction.support.TransactionOperations;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -25,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.KeyPairGenerator;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -42,7 +48,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.datasource.hikari.maximum-pool-size=2",
         "spring.datasource.hikari.minimum-idle=0",
         "spring.datasource.hikari.connection-timeout=250",
-        "spring.datasource.hikari.validation-timeout=250"
+        "spring.datasource.hikari.validation-timeout=250",
+        "code-review.server.database.statement-timeout=500ms",
+        "code-review.server.database.lock-timeout=400ms",
+        "code-review.server.database.transaction-timeout=1s"
 })
 @Import(ServerReadinessTest.TestReviewerConfiguration.class)
 class ServerDatabaseBoundsTest {
@@ -79,6 +88,12 @@ class ServerDatabaseBoundsTest {
     @Autowired
     private DurableJobQueue jobs;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @Autowired
+    private TransactionOperations transactions;
+
     @AfterAll
     static void restoreDockerApiVersion() {
         if (PREVIOUS_DOCKER_API_VERSION == null) {
@@ -92,10 +107,47 @@ class ServerDatabaseBoundsTest {
     void bootUsesHikariWithDatabaseEnforcedStatementAndLockDeadlines() throws Exception {
         assertThat(dataSource.getClass().getName()).isEqualTo("com.zaxxer.hikari.HikariDataSource");
         try (Connection connection = dataSource.getConnection()) {
-            assertThat(setting(connection, "statement_timeout")).isEqualTo("10s");
-            assertThat(setting(connection, "lock_timeout")).isEqualTo("2s");
+            assertThat(setting(connection, "statement_timeout")).isEqualTo("500ms");
+            assertThat(setting(connection, "lock_timeout")).isEqualTo("400ms");
             assertThat(setting(connection, "idle_in_transaction_session_timeout")).isEqualTo("15s");
         }
+    }
+
+    @Test
+    void postgresCancelsStatementsThatExceedTheConfiguredDeadline() {
+        assertCompletesWithin(Duration.ofSeconds(2), () ->
+                assertThatThrownBy(() -> jdbc.queryForObject("SELECT pg_sleep(2)", Object.class))
+                        .isInstanceOf(QueryTimeoutException.class)
+                        .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("57014")));
+    }
+
+    @Test
+    void postgresCancelsConflictingLockWaitsAtTheConfiguredDeadline() throws Exception {
+        jdbc.execute("CREATE TABLE IF NOT EXISTS database_bounds_lock_test (id integer PRIMARY KEY, value integer)");
+        jdbc.update("INSERT INTO database_bounds_lock_test VALUES (1, 0) ON CONFLICT (id) DO UPDATE SET value = 0");
+
+        try (Connection blocker = dataSource.getConnection()) {
+            blocker.setAutoCommit(false);
+            blocker.createStatement().executeUpdate(
+                    "UPDATE database_bounds_lock_test SET value = 1 WHERE id = 1");
+
+            assertCompletesWithin(Duration.ofSeconds(2), () ->
+                    assertThatThrownBy(() -> jdbc.update(
+                                    "UPDATE database_bounds_lock_test SET value = 2 WHERE id = 1"))
+                            .isInstanceOf(DataAccessException.class)
+                            .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("55P03")));
+            blocker.rollback();
+        }
+    }
+
+    @Test
+    void springTransactionTimeoutCancelsWorkEvenWhenTheSessionStatementTimeoutIsDisabled() {
+        assertCompletesWithin(Duration.ofSeconds(3), () ->
+                assertThatThrownBy(() -> transactions.executeWithoutResult(status -> {
+                            jdbc.execute("SET LOCAL statement_timeout = 0");
+                            jdbc.queryForObject("SELECT pg_sleep(3)", Object.class);
+                        }))
+                        .isInstanceOfAny(QueryTimeoutException.class, TransactionTimedOutException.class));
     }
 
     @Test
@@ -163,6 +215,17 @@ class ServerDatabaseBoundsTest {
                 return resultSet.getString(1);
             }
         }
+    }
+
+    private static String sqlState(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof SQLException sqlFailure) {
+                return sqlFailure.getSQLState();
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     private static String signature(byte[] payload) throws Exception {

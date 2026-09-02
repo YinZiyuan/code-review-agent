@@ -181,12 +181,67 @@ class ApplicationModeTest {
                 });
     }
 
+    @Test
+    void bindsFiniteDatabaseBoundsFromTypedServerConfiguration() {
+        contextRunner.withPropertyValues(
+                        "code-review.server.database.maximum-pool-size=12",
+                        "code-review.server.database.minimum-idle=2",
+                        "code-review.server.database.acquisition-timeout=3s",
+                        "code-review.server.database.validation-timeout=750ms",
+                        "code-review.server.database.connect-timeout-seconds=4",
+                        "code-review.server.database.socket-timeout-seconds=20",
+                        "code-review.server.database.cancel-timeout-seconds=3",
+                        "code-review.server.database.statement-timeout=12s",
+                        "code-review.server.database.lock-timeout=3s",
+                        "code-review.server.database.idle-transaction-timeout=20s",
+                        "code-review.server.database.transaction-timeout=11s")
+                .run(context -> {
+                    DatabaseBoundsProperties database =
+                            context.getBean(DatabaseBoundsProperties.class);
+                    assertThat(database.maximumPoolSize()).isEqualTo(12);
+                    assertThat(database.minimumIdle()).isEqualTo(2);
+                    assertThat(database.acquisitionTimeout()).isEqualTo(Duration.ofSeconds(3));
+                    assertThat(database.validationTimeout()).isEqualTo(Duration.ofMillis(750));
+                    assertThat(database.connectTimeoutSeconds()).isEqualTo(4);
+                    assertThat(database.socketTimeoutSeconds()).isEqualTo(20);
+                    assertThat(database.cancelTimeoutSeconds()).isEqualTo(3);
+                    assertThat(database.statementTimeout()).isEqualTo(Duration.ofSeconds(12));
+                    assertThat(database.lockTimeout()).isEqualTo(Duration.ofSeconds(3));
+                    assertThat(database.idleTransactionTimeout()).isEqualTo(Duration.ofSeconds(20));
+                    assertThat(database.transactionTimeout()).isEqualTo(Duration.ofSeconds(11));
+                });
+    }
+
+    @Test
+    void rejectsDisabledNegativeOrExcessiveDatabaseBounds() {
+        assertDatabaseConfigurationFails("maximum-pool-size=0");
+        assertDatabaseConfigurationFails("minimum-idle=-1");
+        assertDatabaseConfigurationFails("acquisition-timeout=0s");
+        assertDatabaseConfigurationFails("validation-timeout=-1ms");
+        assertDatabaseConfigurationFails("connect-timeout-seconds=0");
+        assertDatabaseConfigurationFails("socket-timeout-seconds=0");
+        assertDatabaseConfigurationFails("cancel-timeout-seconds=0");
+        assertDatabaseConfigurationFails("statement-timeout=0s");
+        assertDatabaseConfigurationFails("lock-timeout=0s");
+        assertDatabaseConfigurationFails("idle-transaction-timeout=0s");
+        assertDatabaseConfigurationFails("transaction-timeout=0s");
+        assertDatabaseConfigurationFails("maximum-pool-size=65");
+        assertDatabaseConfigurationFails("socket-timeout-seconds=301");
+        assertDatabaseConfigurationFails("statement-timeout=11m");
+    }
+
+    private void assertDatabaseConfigurationFails(String property) {
+        contextRunner.withPropertyValues("code-review.server.database." + property)
+                .run(context -> assertThat(context).hasFailed());
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties({
             ServerProperties.class,
             ReviewOperationsMaintenanceProperties.class,
             ReviewObservabilityProperties.class,
-            ReviewIdentityProperties.class
+            ReviewIdentityProperties.class,
+            DatabaseBoundsProperties.class
     })
     static class ServerPropertiesConfiguration {
     }
