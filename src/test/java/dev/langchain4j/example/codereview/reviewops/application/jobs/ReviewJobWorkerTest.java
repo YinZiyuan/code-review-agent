@@ -148,6 +148,32 @@ class ReviewJobWorkerTest {
     }
 
     @Test
+    void transientFailureAtDeliveryBoundIsReportedDeadInsteadOfRetried() {
+        FakeQueue queue = new FakeQueue();
+        LeasedJob job = leased("PUBLISH_REVIEW", 12, 3, 3);
+        queue.leased = List.of(job);
+        SimpleMeterRegistry metrics = new SimpleMeterRegistry();
+        ReviewJobWorker worker = worker(
+                queue,
+                List.of(handler("PUBLISH_REVIEW", leased ->
+                        ReviewJobHandler.JobOutcome.transientFailure("github_transient"))),
+                zeroJitterBackoff(),
+                new FakeHeartbeat(),
+                metrics);
+
+        ReviewJobWorker.WorkerCycleResult result = worker.runOnce();
+
+        assertThat(result.retried()).isZero();
+        assertThat(result.dead()).isEqualTo(1);
+        assertThat(metrics.get("code.review.jobs")
+                .tags("job.type", "PUBLISH_REVIEW", "outcome", "dead")
+                .counter().count()).isEqualTo(1.0);
+        assertThat(metrics.find("code.review.jobs")
+                .tags("job.type", "PUBLISH_REVIEW", "outcome", "retried")
+                .counter()).isNull();
+    }
+
+    @Test
     void exponentialBackoffIsBoundedAndSupportsDeterministicJitter() {
         BackoffPolicy zeroJitter = BackoffPolicy.exponential(
                 Duration.ofSeconds(10), Duration.ofSeconds(25), 0.20, () -> 0.0);
@@ -354,6 +380,43 @@ class ReviewJobWorkerTest {
     }
 
     @Test
+    void handlerReceivesALiveFenceAndFenceLossPreventsFurtherMutation() {
+        FakeQueue queue = new FakeQueue();
+        LeasedJob job = leased("FENCED", 15, 1);
+        queue.leased = List.of(job);
+        FakeHeartbeat heartbeat = new FakeHeartbeat();
+        AtomicBoolean mutationReached = new AtomicBoolean();
+        ReviewJobHandler handler = new ReviewJobHandler() {
+            @Override
+            public String jobType() {
+                return "FENCED";
+            }
+
+            @Override
+            public JobOutcome handle(LeasedJob ignored) {
+                throw new AssertionError("worker must dispatch the live fence");
+            }
+
+            @Override
+            public JobOutcome handle(LeasedJob ignored, OperationFence fence) {
+                heartbeat.ownershipValid = false;
+                fence.requireCurrent();
+                mutationReached.set(true);
+                return JobOutcome.succeeded();
+            }
+        };
+        ReviewJobWorker worker = worker(
+                queue, List.of(handler), zeroJitterBackoff(), heartbeat,
+                new SimpleMeterRegistry());
+
+        ReviewJobWorker.WorkerCycleResult result = worker.runOnce();
+
+        assertThat(mutationReached).isFalse();
+        assertThat(queue.settlements).isEmpty();
+        assertThat(result.ownershipLost()).isEqualTo(1);
+    }
+
+    @Test
     void scheduledHeartbeatRenewsTheExactLeaseAndCancelsAfterHandling() {
         FakeQueue queue = new FakeQueue();
         ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
@@ -413,6 +476,36 @@ class ReviewJobWorkerTest {
         heartbeatTask.get().run();
 
         assertThat(session.ownershipValid()).isFalse();
+        session.close();
+        heartbeat.close();
+    }
+
+    @Test
+    void asynchronousFenceLossInterruptsTheBoundHandler() {
+        FakeQueue queue = new FakeQueue();
+        ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
+        @SuppressWarnings("unchecked")
+        ScheduledFuture<Object> scheduled = mock(ScheduledFuture.class);
+        AtomicReference<Runnable> heartbeatTask = new AtomicReference<>();
+        when(scheduler.scheduleAtFixedRate(
+                any(Runnable.class), anyLong(), anyLong(), eq(TimeUnit.NANOSECONDS)))
+                .thenAnswer(invocation -> {
+                    heartbeatTask.set(invocation.getArgument(0));
+                    return scheduled;
+                });
+        ScheduledLeaseHeartbeat heartbeat = new ScheduledLeaseHeartbeat(
+                queue, CLOCK, LEASE_DURATION, Duration.ofSeconds(30), scheduler);
+        ReviewJobWorker.LeaseHeartbeat.Session session = heartbeat.start(
+                leased("REVIEW_EXECUTION", 16, 1), OWNER);
+
+        session.beginHandling();
+        queue.renewFailure = new IllegalStateException("stale lease");
+        heartbeatTask.get().run();
+
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        assertThat(session.ownershipValid()).isFalse();
+        Thread.interrupted();
+        session.endHandling();
         session.close();
         heartbeat.close();
     }
@@ -487,6 +580,11 @@ class ReviewJobWorkerTest {
     }
 
     private static LeasedJob leased(String type, int fence, int deliveryAttempt) {
+        return leased(type, fence, deliveryAttempt, 5);
+    }
+
+    private static LeasedJob leased(
+            String type, int fence, int deliveryAttempt, int maxAttempts) {
         return new LeasedJob(
                 UUID.nameUUIDFromBytes((type + fence).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                 type,
@@ -494,7 +592,7 @@ class ReviewJobWorkerTest {
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                 fence,
                 deliveryAttempt,
-                5,
+                maxAttempts,
                 NOW.plus(LEASE_DURATION));
     }
 

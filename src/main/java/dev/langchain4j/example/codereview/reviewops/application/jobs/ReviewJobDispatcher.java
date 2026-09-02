@@ -23,12 +23,17 @@ public final class ReviewJobDispatcher {
     }
 
     public ReviewJobHandler.JobOutcome dispatch(LeasedJob job) {
+        return dispatch(job, OperationFence.unfenced());
+    }
+
+    public ReviewJobHandler.JobOutcome dispatch(LeasedJob job, OperationFence fence) {
         Objects.requireNonNull(job, "job");
+        Objects.requireNonNull(fence, "fence");
         ReviewJobHandler handler = handlers.get(job.jobType());
         if (handler == null) {
             return ReviewJobHandler.JobOutcome.terminalFailure("unknown_job_type");
         }
-        return Objects.requireNonNull(handler.handle(job), "job outcome");
+        return Objects.requireNonNull(handler.handle(job, fence), "job outcome");
     }
 
     boolean handles(String jobType) {

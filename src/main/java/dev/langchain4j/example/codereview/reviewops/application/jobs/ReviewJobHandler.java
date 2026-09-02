@@ -10,6 +10,11 @@ public interface ReviewJobHandler {
 
     JobOutcome handle(LeasedJob job);
 
+    default JobOutcome handle(LeasedJob job, OperationFence fence) {
+        Objects.requireNonNull(fence, "fence").requireCurrent();
+        return handle(job);
+    }
+
     enum JobStatus {
         SUCCEEDED,
         TRANSIENT_FAILURE,

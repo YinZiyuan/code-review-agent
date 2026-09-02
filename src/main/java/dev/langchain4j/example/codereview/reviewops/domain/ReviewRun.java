@@ -107,6 +107,33 @@ public final class ReviewRun {
         finishedAt = endedAt;
     }
 
+    /** Settles a final infrastructure/job failure from any active review lifecycle state. */
+    public void recordJobSystemFailure(ReviewFailure failure, Instant failedAt) {
+        requireTerminalFailure(failure);
+        Objects.requireNonNull(failedAt, "failedAt");
+        switch (state) {
+            case REQUESTED -> {
+                startAttempt(failedAt);
+                currentAttempt().failTerminal(
+                        failure,
+                        new ExecutionMeasurements(0, 0, 0, Map.of()),
+                        failedAt);
+            }
+            case RUNNING -> currentAttempt().failTerminal(
+                    failure,
+                    new ExecutionMeasurements(0, 0, 0, Map.of()),
+                    failedAt);
+            case COMPLETED, PUBLISHING -> {
+                // The completed review evidence remains immutable; only lifecycle authority ends.
+            }
+            case PUBLISHED, FAILED, SUPERSEDED ->
+                    throw new IllegalStateException("cannot fail terminal review " + state);
+        }
+        finalFailure = failure;
+        state = ReviewRunState.FAILED;
+        finishedAt = failedAt;
+    }
+
     public void completeReview(List<ReviewFinding> completedFindings,
                                ExecutionMeasurements measurements, Instant completedAt) {
         requireState(ReviewRunState.RUNNING);
@@ -260,6 +287,14 @@ public final class ReviewRun {
         if (checkRunExternalId != null && !checkRunExternalId.equals(confirmedCheckRunId)) {
             throw new IllegalArgumentException(
                     "confirmedCheckRunId conflicts with recorded publication progress");
+        }
+        checkRunExternalId = confirmedCheckRunId;
+    }
+
+    public void recordFailurePresentationCheck(String confirmedCheckRunId) {
+        requireState(ReviewRunState.FAILED);
+        if (confirmedCheckRunId == null || confirmedCheckRunId.isBlank()) {
+            throw new IllegalArgumentException("confirmedCheckRunId must not be blank");
         }
         checkRunExternalId = confirmedCheckRunId;
     }
@@ -433,8 +468,8 @@ public final class ReviewRun {
                 if (finalFailure == null || finalFailure.classification() != FailureClass.TERMINAL
                         || !hasFinishedAt || hasBlankExternalId
                         || !isValidFailedAttemptState(lastAttemptState, attempts.size(),
-                        configuration.maxReviewAttempts(), findings, allFindingsHaveDecisions,
-                        hasExternalId)) {
+                        configuration.maxReviewAttempts(), findings, noFindingsHaveDecisions,
+                        allFindingsHaveDecisions)) {
                     throw new IllegalArgumentException("failed review has invalid persisted state");
                 }
             }
@@ -451,15 +486,16 @@ public final class ReviewRun {
     private static boolean isValidFailedAttemptState(ReviewAttemptState lastAttemptState, int attemptCount,
                                                      int maxReviewAttempts,
                                                      List<ReviewFinding> findings,
-                                                     boolean allFindingsHaveDecisions,
-                                                     boolean hasExternalId) {
+                                                     boolean noFindingsHaveDecisions,
+                                                     boolean allFindingsHaveDecisions) {
         if (lastAttemptState == ReviewAttemptState.TERMINAL_FAILURE) {
-            return findings.isEmpty() && !hasExternalId;
+            return findings.isEmpty();
         }
         if (lastAttemptState == ReviewAttemptState.TRANSIENT_FAILURE) {
-            return attemptCount == maxReviewAttempts && findings.isEmpty() && !hasExternalId;
+            return attemptCount == maxReviewAttempts && findings.isEmpty();
         }
-        return lastAttemptState == ReviewAttemptState.SUCCEEDED && allFindingsHaveDecisions;
+        return lastAttemptState == ReviewAttemptState.SUCCEEDED
+                && (noFindingsHaveDecisions || allFindingsHaveDecisions);
     }
 
     private static boolean isValidSupersededAttemptState(ReviewAttemptState lastAttemptState,

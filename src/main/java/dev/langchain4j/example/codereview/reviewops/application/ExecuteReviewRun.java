@@ -40,6 +40,7 @@ import java.util.concurrent.TimeoutException;
 public final class ExecuteReviewRun {
 
     public static final String DECIDE_PUBLICATION_JOB_TYPE = "DECIDE_PUBLICATION";
+    public static final String PRESENT_REVIEW_FAILURE_JOB_TYPE = "PRESENT_REVIEW_FAILURE";
     private static final String REVIEW_PROMPT_PREFIX = "Review the following diff:\n\n";
 
     private final ReviewRunRepository reviewRuns;
@@ -77,13 +78,15 @@ public final class ExecuteReviewRun {
         ReviewRun run = loaded.orElseThrow().reviewRun();
         long version = loaded.orElseThrow().version();
         if (run.state() == ReviewRunState.RUNNING) {
+            Instant recoveredAt = clock.instant();
             run.recoverInterruptedAttempt(new ReviewFailure(
                     "worker_interrupted", FailureClass.TRANSIENT,
-                    "interrupted execution details are not retained"), clock.instant());
-            version = mutations.saveProgress(run, version);
+                    "interrupted execution details are not retained"), recoveredAt);
             if (run.state() == ReviewRunState.FAILED) {
+                enqueueFailurePresentation(run, version, recoveredAt);
                 return ExecutionOutcome.terminal(run.finalFailure().orElseThrow());
             }
+            version = mutations.saveProgress(run, version);
         }
 
         ExecutionOutcome settled = outcomeForSettledState(run);
@@ -205,11 +208,26 @@ public final class ExecuteReviewRun {
         } else {
             run.recordTerminalAttemptFailure(classified.failure(), measurements, failedAt);
         }
-        mutations.saveProgress(run, version);
+        if (run.state() == ReviewRunState.FAILED) {
+            enqueueFailurePresentation(run, version, failedAt);
+        } else {
+            mutations.saveProgress(run, version);
+        }
         if (run.state() == ReviewRunState.FAILED) {
             return ExecutionOutcome.terminal(run.finalFailure().orElseThrow());
         }
         return ExecutionOutcome.retryable(classified.failure(), classified.retryAt());
+    }
+
+    private void enqueueFailurePresentation(ReviewRun run, long expectedVersion, Instant failedAt) {
+        DurableJobRequest failurePresentation = new DurableJobRequest(
+                PRESENT_REVIEW_FAILURE_JOB_TYPE,
+                run.id().value(),
+                run.configuration().maxReviewAttempts(),
+                failedAt,
+                "present-review-failure:" + run.id().value());
+        mutations.saveAndEnqueue(
+                run, expectedVersion, List.of(failurePresentation), List.of());
     }
 
     private static ExecutionOutcome outcomeForSettledState(ReviewRun run) {

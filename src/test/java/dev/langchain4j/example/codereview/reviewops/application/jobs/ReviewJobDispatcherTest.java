@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.application.jobs;
 
 import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun;
+import dev.langchain4j.example.codereview.reviewops.application.PresentReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.application.SupersedeObsoleteReviewRuns;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewFailure;
@@ -168,6 +169,28 @@ class ReviewJobDispatcherTest {
         assertThat(missing.handle(supersessionJob))
                 .isEqualTo(ReviewJobHandler.JobOutcome.terminalFailure(
                         "supersession_source_not_found"));
+    }
+
+    @Test
+    void failurePresentationHandlerMapsNeutralAndStaleReconciliationToSuccess() {
+        for (PresentReviewFailure.PresentationOutcome applicationOutcome : List.of(
+                PresentReviewFailure.PresentationOutcome.PRESENTED,
+                PresentReviewFailure.PresentationOutcome.STALE,
+                PresentReviewFailure.PresentationOutcome.ALREADY_PROCESSED)) {
+            ReviewFailurePresentationJobHandler handler =
+                    new ReviewFailurePresentationJobHandler(id -> applicationOutcome);
+            LeasedJob presentationJob = new LeasedJob(
+                    REVIEW_JOB.id(),
+                    ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE,
+                    REVIEW_JOB.payloadReference(),
+                    REVIEW_JOB.attemptCount(),
+                    REVIEW_JOB.maxAttempts(),
+                    REVIEW_JOB.leaseExpiresAt());
+
+            assertThat(handler.jobType()).isEqualTo("PRESENT_REVIEW_FAILURE");
+            assertThat(handler.handle(presentationJob))
+                    .isEqualTo(ReviewJobHandler.JobOutcome.succeeded());
+        }
     }
 
     private static ReviewJobHandler handler(

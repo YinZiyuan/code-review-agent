@@ -8,18 +8,21 @@ import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun
 import dev.langchain4j.example.codereview.reviewops.application.ObservePullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.application.ObsoleteReviewRunStore;
 import dev.langchain4j.example.codereview.reviewops.application.PublishReviewOutcome;
+import dev.langchain4j.example.codereview.reviewops.application.PresentReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.application.PullRequestObservationStore;
 import dev.langchain4j.example.codereview.reviewops.application.RecoverExpiredReviewExecution;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewFindingMapper;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunAdmissionStore;
 import dev.langchain4j.example.codereview.reviewops.application.ReviewRunMutationStore;
 import dev.langchain4j.example.codereview.reviewops.application.SupersedeObsoleteReviewRuns;
+import dev.langchain4j.example.codereview.reviewops.application.SettleReviewJobFailure;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.ReviewSourceProvider;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.BackoffPolicy;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewDecisionJobHandler;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewExecutionJobHandler;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewFailurePresentationJobHandler;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobDispatcher;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobHandler;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobWorker;
@@ -174,12 +177,19 @@ public class ServerConfiguration {
             JdbcTemplate jdbcTemplate,
             TransactionOperations transactions,
             Clock clock,
-            ReviewRunRepository reviewRuns) {
+            ReviewRunRepository reviewRuns,
+            SettleReviewJobFailure finalFailureSettlement) {
         return new PostgresDurableJobQueue(
                 jdbcTemplate,
                 transactions,
                 clock,
-                new RecoverExpiredReviewExecution(reviewRuns));
+                new RecoverExpiredReviewExecution(reviewRuns),
+                finalFailureSettlement);
+    }
+
+    @Bean
+    SettleReviewJobFailure settleReviewJobFailure(ReviewRunRepository reviewRuns) {
+        return new SettleReviewJobFailure(reviewRuns);
     }
 
     @Bean
@@ -338,8 +348,23 @@ public class ServerConfiguration {
     }
 
     @Bean
+    PresentReviewFailure presentReviewFailure(
+            ReviewRunRepository reviewRuns,
+            ReviewRunMutationStore mutations,
+            GitHubPublicationGateway github,
+            Clock clock) {
+        return new PresentReviewFailure(reviewRuns, mutations, github, clock);
+    }
+
+    @Bean
     ReviewExecutionJobHandler reviewExecutionJobHandler(ExecuteReviewRun executeReviewRun) {
         return new ReviewExecutionJobHandler(executeReviewRun);
+    }
+
+    @Bean
+    ReviewFailurePresentationJobHandler reviewFailurePresentationJobHandler(
+            PresentReviewFailure presentReviewFailure) {
+        return new ReviewFailurePresentationJobHandler(presentReviewFailure);
     }
 
     @Bean

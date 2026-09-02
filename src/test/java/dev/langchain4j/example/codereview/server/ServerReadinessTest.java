@@ -2,12 +2,16 @@ package dev.langchain4j.example.codereview.server;
 
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
 import dev.langchain4j.example.codereview.model.ReviewResult;
+import dev.langchain4j.example.codereview.reviewops.application.PresentReviewFailure;
+import dev.langchain4j.example.codereview.reviewops.application.SettleReviewJobFailure;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewFailurePresentationJobHandler;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -62,6 +66,9 @@ class ServerReadinessTest {
     @LocalServerPort
     private int port;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private ApplicationContext context;
+
     @AfterAll
     static void restoreDockerApiVersion() {
         if (PREVIOUS_DOCKER_API_VERSION == null) {
@@ -95,6 +102,13 @@ class ServerReadinessTest {
         assertThat(unavailable.status()).isEqualTo(503);
         assertThat(unavailable.body()).contains("\"status\":\"DOWN\"");
         assertThat(get("/actuator/health").status()).isEqualTo(200);
+    }
+
+    @Test
+    void serverWiresTerminalSettlementAndNeutralFailurePresentation() {
+        assertThat(context.getBeansOfType(SettleReviewJobFailure.class)).hasSize(1);
+        assertThat(context.getBeansOfType(PresentReviewFailure.class)).hasSize(1);
+        assertThat(context.getBeansOfType(ReviewFailurePresentationJobHandler.class)).hasSize(1);
     }
 
     private HttpResult awaitReadinessUnavailable() throws Exception {

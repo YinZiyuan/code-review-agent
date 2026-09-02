@@ -4,6 +4,7 @@ import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobI
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ExpiredJobLeaseRecovery;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.FinalJobFailureSettlement;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -55,10 +56,14 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     private final TransactionOperations transactions;
     private final Clock clock;
     private final ExpiredJobLeaseRecovery expiredLeaseRecovery;
+    private final FinalJobFailureSettlement finalFailureSettlement;
 
     public PostgresDurableJobQueue(JdbcTemplate jdbcTemplate, TransactionOperations transactions, Clock clock) {
         this(jdbcTemplate, transactions, clock,
-                (expiredLease, recoveredAt) -> ExpiredJobLeaseRecovery.RecoveryAction.UNHANDLED);
+                (expiredLease, recoveredAt) -> ExpiredJobLeaseRecovery.RecoveryAction.UNHANDLED,
+                (job, failureClass, safeCode, settledAt) ->
+                        new FinalJobFailureSettlement.FinalFailureSettlement(
+                                FailureDisposition.DEAD, List.of()));
     }
 
     public PostgresDurableJobQueue(
@@ -70,6 +75,24 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         this.transactions = Objects.requireNonNull(transactions, "transactions");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.expiredLeaseRecovery = Objects.requireNonNull(expiredLeaseRecovery, "expiredLeaseRecovery");
+        this.finalFailureSettlement = (job, failureClass, safeCode, settledAt) ->
+                new FinalJobFailureSettlement.FinalFailureSettlement(
+                        FailureDisposition.DEAD, List.of());
+    }
+
+    public PostgresDurableJobQueue(
+            JdbcTemplate jdbcTemplate,
+            TransactionOperations transactions,
+            Clock clock,
+            ExpiredJobLeaseRecovery expiredLeaseRecovery,
+            FinalJobFailureSettlement finalFailureSettlement) {
+        this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate, "jdbcTemplate");
+        this.transactions = Objects.requireNonNull(transactions, "transactions");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.expiredLeaseRecovery = Objects.requireNonNull(
+                expiredLeaseRecovery, "expiredLeaseRecovery");
+        this.finalFailureSettlement = Objects.requireNonNull(
+                finalFailureSettlement, "finalFailureSettlement");
     }
 
     @Override
@@ -181,6 +204,77 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     }
 
     @Override
+    public FailureDisposition settleFailure(
+            LeasedJob job,
+            String owner,
+            FailureClass failureClass,
+            String safeCode,
+            Instant nextAttemptAt,
+            Instant now) {
+        Objects.requireNonNull(job, "job");
+        owner = requireNonBlank(owner, "owner");
+        Objects.requireNonNull(failureClass, "failureClass");
+        if (safeCode == null || safeCode.isBlank()) {
+            throw new IllegalArgumentException("safeCode must not be blank");
+        }
+        Objects.requireNonNull(nextAttemptAt, "nextAttemptAt");
+        Objects.requireNonNull(now, "now");
+        boolean finalDelivery = failureClass == FailureClass.TERMINAL
+                || job.deliveryAttempt() >= job.maxAttempts();
+        if (!finalDelivery) {
+            recordFailure(
+                    job.id(), owner, job.attemptCount(), failureClass, nextAttemptAt, now);
+            return FailureDisposition.RETRY_SCHEDULED;
+        }
+
+        String validatedOwner = owner;
+        return Objects.requireNonNull(transactions.execute(status -> {
+            lockCurrentLease(job, validatedOwner, now);
+            FinalJobFailureSettlement.FinalFailureSettlement settlement =
+                    Objects.requireNonNull(
+                            finalFailureSettlement.settleFinalFailure(
+                                    job, failureClass, safeCode, now),
+                            "final failure settlement");
+            if (settlement.disposition() == FailureDisposition.RETRY_SCHEDULED) {
+                throw new IllegalStateException(
+                        "final delivery settlement cannot schedule a charged retry");
+            }
+            settlement.followUpJobs().forEach(this::enqueue);
+            int updated = jdbcTemplate.update("""
+                            UPDATE durable_jobs
+                            SET state = ?, next_attempt_at = ?, lease_owner = NULL,
+                                lease_expires_at = NULL, last_failure_class = ?, updated_at = ?
+                            WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+                              AND lease_sequence = ? AND lease_expires_at > ?
+                            """,
+                    settlement.disposition() == FailureDisposition.SUCCEEDED
+                            ? "SUCCEEDED" : "DEAD",
+                    timestamp(nextAttemptAt),
+                    failureClass.name(),
+                    timestamp(now),
+                    job.id(),
+                    validatedOwner,
+                    job.attemptCount(),
+                    timestamp(now));
+            requireCurrentLease(updated, job.id(), validatedOwner, job.attemptCount());
+            return settlement.disposition();
+        }), "transaction result");
+    }
+
+    private void lockCurrentLease(LeasedJob job, String owner, Instant now) {
+        List<UUID> current = jdbcTemplate.query("""
+                        SELECT id
+                        FROM durable_jobs
+                        WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+                          AND lease_sequence = ? AND lease_expires_at > ?
+                        FOR UPDATE
+                        """,
+                (resultSet, rowNumber) -> resultSet.getObject("id", UUID.class),
+                job.id(), owner, job.attemptCount(), timestamp(now));
+        requireCurrentLease(current.size(), job.id(), owner, job.attemptCount());
+    }
+
+    @Override
     public void renewLease(
             UUID jobId,
             String owner,
@@ -283,10 +377,11 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     private void recoverLockedLease(LeasedJob expiredLease, Instant recoveredAt) {
         int recovered;
         if (expiredLease.deliveryAttempt() >= expiredLease.maxAttempts()) {
-            ExpiredJobLeaseRecovery.RecoveryAction action = Objects.requireNonNull(
-                    expiredLeaseRecovery.recover(expiredLease, recoveredAt),
-                    "expired lease recovery action");
-            recovered = settleExhaustedLease(expiredLease, action, recoveredAt);
+            ExpiredJobLeaseRecovery.RecoverySettlement settlement = Objects.requireNonNull(
+                    expiredLeaseRecovery.recoverWithIntents(expiredLease, recoveredAt),
+                    "expired lease recovery settlement");
+            settlement.followUpJobs().forEach(this::enqueue);
+            recovered = settleExhaustedLease(expiredLease, settlement.action(), recoveredAt);
         } else {
             recovered = jdbcTemplate.update("""
                             UPDATE durable_jobs

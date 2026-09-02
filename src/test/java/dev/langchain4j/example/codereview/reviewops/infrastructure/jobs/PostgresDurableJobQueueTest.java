@@ -3,6 +3,7 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.jobs;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobIntentConflictException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ExpiredJobLeaseRecovery;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.FinalJobFailureSettlement;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresIntegrationSupport;
@@ -415,6 +416,103 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("last_failure_class", "TRANSIENT")
                 .containsEntry("lease_owner", null)
                 .containsEntry("lease_expires_at", null);
+    }
+
+    @Test
+    void finalDeliverySettlementAndFollowUpIntentCommitInOneTransaction() {
+        UUID payload = UUID.fromString("00000000-0000-0000-0000-000000000081");
+        AtomicInteger callbacks = new AtomicInteger();
+        TransactionTemplate transactions = new TransactionTemplate(
+                new DataSourceTransactionManager(dataSource));
+        PostgresDurableJobQueue settlingQueue = new PostgresDurableJobQueue(
+                jdbcTemplate,
+                transactions,
+                Clock.fixed(CREATED_AT, ZoneOffset.UTC),
+                (lease, recoveredAt) -> ExpiredJobLeaseRecovery.RecoveryAction.UNHANDLED,
+                (lease, failureClass, safeCode, settledAt) -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                            .isTrue();
+                    callbacks.incrementAndGet();
+                    return new FinalJobFailureSettlement.FinalFailureSettlement(
+                            dev.langchain4j.example.codereview.reviewops.application.jobs
+                                    .DurableJobQueue.FailureDisposition.DEAD,
+                            List.of(new DurableJobRequest(
+                                    "PRESENT_REVIEW_FAILURE",
+                                    payload,
+                                    3,
+                                    settledAt,
+                                    "present-review-failure:" + payload)));
+                });
+        UUID jobId = settlingQueue.enqueue(request(
+                "PUBLISH_REVIEW", "final-settlement", payload, 1, DUE_AT));
+        LeasedJob lease = settlingQueue.leaseDue(
+                "worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+
+        var disposition = settlingQueue.settleFailure(
+                lease,
+                "worker-a",
+                FailureClass.TRANSIENT,
+                "github_transient",
+                LEASED_AT.plusSeconds(30),
+                LEASED_AT.plusSeconds(1));
+
+        assertThat(disposition).isEqualTo(
+                dev.langchain4j.example.codereview.reviewops.application.jobs
+                        .DurableJobQueue.FailureDisposition.DEAD);
+        assertThat(callbacks).hasValue(1);
+        assertThat(jobRow(jobId)).containsEntry("state", "DEAD");
+        assertThat(jdbcTemplate.queryForMap(
+                        "SELECT state, payload_reference FROM durable_jobs WHERE idempotency_key = ?",
+                        "present-review-failure:" + payload))
+                .containsEntry("state", "READY")
+                .containsEntry("payload_reference", payload);
+    }
+
+    @Test
+    void finalDeliverySettlementRollsBackAggregateCallbackWritesWhenJobUpdateFails() {
+        UUID payload = UUID.fromString("00000000-0000-0000-0000-000000000082");
+        TransactionTemplate transactions = new TransactionTemplate(
+                new DataSourceTransactionManager(dataSource));
+        PostgresDurableJobQueue settlingQueue = new PostgresDurableJobQueue(
+                jdbcTemplate,
+                transactions,
+                Clock.fixed(CREATED_AT, ZoneOffset.UTC),
+                (lease, recoveredAt) -> ExpiredJobLeaseRecovery.RecoveryAction.UNHANDLED,
+                (lease, failureClass, safeCode, settledAt) -> {
+                    jdbcTemplate.update(
+                            "INSERT INTO outbox_events (event_id, aggregate_type, aggregate_id, "
+                                    + "event_type, payload, occurred_at) "
+                                    + "VALUES (?, 'ReviewRun', ?, 'TEST', '{}'::jsonb, ?)",
+                            UUID.fromString("00000000-0000-0000-0000-000000000083"),
+                            payload,
+                            Timestamp.from(settledAt));
+                    jdbcTemplate.update(
+                            "UPDATE durable_jobs SET state = 'SUCCEEDED' WHERE id = ?",
+                            lease.id());
+                    return new FinalJobFailureSettlement.FinalFailureSettlement(
+                            dev.langchain4j.example.codereview.reviewops.application.jobs
+                                    .DurableJobQueue.FailureDisposition.DEAD,
+                            List.of());
+                });
+        UUID jobId = settlingQueue.enqueue(request(
+                "PUBLISH_REVIEW", "rollback-final-settlement", payload, 1, DUE_AT));
+        LeasedJob lease = settlingQueue.leaseDue(
+                "worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+
+        assertThatThrownBy(() -> settlingQueue.settleFailure(
+                lease,
+                "worker-a",
+                FailureClass.TRANSIENT,
+                "github_transient",
+                LEASED_AT.plusSeconds(30),
+                LEASED_AT.plusSeconds(1)))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(jobRow(jobId)).containsEntry("state", "LEASED");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE aggregate_id = ?",
+                Integer.class,
+                payload)).isZero();
     }
 
     @Test

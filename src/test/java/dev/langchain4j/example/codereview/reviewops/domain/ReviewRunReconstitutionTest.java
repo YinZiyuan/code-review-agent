@@ -146,6 +146,41 @@ class ReviewRunReconstitutionTest {
     }
 
     @Test
+    void reconstitutesFailedExecutionAfterNeutralCheckWasConfirmed() {
+        ReviewFailure failure = new ReviewFailure(
+                "invalid_review_output", FailureClass.TERMINAL, "review output was invalid");
+        ReviewAttempt failedAttempt = ReviewAttempt.reconstitute(
+                1, REQUESTED_AT, ReviewAttemptState.TERMINAL_FAILURE, COMPLETED_AT,
+                MEASUREMENTS, failure);
+
+        ReviewRun restored = ReviewRun.reconstitute(
+                ReviewRunId.newId(), new PullRequestRevision(17, 29, 41, "head-sha"),
+                configuration(), REQUESTED_AT, ReviewRunState.FAILED,
+                List.of(failedAttempt), List.of(), failure, COMPLETED_AT, "check-123");
+
+        assertThat(restored.checkRunExternalId()).contains("check-123");
+        assertThat(restored.commentReferences()).isEmpty();
+    }
+
+    @Test
+    void reconstitutesFailedDecisionAfterNeutralCheckWasConfirmed() {
+        ReviewAttempt successfulAttempt = ReviewAttempt.reconstitute(
+                1, REQUESTED_AT, ReviewAttemptState.SUCCEEDED, COMPLETED_AT, MEASUREMENTS, null);
+        ReviewFinding undecided = ReviewFindingTest.finding("regex", List.of());
+        ReviewFailure failure = new ReviewFailure(
+                "decision_failed", FailureClass.TERMINAL, "publication decision failed");
+
+        ReviewRun restored = ReviewRun.reconstitute(
+                ReviewRunId.newId(), new PullRequestRevision(17, 29, 41, "head-sha"),
+                configuration(), REQUESTED_AT, ReviewRunState.FAILED,
+                List.of(successfulAttempt), List.of(undecided), failure,
+                COMPLETED_AT.plusSeconds(1), "check-123");
+
+        assertThat(restored.checkRunExternalId()).contains("check-123");
+        assertThat(restored.findings().get(0).publicationDecision()).isEmpty();
+    }
+
+    @Test
     void reconstitutesSupersededPublicationWithoutDiscardingConfirmedArtifacts() {
         ReviewAttempt successfulAttempt = ReviewAttempt.reconstitute(
                 1, REQUESTED_AT, ReviewAttemptState.SUCCEEDED, COMPLETED_AT, MEASUREMENTS, null);

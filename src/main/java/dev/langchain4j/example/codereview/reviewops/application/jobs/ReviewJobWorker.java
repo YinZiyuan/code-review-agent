@@ -108,9 +108,16 @@ public final class ReviewJobWorker {
 
         ReviewJobHandler.JobOutcome outcome;
         try {
-            outcome = dispatcher.dispatch(job);
+            session.beginHandling();
+            outcome = dispatcher.dispatch(job, session);
         } catch (RuntimeException failure) {
             outcome = classify(failure);
+        } finally {
+            session.endHandling();
+            if (!ownershipValid(session)) {
+                // Fence-loss cancellation belongs to this delivery, not the next batch item.
+                Thread.interrupted();
+            }
         }
         boolean ownershipValid;
         try {
@@ -146,28 +153,19 @@ public final class ReviewJobWorker {
                 }
                 case TRANSIENT_FAILURE -> {
                     Instant retryAt = backoff.nextAttemptAt(settledAt, job.deliveryAttempt());
-                    queue.recordFailure(
-                            job.id(), settings.owner(), job.attemptCount(), FailureClass.TRANSIENT,
-                            retryAt, settledAt);
-                    counts.retried++;
-                    recordMetric(job, "retried");
+                    recordFailureDisposition(job, outcome, FailureClass.TRANSIENT,
+                            retryAt, settledAt, counts, "retried");
                 }
                 case RATE_LIMITED -> {
                     Instant retryAt = usableRetryAt(outcome.retryAt(), settledAt)
                             .orElseGet(() -> backoff.nextAttemptAt(
                                     settledAt, job.deliveryAttempt()));
-                    queue.recordFailure(
-                            job.id(), settings.owner(), job.attemptCount(), FailureClass.TRANSIENT,
-                            retryAt, settledAt);
-                    counts.rateLimited++;
-                    recordMetric(job, "rate_limited");
+                    recordFailureDisposition(job, outcome, FailureClass.TRANSIENT,
+                            retryAt, settledAt, counts, "rate_limited");
                 }
                 case TERMINAL_FAILURE -> {
-                    queue.recordFailure(
-                            job.id(), settings.owner(), job.attemptCount(), FailureClass.TERMINAL,
-                            settledAt, settledAt);
-                    counts.dead++;
-                    recordMetric(job, "dead");
+                    recordFailureDisposition(job, outcome, FailureClass.TERMINAL,
+                            settledAt, settledAt, counts, "dead");
                 }
             }
         } catch (IllegalStateException staleLease) {
@@ -179,9 +177,52 @@ public final class ReviewJobWorker {
         }
     }
 
+    private void recordFailureDisposition(
+            LeasedJob job,
+            ReviewJobHandler.JobOutcome outcome,
+            FailureClass failureClass,
+            Instant nextAttemptAt,
+            Instant settledAt,
+            CycleCounts counts,
+            String retryMetric) {
+        DurableJobQueue.FailureDisposition disposition = queue.settleFailure(
+                job,
+                settings.owner(),
+                failureClass,
+                outcome.safeCode(),
+                nextAttemptAt,
+                settledAt);
+        switch (disposition) {
+            case RETRY_SCHEDULED -> {
+                if ("rate_limited".equals(retryMetric)) {
+                    counts.rateLimited++;
+                } else {
+                    counts.retried++;
+                }
+                recordMetric(job, retryMetric);
+            }
+            case DEAD -> {
+                counts.dead++;
+                recordMetric(job, "dead");
+            }
+            case SUCCEEDED -> {
+                counts.succeeded++;
+                recordMetric(job, "succeeded");
+            }
+        }
+    }
+
     private static boolean renewOwnership(LeaseHeartbeat.Session session) {
         try {
             return session.renewNow();
+        } catch (RuntimeException heartbeatFailure) {
+            return false;
+        }
+    }
+
+    private static boolean ownershipValid(LeaseHeartbeat.Session session) {
+        try {
+            return session.ownershipValid();
         } catch (RuntimeException heartbeatFailure) {
             return false;
         }
@@ -307,10 +348,23 @@ public final class ReviewJobWorker {
     public interface LeaseHeartbeat {
         Session start(LeasedJob job, String owner);
 
-        interface Session extends AutoCloseable {
+        interface Session extends AutoCloseable, OperationFence {
             boolean renewNow();
 
             boolean ownershipValid();
+
+            default void beginHandling() {
+            }
+
+            default void endHandling() {
+            }
+
+            @Override
+            default void requireCurrent() {
+                if (!renewNow()) {
+                    throw new OperationFence.Lost();
+                }
+            }
 
             @Override
             void close();

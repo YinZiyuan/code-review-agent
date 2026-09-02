@@ -137,7 +137,7 @@ class ExecuteReviewRunTest {
     }
 
     @Test
-    void invalidPipelineOutputIsTerminalWithoutPublicationIntentAndClosesSource() {
+    void invalidPipelineOutputAtomicallyRequestsNeutralFailurePresentationAndClosesSource() {
         ReviewRun run = requestedRun(3);
         RecordingMutationStore mutations = new RecordingMutationStore();
         FakePreparedSource source = new FakePreparedSource(DIFF, SOURCE_ROOT);
@@ -160,9 +160,17 @@ class ExecuteReviewRunTest {
         assertThat(run.attempts().get(0).measurements()).contains(
                 new ExecutionMeasurements(10, 137, 29, java.util.Map.of()));
         assertThat(source.closed).isTrue();
-        assertThat(mutations.progressStates)
-                .containsExactly(ReviewRunState.RUNNING, ReviewRunState.FAILED);
-        assertThat(mutations.jobs).isEmpty();
+        assertThat(mutations.progressStates).containsExactly(ReviewRunState.RUNNING);
+        assertThat(mutations.atomicState).isEqualTo(ReviewRunState.FAILED);
+        assertThat(mutations.atomicExpectedVersion).isEqualTo(3L);
+        assertThat(mutations.jobs).singleElement().satisfies(job -> {
+            assertThat(job.jobType()).isEqualTo("PRESENT_REVIEW_FAILURE");
+            assertThat(job.payloadReference()).isEqualTo(run.id().value());
+            assertThat(job.maxAttempts()).isEqualTo(3);
+            assertThat(job.nextAttemptAt()).isEqualTo(T0.plusMillis(10));
+            assertThat(job.idempotencyKey()).isEqualTo(
+                    "present-review-failure:" + run.id().value());
+        });
         assertThat(mutations.events).isEmpty();
     }
 
@@ -193,7 +201,9 @@ class ExecuteReviewRunTest {
         assertThat(run.attempts().get(0).measurements()).contains(
                 new ExecutionMeasurements(0, 125, 16, java.util.Map.of()));
         assertThat(source.closed).isTrue();
-        assertThat(mutations.jobs).isEmpty();
+        assertThat(mutations.atomicState).isEqualTo(ReviewRunState.FAILED);
+        assertThat(mutations.jobs).singleElement().satisfies(job ->
+                assertThat(job.jobType()).isEqualTo("PRESENT_REVIEW_FAILURE"));
     }
 
     @Test
@@ -254,6 +264,29 @@ class ExecuteReviewRunTest {
         assertThat(mutations.progressExpectedVersions).containsExactly(11L, 12L);
         assertThat(mutations.atomicExpectedVersion).isEqualTo(13L);
         assertThat(source.closed).isTrue();
+    }
+
+    @Test
+    void reclaimedFinalRunningAttemptAtomicallyRequestsNeutralFailurePresentation() {
+        ReviewRun run = requestedRun(1);
+        run.startAttempt(T0.minusSeconds(30));
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        ExecuteReviewRun.ExecutionOutcome outcome = executor(
+                new FakeReviewRunRepository(run, 11),
+                mutations,
+                new CountingSourceProvider(),
+                new RecordingAgent((request, sourceRoot) ->
+                        new ReviewResult("must not run", List.of(), List.of())),
+                new MutableClock(T0)).execute(run.id());
+
+        assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.TERMINAL_FAILURE);
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(mutations.progressStates).isEmpty();
+        assertThat(mutations.atomicState).isEqualTo(ReviewRunState.FAILED);
+        assertThat(mutations.atomicExpectedVersion).isEqualTo(11L);
+        assertThat(mutations.jobs).singleElement().satisfies(job ->
+                assertThat(job.jobType()).isEqualTo("PRESENT_REVIEW_FAILURE"));
     }
 
     @Test

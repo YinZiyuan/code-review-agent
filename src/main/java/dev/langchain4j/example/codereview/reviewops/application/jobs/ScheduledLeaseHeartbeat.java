@@ -7,6 +7,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class ScheduledLeaseHeartbeat implements ReviewJobWorker.LeaseHeartbeat, AutoCloseable {
 
@@ -78,6 +79,7 @@ public final class ScheduledLeaseHeartbeat implements ReviewJobWorker.LeaseHeart
         private final String owner;
         private final AtomicBoolean ownershipValid = new AtomicBoolean(true);
         private final AtomicBoolean stopped = new AtomicBoolean();
+        private final AtomicReference<Thread> handlingThread = new AtomicReference<>();
 
         private HeartbeatState(LeasedJob job, String owner) {
             this.job = job;
@@ -94,6 +96,10 @@ public final class ScheduledLeaseHeartbeat implements ReviewJobWorker.LeaseHeart
                 return true;
             } catch (RuntimeException lostOwnership) {
                 ownershipValid.set(false);
+                Thread active = handlingThread.get();
+                if (active != null) {
+                    active.interrupt();
+                }
                 return false;
             }
         }
@@ -123,6 +129,18 @@ public final class ScheduledLeaseHeartbeat implements ReviewJobWorker.LeaseHeart
         @Override
         public boolean ownershipValid() {
             return state.ownershipValid.get();
+        }
+
+        @Override
+        public void beginHandling() {
+            if (!state.handlingThread.compareAndSet(null, Thread.currentThread())) {
+                throw new IllegalStateException("lease is already bound to a handler");
+            }
+        }
+
+        @Override
+        public void endHandling() {
+            state.handlingThread.compareAndSet(Thread.currentThread(), null);
         }
 
         @Override
