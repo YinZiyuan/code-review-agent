@@ -176,6 +176,70 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         assertThat(gateway.checkExistingIds).containsExactly(null, "check-901");
     }
 
+    @Test
+    void deletedCheckReplacementIsDurableAcrossPublicationCompletion() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
+        run.recordPublicationProgress("check-deleted", Map.of());
+        reviewRuns.insert(run);
+        ReplacementCheckGateway gateway = new ReplacementCheckGateway();
+        PublishReviewOutcome publisher = new PublishReviewOutcome(
+                reviewRuns,
+                mutations,
+                gateway,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(publisher.publish(run.id()))
+                .isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
+
+        ReviewRun persisted = reviewRuns.find(run.id()).orElseThrow().reviewRun();
+        assertThat(persisted.state()).isEqualTo(ReviewRunState.PUBLISHED);
+        assertThat(persisted.checkRunExternalId()).contains("check-replacement");
+        assertThat(persisted.commentReferences()).hasSize(2);
+        assertThat(gateway.checkExistingIds).containsExactly("check-deleted");
+    }
+
+    @Test
+    void retryableTerminalCleanupRetainsReferencesThenConvergesDurablyWithoutReposting() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        reviewRuns.insert(run);
+        TerminalCleanupGateway gateway = new TerminalCleanupGateway();
+        PublishReviewOutcome publisher = new PublishReviewOutcome(
+                reviewRuns,
+                mutations,
+                gateway,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> publisher.publish(run.id()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, failure ->
+                        assertThat(failure.classification())
+                                .isEqualTo(GitHubFailureException.Classification.TRANSIENT));
+
+        ReviewRun partial = reviewRuns.find(run.id()).orElseThrow().reviewRun();
+        FindingFingerprint first = new FindingFingerprint("a".repeat(64));
+        assertThat(partial.state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(partial.commentReferences()).containsOnlyKeys(first);
+        assertThat(partial.findings().get(0).publicationReference()).isPresent();
+
+        assertThatThrownBy(() -> publisher.publish(run.id()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, failure ->
+                        assertThat(failure.classification()).isEqualTo(
+                                GitHubFailureException.Classification.DETERMINISTIC_INPUT));
+
+        ReviewRun failed = reviewRuns.find(run.id()).orElseThrow().reviewRun();
+        assertThat(failed.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(failed.commentReferences()).isEmpty();
+        assertThat(failed.findings().get(0).publicationReference()).isEmpty();
+        assertThat(gateway.commentFingerprints).containsExactly(
+                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+        assertThat(gateway.retractedFingerprints).containsExactly(
+                "a".repeat(64), "a".repeat(64));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT artifact_external_id FROM review_findings WHERE fingerprint = ?",
+                String.class,
+                first.value())).isNull();
+    }
+
     private ReviewJobWorker.WorkerCycleResult runPublicationWorker(
             ReviewRun run,
             GitHubPublicationGateway gateway) {
@@ -342,6 +406,12 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
             commentMutations++;
             throw new AssertionError("stale runs must not mutate inline comments");
         }
+
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            throw new AssertionError("stale runs must not retract inline comments");
+        }
     }
 
     private static final class FailingGateway implements GitHubPublicationGateway {
@@ -371,6 +441,12 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
             commentMutations++;
             throw new AssertionError("head lookup failure must prevent comment mutation");
+        }
+
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            throw new AssertionError("head lookup failure must prevent comment retraction");
         }
     }
 
@@ -403,6 +479,86 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
             return new InlineCommentArtifact(
                     request.finding().fingerprint(),
                     fingerprint.equals("a".repeat(64)) ? "comment-101" : "comment-102");
+        }
+
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            return new InlineCommentRetraction(
+                    request.fingerprint(), request.reference().externalId());
+        }
+    }
+
+    private static final class ReplacementCheckGateway implements GitHubPublicationGateway {
+        private final ArrayList<String> checkExistingIds = new ArrayList<>();
+
+        @Override
+        public AuthoritativeRevision authoritativeRevision(PullRequestRevision revision) {
+            return new AuthoritativeRevision(REVIEW_SHA);
+        }
+
+        @Override
+        public CheckRunArtifact upsertCheck(CheckRunRequest request) {
+            checkExistingIds.add(request.existingGitHubArtifactId().orElse(null));
+            return new CheckRunArtifact(
+                    "check-replacement",
+                    CheckRunArtifact.Reconciliation.REPLACED_MISSING);
+        }
+
+        @Override
+        public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
+            return new InlineCommentArtifact(
+                    request.finding().fingerprint(),
+                    "comment-" + request.finding().fingerprint().value().substring(0, 8));
+        }
+
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            throw new AssertionError("successful publication must not retract comments");
+        }
+    }
+
+    private static final class TerminalCleanupGateway implements GitHubPublicationGateway {
+        private final ArrayList<String> commentFingerprints = new ArrayList<>();
+        private final ArrayList<String> retractedFingerprints = new ArrayList<>();
+        private boolean firstRetraction = true;
+
+        @Override
+        public AuthoritativeRevision authoritativeRevision(PullRequestRevision revision) {
+            return new AuthoritativeRevision(REVIEW_SHA);
+        }
+
+        @Override
+        public CheckRunArtifact upsertCheck(CheckRunRequest request) {
+            return new CheckRunArtifact(
+                    request.existingGitHubArtifactId().orElse("check-901"));
+        }
+
+        @Override
+        public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
+            String fingerprint = request.finding().fingerprint().value();
+            commentFingerprints.add(fingerprint);
+            if (fingerprint.equals("b".repeat(64))) {
+                throw new GitHubFailureException(
+                        GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                        "GitHub inline comment location was invalid");
+            }
+            return new InlineCommentArtifact(request.finding().fingerprint(), "comment-101");
+        }
+
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            retractedFingerprints.add(request.fingerprint().value());
+            if (firstRetraction) {
+                firstRetraction = false;
+                throw new GitHubFailureException(
+                        GitHubFailureException.Classification.TRANSIENT,
+                        "GitHub inline comment retraction failed");
+            }
+            return new InlineCommentRetraction(
+                    request.fingerprint(), request.reference().externalId());
         }
     }
 }

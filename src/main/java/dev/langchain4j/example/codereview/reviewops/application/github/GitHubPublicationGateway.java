@@ -22,6 +22,8 @@ public interface GitHubPublicationGateway {
 
     InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request);
 
+    InlineCommentRetraction retractInlineComment(InlineCommentRetractionRequest request);
+
     record CheckRunRequest(
             ReviewRunId reconciliationExternalId,
             PullRequestRevision revision,
@@ -68,9 +70,18 @@ public interface GitHubPublicationGateway {
             CheckOutcome outcome,
             CheckStatus status,
             CheckConclusion conclusion,
-            String safeSummary) {
+            String safeSummary,
+            boolean codeCommentsMayRemain) {
 
         public static final int MAX_SAFE_SUMMARY_CHARACTERS = 4096;
+
+        public CheckPresentation(
+                CheckOutcome outcome,
+                CheckStatus status,
+                CheckConclusion conclusion,
+                String safeSummary) {
+            this(outcome, status, conclusion, safeSummary, false);
+        }
 
         public CheckPresentation {
             Objects.requireNonNull(outcome, "outcome");
@@ -85,7 +96,8 @@ public interface GitHubPublicationGateway {
             }
             if (outcome == CheckOutcome.SUCCESS
                     && (status != CheckStatus.COMPLETED
-                    || conclusion != CheckConclusion.SUCCESS)) {
+                    || conclusion != CheckConclusion.SUCCESS
+                    || codeCommentsMayRemain)) {
                 throw new IllegalArgumentException(
                         "successful Check must be completed with a success conclusion");
             }
@@ -102,7 +114,8 @@ public interface GitHubPublicationGateway {
                     CheckOutcome.SUCCESS,
                     CheckStatus.COMPLETED,
                     CheckConclusion.SUCCESS,
-                    safeSummary);
+                    safeSummary,
+                    false);
         }
 
         public static CheckPresentation neutralSystemFailure(String safeSummary) {
@@ -110,7 +123,18 @@ public interface GitHubPublicationGateway {
                     CheckOutcome.NEUTRAL_SYSTEM_FAILURE,
                     CheckStatus.COMPLETED,
                     CheckConclusion.NEUTRAL,
-                    safeSummary);
+                    safeSummary,
+                    false);
+        }
+
+        public static CheckPresentation neutralSystemFailure(
+                String safeSummary, boolean codeCommentsMayRemain) {
+            return new CheckPresentation(
+                    CheckOutcome.NEUTRAL_SYSTEM_FAILURE,
+                    CheckStatus.COMPLETED,
+                    CheckConclusion.NEUTRAL,
+                    safeSummary,
+                    codeCommentsMayRemain);
         }
     }
 
@@ -123,6 +147,31 @@ public interface GitHubPublicationGateway {
             Objects.requireNonNull(reviewRunId, "reviewRunId");
             Objects.requireNonNull(revision, "revision");
             Objects.requireNonNull(finding, "finding");
+        }
+    }
+
+    record InlineCommentRetractionRequest(
+            ReviewRunId reviewRunId,
+            PullRequestRevision revision,
+            FindingFingerprint fingerprint,
+            PublicationReference reference) {
+
+        public InlineCommentRetractionRequest {
+            Objects.requireNonNull(reviewRunId, "reviewRunId");
+            Objects.requireNonNull(revision, "revision");
+            Objects.requireNonNull(fingerprint, "fingerprint");
+            Objects.requireNonNull(reference, "reference");
+        }
+    }
+
+    record InlineCommentRetraction(
+            FindingFingerprint fingerprint, String githubArtifactId) {
+
+        public InlineCommentRetraction {
+            Objects.requireNonNull(fingerprint, "fingerprint");
+            if (githubArtifactId == null || githubArtifactId.isBlank()) {
+                throw new IllegalArgumentException("githubArtifactId must not be blank");
+            }
         }
     }
 

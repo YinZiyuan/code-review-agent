@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -282,6 +283,48 @@ class ReviewRunTest {
         assertThat(run.checkRunExternalId()).contains("check-1");
         assertThat(run.commentReferences()).containsOnly(entry(first.fingerprint(), confirmed));
         assertThat(second.publicationReference()).isEmpty();
+    }
+
+    @Test
+    void aConfirmedMissingCheckCanBeReplacedWithoutChangingTheRunIdentity() {
+        ReviewRun run = completed();
+        FindingFingerprint fingerprint = run.findings().get(0).fingerprint();
+        run.acceptPublicationDecisions(Map.of(
+                fingerprint, new PublicationDecision(PublicationTier.CHECK_SUMMARY, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+        run.recordPublicationProgress("check-deleted", Map.of());
+
+        run.replaceMissingPublicationCheck("check-deleted", "check-replacement");
+
+        assertThat(run.checkRunExternalId()).contains("check-replacement");
+        assertThat(run.id()).isNotNull();
+        assertThatThrownBy(() -> run.replaceMissingPublicationCheck(
+                "check-deleted", "another-check"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not match");
+    }
+
+    @Test
+    void confirmedTerminalCommentRetractionClearsReferencesAndFailsTheRun() {
+        ReviewRun run = completedWithTwoFindings();
+        ReviewFinding first = run.findings().get(0);
+        ReviewFinding second = run.findings().get(1);
+        run.acceptPublicationDecisions(Map.of(
+                first.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1"),
+                second.fingerprint(), new PublicationDecision(PublicationTier.INLINE_COMMENT, "publish-v1")));
+        run.authorizePublication(new AuthoritativeRevision("sha"), T0.plusSeconds(2));
+        run.recordPublicationProgress("check-1", Map.of(
+                first.fingerprint(), new PublicationReference("github_review_comment", "comment-1")));
+        ReviewFailure failure = new ReviewFailure(
+                "github_deterministic_input", FailureClass.TERMINAL, "invalid comment");
+
+        run.recordPublicationFailureAfterCommentRetraction(
+                failure, Set.of(first.fingerprint()), T0.plusSeconds(3));
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).contains(failure);
+        assertThat(run.commentReferences()).isEmpty();
+        assertThat(first.publicationReference()).isEmpty();
     }
 
     @Test

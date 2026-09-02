@@ -18,10 +18,12 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunState;
 
 import java.time.Clock;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 public final class PublishReviewOutcome {
 
@@ -114,9 +116,14 @@ public final class PublishReviewOutcome {
             String checkId = confirmedCheck.githubArtifactId();
             Optional<String> recordedCheck = run.checkRunExternalId();
             if (recordedCheck.isPresent() && !recordedCheck.orElseThrow().equals(checkId)) {
-                throw new GitHubFailureException(
-                        GitHubFailureException.Classification.DETERMINISTIC_INPUT,
-                        "GitHub Check reconciliation returned a conflicting artifact");
+                if (confirmedCheck.reconciliation()
+                        != CheckRunArtifact.Reconciliation.REPLACED_MISSING) {
+                    throw new GitHubFailureException(
+                            GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                            "GitHub Check reconciliation returned a conflicting artifact");
+                }
+                run.replaceMissingPublicationCheck(recordedCheck.orElseThrow(), checkId);
+                version = mutations.saveProgress(run, version);
             }
             if (recordedCheck.isEmpty()) {
                 run.recordPublicationProgress(checkId, Map.of());
@@ -159,20 +166,69 @@ public final class PublishReviewOutcome {
         if (terminalFailure == null) {
             return;
         }
-        run.recordPublicationFailure(terminalFailure, clock.instant());
+        boolean commentsMayRemain = !run.commentReferences().isEmpty();
+        if (commentsMayRemain) {
+            try {
+                Set<FindingFingerprint> confirmedRetractions =
+                        retractConfirmedComments(run);
+                run.recordPublicationFailureAfterCommentRetraction(
+                        terminalFailure, confirmedRetractions, clock.instant());
+                commentsMayRemain = false;
+            } catch (GitHubFailureException cleanupFailure) {
+                if (terminalReviewFailure(cleanupFailure) == null) {
+                    throw cleanupFailure;
+                }
+                run.recordPublicationFailure(terminalFailure, clock.instant());
+            }
+        } else {
+            run.recordPublicationFailure(terminalFailure, clock.instant());
+        }
         long failedVersion = mutations.saveProgress(run, expectedVersion);
-        bestEffortNeutralCheck(run, failedVersion, failure);
+        bestEffortNeutralCheck(run, failedVersion, failure, commentsMayRemain);
+    }
+
+    private Set<FindingFingerprint> retractConfirmedComments(ReviewRun run) {
+        Set<FindingFingerprint> confirmed = new LinkedHashSet<>();
+        run.commentReferences().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(
+                        Comparator.comparing(FindingFingerprint::value)))
+                .forEach(entry -> {
+                    GitHubPublicationGateway.InlineCommentRetraction retraction =
+                            Objects.requireNonNull(
+                                    github.retractInlineComment(
+                                            new GitHubPublicationGateway
+                                                    .InlineCommentRetractionRequest(
+                                                    run.id(),
+                                                    run.revision(),
+                                                    entry.getKey(),
+                                                    entry.getValue())),
+                                    "confirmed comment retraction");
+                    if (!entry.getKey().equals(retraction.fingerprint())
+                            || !entry.getValue().externalId()
+                                    .equals(retraction.githubArtifactId())) {
+                        throw new GitHubFailureException(
+                                GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                                "GitHub comment retraction returned a conflicting artifact");
+                    }
+                    confirmed.add(entry.getKey());
+                });
+        return Set.copyOf(confirmed);
     }
 
     private void bestEffortNeutralCheck(
-            ReviewRun run, long expectedVersion, GitHubFailureException originalFailure) {
+            ReviewRun run,
+            long expectedVersion,
+            GitHubFailureException originalFailure,
+            boolean commentsMayRemain) {
         try {
             CheckRunArtifact neutralCheck = Objects.requireNonNull(
                     github.upsertCheck(new GitHubPublicationGateway.CheckRunRequest(
                             run.id(),
                             run.revision(),
                             GitHubPublicationGateway.CheckPresentation.neutralSystemFailure(
-                                    neutralFailureSummary(originalFailure.getMessage())),
+                                    neutralFailureSummary(
+                                            originalFailure.getMessage(), commentsMayRemain),
+                                    commentsMayRemain),
                             List.of(),
                             run.checkRunExternalId())),
                     "neutral Check");
@@ -208,8 +264,12 @@ public final class PublishReviewOutcome {
                         inlineFindings == 1 ? "comment" : "comments");
     }
 
-    private static String neutralFailureSummary(String safeMessage) {
-        String summary = "Review publication failed safely: " + safeMessage;
+    private static String neutralFailureSummary(
+            String safeMessage, boolean commentsMayRemain) {
+        String summary = commentsMayRemain
+                ? "Review publication failed safely; previously published comments may remain. "
+                        + "Reason: " + safeMessage
+                : "Review publication failed safely: " + safeMessage;
         int limit = GitHubPublicationGateway.CheckPresentation.MAX_SAFE_SUMMARY_CHARACTERS;
         return summary.length() <= limit ? summary : summary.substring(0, limit);
     }

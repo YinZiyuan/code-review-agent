@@ -46,6 +46,15 @@ public final class ReviewFinding {
         publicationReference = Objects.requireNonNull(reference, "reference");
     }
 
+    void clearPublicationReference(PublicationReference expectedReference) {
+        Objects.requireNonNull(expectedReference, "expectedReference");
+        if (!expectedReference.equals(publicationReference)) {
+            throw new IllegalArgumentException(
+                    "expectedReference does not match recorded publication reference");
+        }
+        publicationReference = null;
+    }
+
     public FindingFingerprint fingerprint() { return fingerprint; }
     public CodeLocation location() { return location; }
     public FindingContent content() { return content; }

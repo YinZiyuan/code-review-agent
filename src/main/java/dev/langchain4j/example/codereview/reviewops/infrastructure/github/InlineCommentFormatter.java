@@ -4,21 +4,11 @@ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPub
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 public final class InlineCommentFormatter {
 
     public static final int MAX_BODY_CHARACTERS = 16_000;
     private static final String MARKER_PREFIX = "<!-- code-review-agent:fingerprint=";
-    private static final Pattern PRIVATE_KEY = Pattern.compile(
-            "-----BEGIN [^-\\r\\n]*PRIVATE KEY-----.*?-----END [^-\\r\\n]*PRIVATE KEY-----",
-            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-    private static final Pattern BEARER = Pattern.compile(
-            "(?i)\\bBearer\\s+[A-Za-z0-9._~+/-]+=*");
-    private static final Pattern GITHUB_TOKEN = Pattern.compile(
-            "(?i)\\b(?:github_pat_[A-Za-z0-9_]+|gh[psuor]_[A-Za-z0-9]+)");
-    private static final Pattern MODEL_TOKEN = Pattern.compile(
-            "(?i)\\bsk-[A-Za-z0-9_-]{10,}");
     private static final String MARKDOWN_SPECIAL = "\\`*_{}[]()#+-!|";
 
     public String format(PublicationFinding finding) {
@@ -47,7 +37,7 @@ public final class InlineCommentFormatter {
     }
 
     static String safeMarkdown(String value) {
-        String redacted = redact(value == null ? "" : value)
+        String redacted = PublicationSecretRedactor.redact(value == null ? "" : value)
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
@@ -76,12 +66,5 @@ public final class InlineCommentFormatter {
             return "…";
         }
         return value.substring(0, maxCharacters - 1) + "…";
-    }
-
-    private static String redact(String value) {
-        String redacted = PRIVATE_KEY.matcher(value).replaceAll("[REDACTED]");
-        redacted = BEARER.matcher(redacted).replaceAll("Bearer [REDACTED]");
-        redacted = GITHUB_TOKEN.matcher(redacted).replaceAll("[REDACTED]");
-        return MODEL_TOKEN.matcher(redacted).replaceAll("[REDACTED]");
     }
 }

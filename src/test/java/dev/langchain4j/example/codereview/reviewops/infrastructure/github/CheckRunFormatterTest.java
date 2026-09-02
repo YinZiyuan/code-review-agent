@@ -82,12 +82,48 @@ class CheckRunFormatterTest {
     }
 
     @Test
+    void redactsCredentialAssignmentsUrisAndProviderTokensFromCheckEvidence() {
+        String password = "db-password-123!";
+        String webhookSecret = "hook-value-456";
+        String providerKey = "provider-789";
+        String encodedPassword = "p%40ssword123";
+        String queryToken = "oauth-value-321";
+        String awsAccessKey = "ASIAABCDEFGHIJKLMNOP";
+        String stripeToken = "sk_live_abcdefghijklmnopqrstuv";
+        PublicationFinding credentialFinding = finding(
+                "e".repeat(64), FindingSeverity.CRITICAL, "src/Config.java", 21,
+                "password = \"" + password + "\"",
+                "{\"webhookSecret\":\"" + webhookSecret + "\"} "
+                        + "api_key: " + providerKey,
+                "postgresql://reviewer:" + encodedPassword + "@db.internal/reviews "
+                        + "access_token=" + queryToken + " " + awsAccessKey,
+                "MODEL_API_KEY='" + providerKey + "' " + stripeToken);
+
+        CheckRunFormatter.FormattedCheckRun formatted = formatter.format(request(
+                CheckPresentation.success("Credential finding was sanitized."),
+                List.of(credentialFinding)));
+
+        assertThat(formatted.text())
+                .contains("REDACTED")
+                .doesNotContain(password)
+                .doesNotContain(webhookSecret)
+                .doesNotContain(providerKey)
+                .doesNotContain(encodedPassword)
+                .doesNotContain(queryToken)
+                .doesNotContain(awsAccessKey)
+                .doesNotContain(stripeToken);
+    }
+
+    @Test
     void formatsNoFindingsAsSuccessfulAndSystemFailureAsNeutralWithoutFindingText() {
         CheckRunFormatter.FormattedCheckRun noFindings = formatter.format(request(
                 CheckPresentation.success("Review completed with no findings."), List.of()));
         CheckRunFormatter.FormattedCheckRun failure = formatter.format(request(
                 CheckPresentation.neutralSystemFailure(
                         "Review publication could not finish safely."), List.of()));
+        CheckRunFormatter.FormattedCheckRun partialFailure = formatter.format(request(
+                CheckPresentation.neutralSystemFailure(
+                        "Previously published comments may remain.", true), List.of()));
 
         assertThat(noFindings.title()).isEqualTo("Code review completed");
         assertThat(noFindings.conclusion()).isEqualTo("success");
@@ -97,7 +133,12 @@ class CheckRunFormatterTest {
         assertThat(failure.conclusion()).isEqualTo("neutral");
         assertThat(failure.summary()).isEqualTo("Review publication could not finish safely.");
         assertThat(failure.text()).isEqualTo(
-                "The review system could not publish a trustworthy result. No code comments were posted.");
+                "The review system could not publish a trustworthy result. "
+                        + "No code review comments from this run remain.");
+        assertThat(partialFailure.conclusion()).isEqualTo("neutral");
+        assertThat(partialFailure.text()).isEqualTo(
+                "The review system could not publish a trustworthy result. "
+                        + "Previously published code review comments may still be visible.");
     }
 
     private static CheckRunRequest request(

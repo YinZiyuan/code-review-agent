@@ -62,6 +62,39 @@ class InlineCommentFormatterTest {
     }
 
     @Test
+    void redactsCredentialAssignmentsUrisAndProviderTokensFromFindingEvidence() {
+        String password = "db-password-123!";
+        String webhookSecret = "hook-value-456";
+        String providerKey = "provider-789";
+        String encodedPassword = "p%40ssword123";
+        String queryToken = "oauth-value-321";
+        String awsAccessKey = "AKIAABCDEFGHIJKLMNOP";
+        String slackToken = "xoxb" + "-123456789012-123456789012-abcdefghijklmnopqrstuvwx";
+        PublicationFinding finding = inlineFinding(
+                "password = \"" + password + "\"",
+                "{\"webhookSecret\":\"" + webhookSecret + "\"} "
+                        + "api_key: " + providerKey,
+                "jdbc:postgresql://reviewer:" + encodedPassword
+                        + "@db.internal/reviews\n"
+                        + "https://hooks.invalid/callback?access_token=" + queryToken
+                        + "&mode=check\n"
+                        + awsAccessKey,
+                "Db_PaSsWoRd='" + password + "' " + slackToken);
+
+        String body = formatter.format(finding);
+
+        assertThat(body)
+                .contains("REDACTED")
+                .doesNotContain(password)
+                .doesNotContain(webhookSecret)
+                .doesNotContain(providerKey)
+                .doesNotContain(encodedPassword)
+                .doesNotContain(queryToken)
+                .doesNotContain(awsAccessKey)
+                .doesNotContain(slackToken);
+    }
+
+    @Test
     void rejectsFindingsThatAreNotEligibleForInlinePublication() {
         PublicationFinding summaryOnly = new PublicationFinding(
                 new FindingFingerprint(FINGERPRINT),

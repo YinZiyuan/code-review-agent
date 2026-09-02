@@ -3,6 +3,7 @@ package dev.langchain4j.example.codereview.reviewops.application;
 import dev.langchain4j.example.codereview.reviewops.application.github.CheckRunArtifact;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.CheckRunRequest;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxEvent;
@@ -16,6 +17,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprint;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingSeverity;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationReference;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
@@ -110,6 +112,28 @@ class PublishReviewOutcomeTest {
                 new ProgressSnapshot(12, ReviewRunState.PUBLISHING, "check-123", 0),
                 new ProgressSnapshot(13, ReviewRunState.PUBLISHED, "check-123", 0));
         assertThat(mutations.atomicSaveCount).isZero();
+    }
+
+    @Test
+    void deletedCheckReplacementIsPersistedBeforeAnyInlineCommentMutation() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
+        run.recordPublicationProgress("check-deleted", Map.of());
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.replaceMissingCheckWith("check-replacement");
+        gateway.observeRun(run);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        PublishReviewOutcome.PublicationOutcome outcome =
+                publisher(run, 70, mutations, gateway).publish(run.id());
+
+        assertThat(outcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
+        assertThat(run.checkRunExternalId()).contains("check-replacement");
+        assertThat(gateway.checkRequests.get(0).existingGitHubArtifactId())
+                .contains("check-deleted");
+        assertThat(gateway.checkIdObservedAtFirstComment).isEqualTo("check-replacement");
+        assertThat(mutations.progressSnapshots).startsWith(
+                new ProgressSnapshot(70, ReviewRunState.PUBLISHING, "check-replacement", 0));
     }
 
     @Test
@@ -210,6 +234,92 @@ class PublishReviewOutcomeTest {
         assertThat(gateway.stateAtNeutralCheck).isEqualTo(ReviewRunState.FAILED);
         assertThat(mutations.progressSnapshots).containsSubsequence(
                 new ProgressSnapshot(42, ReviewRunState.FAILED, "check-123", 0));
+    }
+
+    @Test
+    void terminalFailureAfterOneCommentRetractsItBeforePersistingFailure() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint second = new FindingFingerprint("b".repeat(64));
+        GitHubFailureException terminalFailure = new GitHubFailureException(
+                GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                "GitHub inline comment location was invalid");
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.failCommentAlways(second, terminalFailure);
+        gateway.observeRun(run);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        assertThatThrownBy(() -> publisher(run, 80, mutations, gateway).publish(run.id()))
+                .isSameAs(terminalFailure);
+
+        assertThat(gateway.commentFingerprints()).containsExactly(
+                "a".repeat(64), "b".repeat(64));
+        assertThat(gateway.retractedFingerprints()).containsExactly("a".repeat(64));
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.commentReferences()).isEmpty();
+        assertThat(run.findings().get(0).publicationReference()).isEmpty();
+        CheckRunRequest neutral = gateway.checkRequests.get(1);
+        assertThat(neutral.presentation().codeCommentsMayRemain()).isFalse();
+        assertThat(mutations.progressSnapshots).endsWith(
+                new ProgressSnapshot(83, ReviewRunState.FAILED, "check-123", 0));
+    }
+
+    @Test
+    void retryableRetractionKeepsDurableReferencesAndRetryNeverRepostsTheFirstComment() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint first = new FindingFingerprint("a".repeat(64));
+        FindingFingerprint second = new FindingFingerprint("b".repeat(64));
+        GitHubFailureException terminalFailure = new GitHubFailureException(
+                GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                "GitHub inline comment location was invalid");
+        GitHubFailureException transientCleanup = new GitHubFailureException(
+                GitHubFailureException.Classification.TRANSIENT,
+                "GitHub inline comment retraction failed");
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.failCommentAlways(second, terminalFailure);
+        gateway.failRetractionOnce(first, transientCleanup);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        assertThatThrownBy(() -> publisher(run, 90, mutations, gateway).publish(run.id()))
+                .isSameAs(transientCleanup);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(run.commentReferences()).containsOnlyKeys(first);
+        assertThat(gateway.checkRequests).hasSize(1);
+
+        assertThatThrownBy(() -> publisher(run, 93, mutations, gateway).publish(run.id()))
+                .isSameAs(terminalFailure);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.commentReferences()).isEmpty();
+        assertThat(gateway.commentFingerprints()).containsExactly(
+                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+        assertThat(gateway.retractedFingerprints()).containsExactly(
+                "a".repeat(64), "a".repeat(64));
+    }
+
+    @Test
+    void terminalRetractionFailureRetainsReferencesAndMakesNeutralWarningTruthful() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint first = new FindingFingerprint("a".repeat(64));
+        FindingFingerprint second = new FindingFingerprint("b".repeat(64));
+        GitHubFailureException terminalFailure = new GitHubFailureException(
+                GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                "GitHub inline comment location was invalid");
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.failCommentAlways(second, terminalFailure);
+        gateway.failRetractionOnce(first, new GitHubFailureException(
+                GitHubFailureException.Classification.AUTHORIZATION,
+                "GitHub authorization failed"));
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        assertThatThrownBy(() -> publisher(run, 100, mutations, gateway).publish(run.id()))
+                .isSameAs(terminalFailure);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.commentReferences()).containsOnlyKeys(first);
+        CheckRunRequest neutral = gateway.checkRequests.get(1);
+        assertThat(neutral.presentation().codeCommentsMayRemain()).isTrue();
+        assertThat(neutral.presentation().safeSummary()).contains("comments may remain");
     }
 
     @Test
@@ -518,11 +628,18 @@ class PublishReviewOutcomeTest {
                 new java.util.ArrayList<>();
         private final java.util.ArrayList<InlineCommentRequest> commentRequests =
                 new java.util.ArrayList<>();
+        private final java.util.ArrayList<InlineCommentRetractionRequest> retractionRequests =
+                new java.util.ArrayList<>();
         private FindingFingerprint failCommentFingerprint;
         private GitHubFailureException commentFailure;
+        private boolean commentFailureRepeats;
+        private FindingFingerprint failRetractionFingerprint;
+        private GitHubFailureException retractionFailure;
         private GitHubFailureException checkFailure;
         private ReviewRun observedRun;
         private ReviewRunState stateAtNeutralCheck;
+        private String replacementCheckId;
+        private String checkIdObservedAtFirstComment;
 
         private RecordingGateway(AuthoritativeRevision authoritative) {
             this.authoritative = authoritative;
@@ -549,6 +666,11 @@ class PublishReviewOutcomeTest {
                 checkFailure = null;
                 throw failure;
             }
+            if (replacementCheckId != null) {
+                return new CheckRunArtifact(
+                        replacementCheckId,
+                        CheckRunArtifact.Reconciliation.REPLACED_MISSING);
+            }
             return new CheckRunArtifact(
                     request.existingGitHubArtifactId().orElse("check-123"));
         }
@@ -557,10 +679,15 @@ class PublishReviewOutcomeTest {
         public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
             commentMutations++;
             commentRequests.add(request);
+            if (checkIdObservedAtFirstComment == null && observedRun != null) {
+                checkIdObservedAtFirstComment = observedRun.checkRunExternalId().orElse(null);
+            }
             if (commentFailure != null
                     && request.finding().fingerprint().equals(failCommentFingerprint)) {
                 GitHubFailureException failure = commentFailure;
-                commentFailure = null;
+                if (!commentFailureRepeats) {
+                    commentFailure = null;
+                }
                 throw failure;
             }
             return new InlineCommentArtifact(
@@ -568,10 +695,38 @@ class PublishReviewOutcomeTest {
                     "comment-" + request.finding().fingerprint().value().substring(0, 8));
         }
 
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            retractionRequests.add(request);
+            if (retractionFailure != null
+                    && request.fingerprint().equals(failRetractionFingerprint)) {
+                GitHubFailureException failure = retractionFailure;
+                retractionFailure = null;
+                throw failure;
+            }
+            return new InlineCommentRetraction(
+                    request.fingerprint(), request.reference().externalId());
+        }
+
         private void failCommentOnce(
                 FindingFingerprint fingerprint, GitHubFailureException failure) {
             failCommentFingerprint = fingerprint;
             commentFailure = failure;
+            commentFailureRepeats = false;
+        }
+
+        private void failCommentAlways(
+                FindingFingerprint fingerprint, GitHubFailureException failure) {
+            failCommentFingerprint = fingerprint;
+            commentFailure = failure;
+            commentFailureRepeats = true;
+        }
+
+        private void failRetractionOnce(
+                FindingFingerprint fingerprint, GitHubFailureException failure) {
+            failRetractionFingerprint = fingerprint;
+            retractionFailure = failure;
         }
 
         private void failCheckOnce(GitHubFailureException failure) {
@@ -582,9 +737,19 @@ class PublishReviewOutcomeTest {
             observedRun = run;
         }
 
+        private void replaceMissingCheckWith(String replacementCheckId) {
+            this.replacementCheckId = replacementCheckId;
+        }
+
         private List<String> commentFingerprints() {
             return commentRequests.stream()
                     .map(request -> request.finding().fingerprint().value())
+                    .toList();
+        }
+
+        private List<String> retractedFingerprints() {
+            return retractionRequests.stream()
+                    .map(request -> request.fingerprint().value())
                     .toList();
         }
     }
@@ -616,6 +781,12 @@ class PublishReviewOutcomeTest {
         @Override
         public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
             throw new AssertionError("lookup failure must prevent comment mutation");
+        }
+
+        @Override
+        public InlineCommentRetraction retractInlineComment(
+                InlineCommentRetractionRequest request) {
+            throw new AssertionError("lookup failure must prevent comment retraction");
         }
     }
 }

@@ -24,7 +24,7 @@ public final class CheckRunFormatter {
                 InlineCommentFormatter.safeMarkdown(request.presentation().safeSummary()),
                 MAX_SUMMARY_CHARACTERS);
         String text = systemFailure
-                ? "The review system could not publish a trustworthy result. No code comments were posted."
+                ? failureText(request.presentation().codeCommentsMayRemain())
                 : findingsText(request.findings());
         return new FormattedCheckRun(
                 title,
@@ -32,6 +32,14 @@ public final class CheckRunFormatter {
                 InlineCommentFormatter.truncate(text, MAX_TEXT_CHARACTERS),
                 request.presentation().status().name().toLowerCase(java.util.Locale.ROOT),
                 request.presentation().conclusion().name().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    private static String failureText(boolean codeCommentsMayRemain) {
+        return codeCommentsMayRemain
+                ? "The review system could not publish a trustworthy result. "
+                        + "Previously published code review comments may still be visible."
+                : "The review system could not publish a trustworthy result. "
+                        + "No code review comments from this run remain.";
     }
 
     private static String findingsText(List<PublicationFinding> findings) {

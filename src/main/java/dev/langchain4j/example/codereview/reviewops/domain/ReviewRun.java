@@ -202,8 +202,47 @@ public final class ReviewRun {
         this.checkRunExternalId = checkRunExternalId;
     }
 
+    public void replaceMissingPublicationCheck(
+            String expectedMissingCheckRunId, String confirmedReplacementCheckRunId) {
+        requireState(ReviewRunState.PUBLISHING);
+        if (expectedMissingCheckRunId == null || expectedMissingCheckRunId.isBlank()) {
+            throw new IllegalArgumentException("expectedMissingCheckRunId must not be blank");
+        }
+        if (confirmedReplacementCheckRunId == null || confirmedReplacementCheckRunId.isBlank()) {
+            throw new IllegalArgumentException(
+                    "confirmedReplacementCheckRunId must not be blank");
+        }
+        if (!expectedMissingCheckRunId.equals(checkRunExternalId)) {
+            throw new IllegalArgumentException(
+                    "expectedMissingCheckRunId does not match recorded publication progress");
+        }
+        if (expectedMissingCheckRunId.equals(confirmedReplacementCheckRunId)) {
+            throw new IllegalArgumentException(
+                    "confirmedReplacementCheckRunId must identify a replacement");
+        }
+        checkRunExternalId = confirmedReplacementCheckRunId;
+    }
+
     public void recordPublicationFailure(ReviewFailure failure, Instant failedAt) {
         requireState(ReviewRunState.PUBLISHING);
+        settleTerminalPublicationFailure(failure, failedAt);
+    }
+
+    public void recordPublicationFailureAfterCommentRetraction(
+            ReviewFailure failure,
+            Set<FindingFingerprint> confirmedRetractions,
+            Instant failedAt) {
+        requireState(ReviewRunState.PUBLISHING);
+        Objects.requireNonNull(confirmedRetractions, "confirmedRetractions");
+        if (!commentReferences.keySet().equals(confirmedRetractions)) {
+            throw new IllegalArgumentException(
+                    "confirmedRetractions must cover exactly all recorded comments");
+        }
+        Map<FindingFingerprint, ReviewFinding> findingsByFingerprint = findings.stream()
+                .collect(Collectors.toMap(ReviewFinding::fingerprint, Function.identity()));
+        commentReferences.forEach((fingerprint, reference) ->
+                findingsByFingerprint.get(fingerprint).clearPublicationReference(reference));
+        commentReferences.clear();
         settleTerminalPublicationFailure(failure, failedAt);
     }
 

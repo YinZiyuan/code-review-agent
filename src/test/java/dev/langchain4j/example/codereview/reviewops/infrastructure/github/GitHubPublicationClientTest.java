@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.github.CheckRunArtifact;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubInstallationGateway;
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.CheckPresentation;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.CheckRunRequest;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.InlineCommentRequest;
@@ -36,6 +37,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,6 +58,7 @@ class GitHubPublicationClientTest {
 
     private static final String API_BASE_URL = "https://api.github.test";
     private static final String API_VERSION = "2022-11-28";
+    private static final long APP_ID = 1_234L;
     private static final String TOKEN = "installation-token-value";
     private static final Instant NOW = Instant.parse("2026-09-01T12:00:00Z");
     private static final String HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -133,6 +136,54 @@ class GitHubPublicationClientTest {
     }
 
     @Test
+    void replacesADeletedPersistedCheckWithTheExternalIdMatchWithoutPosting() {
+        Fixture fixture = fixture();
+        expectMissingCheckUpdate(fixture.server, "91");
+        expectCheckList(fixture.server, 1, """
+                {"total_count":1,"check_runs":[
+                  {"id":92,"external_id":"550e8400-e29b-41d4-a716-446655440000"}
+                ]}
+                """);
+        expectCheckUpdate(fixture.server, "92");
+
+        CheckRunArtifact artifact = fixture.client.upsertCheck(
+                checkRequest(Optional.of("91"), List.of()));
+
+        assertThat(artifact.githubArtifactId()).isEqualTo("92");
+        assertThat(artifact.reconciliation())
+                .isEqualTo(CheckRunArtifact.Reconciliation.REPLACED_MISSING);
+        fixture.server.verify();
+    }
+
+    @Test
+    void createsOneReplacementForADeletedCheckAndRetryUpdatesTheConfirmedId() {
+        Fixture fixture = fixture();
+        expectMissingCheckUpdate(fixture.server, "91");
+        expectCheckList(fixture.server, 1, "{\"total_count\":0,\"check_runs\":[]}");
+        fixture.server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/check-runs"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(requiredHeaders())
+                .andRespond(withStatus(HttpStatus.CREATED)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"id\":92}"));
+        expectCheckUpdate(fixture.server, "92");
+
+        CheckRunArtifact replacement = fixture.client.upsertCheck(
+                checkRequest(Optional.of("91"), List.of()));
+        CheckRunArtifact retried = fixture.client.upsertCheck(
+                checkRequest(Optional.of(replacement.githubArtifactId()), List.of()));
+
+        assertThat(replacement.githubArtifactId()).isEqualTo("92");
+        assertThat(replacement.reconciliation())
+                .isEqualTo(CheckRunArtifact.Reconciliation.REPLACED_MISSING);
+        assertThat(retried.githubArtifactId()).isEqualTo("92");
+        assertThat(retried.reconciliation())
+                .isEqualTo(CheckRunArtifact.Reconciliation.CONFIRMED);
+        fixture.server.verify();
+    }
+
+    @Test
     void createsACheckOnlyAfterReconciliationFindsNoMatchingExternalId() {
         Fixture fixture = fixture();
         expectCheckList(fixture.server, 1, "{\"total_count\":0,\"check_runs\":[]}");
@@ -195,17 +246,24 @@ class GitHubPublicationClientTest {
     }
 
     @Test
-    void findsAnExistingFingerprintMarkerAcrossPaginatedCommentsWithoutPosting() {
+    void reconcilesOnlyAnExactTerminalMarkerAtTheRequestedHeadLocationAndApp() {
         Fixture fixture = fixture();
-        expectCommentPage(fixture.server, 1, commentsWithoutMarker(100));
-        expectCommentPage(fixture.server, 2,
-                "[{\"id\":501,\"body\":\"existing\\n" + MARKER + "\"}]");
+        expectCommentPage(fixture.server, 1, mismatchedMarkerCommentsPage());
+        expectCommentPage(fixture.server, 2, commentsJson(List.of(reviewComment(
+                509,
+                "existing\n" + MARKER,
+                HEAD_SHA,
+                HEAD_SHA,
+                "./src//Foo.java",
+                12,
+                "RIGHT",
+                APP_ID))));
 
         InlineCommentArtifact artifact = fixture.client.reconcileInlineComment(
                 inlineRequest(inlineFinding(Optional.empty())));
 
         assertThat(artifact.fingerprint().value()).isEqualTo("a".repeat(64));
-        assertThat(artifact.githubArtifactId()).isEqualTo("501");
+        assertThat(artifact.githubArtifactId()).isEqualTo("509");
         fixture.server.verify();
     }
 
@@ -256,8 +314,15 @@ class GitHubPublicationClientTest {
                         API_BASE_URL + "/repositories/73/pulls/12/comments"))
                 .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR)
                         .body("uncertain-comment-response-secret"));
-        expectCommentPage(fixture.server, 1,
-                "[{\"id\":503,\"body\":\"created despite timeout\\n" + MARKER + "\"}]");
+        expectCommentPage(fixture.server, 1, commentsJson(List.of(reviewComment(
+                503,
+                "created despite timeout\n" + MARKER,
+                HEAD_SHA,
+                HEAD_SHA,
+                "src/Foo.java",
+                12,
+                "RIGHT",
+                APP_ID))));
 
         assertThatThrownBy(() -> fixture.client.reconcileInlineComment(
                 inlineRequest(inlineFinding(Optional.empty()))))
@@ -271,6 +336,38 @@ class GitHubPublicationClientTest {
         assertThat(fixture.client.reconcileInlineComment(
                 inlineRequest(inlineFinding(Optional.empty()))).githubArtifactId())
                 .isEqualTo("503");
+        fixture.server.verify();
+    }
+
+    @Test
+    void uncertainInlineCommentRetractionReconcilesAConfirmedMissingCommentOnRetry() {
+        Fixture fixture = fixture();
+        String deleteUrl = API_BASE_URL + "/repositories/73/pulls/comments/503";
+        fixture.server.expect(once(), requestTo(deleteUrl))
+                .andExpect(method(HttpMethod.DELETE))
+                .andExpect(requiredHeaders())
+                .andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+        fixture.server.expect(once(), requestTo(deleteUrl))
+                .andExpect(method(HttpMethod.DELETE))
+                .andExpect(requiredHeaders())
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+        GitHubPublicationGateway.InlineCommentRetractionRequest request =
+                new GitHubPublicationGateway.InlineCommentRetractionRequest(
+                        RUN_ID,
+                        REVISION,
+                        new FindingFingerprint("a".repeat(64)),
+                        new PublicationReference("github_review_comment", "503"));
+
+        assertThatThrownBy(() -> fixture.client.retractInlineComment(request))
+                .isInstanceOfSatisfying(GitHubFailureException.class, failure ->
+                        assertThat(failure.classification())
+                                .isEqualTo(GitHubFailureException.Classification.TRANSIENT));
+
+        GitHubPublicationGateway.InlineCommentRetraction retraction =
+                fixture.client.retractInlineComment(request);
+
+        assertThat(retraction.fingerprint()).isEqualTo(new FindingFingerprint("a".repeat(64)));
+        assertThat(retraction.githubArtifactId()).isEqualTo("503");
         fixture.server.verify();
     }
 
@@ -404,6 +501,7 @@ class GitHubPublicationClientTest {
                 installations,
                 new ObjectMapper(),
                 Clock.fixed(NOW, ZoneOffset.UTC),
+                APP_ID,
                 "Code Review Agent",
                 new CheckRunFormatter(),
                 new InlineCommentFormatter());
@@ -467,6 +565,14 @@ class GitHubPublicationClientTest {
                 .andRespond(withSuccess("{\"id\":" + id + "}", MediaType.APPLICATION_JSON));
     }
 
+    private static void expectMissingCheckUpdate(MockRestServiceServer server, String id) {
+        server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/check-runs/" + id))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(requiredHeaders())
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+    }
+
     private static void expectCommentPage(
             MockRestServiceServer server, int page, String response) {
         server.expect(once(), requestTo(commentListUrl(page)))
@@ -478,7 +584,7 @@ class GitHubPublicationClientTest {
     private static String checkListUrl(int page) {
         return API_BASE_URL
                 + "/repositories/73/commits/" + HEAD_SHA
-                + "/check-runs?check_name=Code%20Review%20Agent&filter=all&per_page=100&page="
+                + "/check-runs?check_name=Code%20Review%20Agent&app_id=1234&filter=all&per_page=100&page="
                 + page;
     }
 
@@ -498,8 +604,79 @@ class GitHubPublicationClientTest {
     private static String commentsWithoutMarker(int count) {
         List<Map<String, Object>> comments = new ArrayList<>();
         for (int index = 1; index <= count; index++) {
-            comments.add(Map.of("id", index, "body", "ordinary comment " + index));
+            comments.add(reviewComment(
+                    index,
+                    "ordinary comment " + index,
+                    HEAD_SHA,
+                    HEAD_SHA,
+                    "src/Foo.java",
+                    12,
+                    "RIGHT",
+                    APP_ID));
         }
+        return commentsJson(comments);
+    }
+
+    private static String mismatchedMarkerCommentsPage() {
+        String oldSha = "abcdef0123456789abcdef0123456789abcdef01";
+        List<Map<String, Object>> comments = new ArrayList<>();
+        comments.add(reviewComment(
+                501, MARKER + "\nquoted marker", HEAD_SHA, HEAD_SHA,
+                "src/Foo.java", 12, "RIGHT", APP_ID));
+        comments.add(reviewComment(
+                502, MARKER, oldSha, oldSha,
+                "src/Foo.java", 12, "RIGHT", APP_ID));
+        comments.add(reviewComment(
+                503, MARKER, HEAD_SHA, HEAD_SHA,
+                "src/Other.java", 12, "RIGHT", APP_ID));
+        comments.add(reviewComment(
+                504, MARKER, HEAD_SHA, HEAD_SHA,
+                "src/Foo.java", 13, "RIGHT", APP_ID));
+        comments.add(reviewComment(
+                505, MARKER, HEAD_SHA, HEAD_SHA,
+                "src/Foo.java", 12, "LEFT", APP_ID));
+        comments.add(reviewComment(
+                506, MARKER, HEAD_SHA, HEAD_SHA,
+                "src/Foo.java", 12, "RIGHT", 999L));
+        for (int index = comments.size() + 1; index <= 100; index++) {
+            comments.add(reviewComment(
+                    600 + index,
+                    "ordinary comment " + index,
+                    HEAD_SHA,
+                    HEAD_SHA,
+                    "src/Foo.java",
+                    12,
+                    "RIGHT",
+                    APP_ID));
+        }
+        return commentsJson(comments);
+    }
+
+    private static Map<String, Object> reviewComment(
+            long id,
+            String body,
+            String commitId,
+            String originalCommitId,
+            String path,
+            int line,
+            String side,
+            Long appId) {
+        Map<String, Object> comment = new LinkedHashMap<>();
+        comment.put("id", id);
+        comment.put("body", body);
+        comment.put("commit_id", commitId);
+        comment.put("original_commit_id", originalCommitId);
+        comment.put("path", path);
+        comment.put("line", line);
+        comment.put("side", side);
+        comment.put("user", Map.of("id", 88, "login", "code-review-agent[bot]", "type", "Bot"));
+        if (appId != null) {
+            comment.put("performed_via_github_app", Map.of("id", appId));
+        }
+        return comment;
+    }
+
+    private static String commentsJson(List<Map<String, Object>> comments) {
         try {
             return new ObjectMapper().writeValueAsString(comments);
         } catch (Exception exception) {

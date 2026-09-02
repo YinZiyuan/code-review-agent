@@ -392,6 +392,10 @@ public final class JdbcReviewRunRepository implements ReviewRunRepository {
                               (review_findings.artifact_type IS NULL
                                   AND review_findings.artifact_external_id IS NULL)
                               OR (
+                                  EXCLUDED.artifact_type IS NULL
+                                  AND EXCLUDED.artifact_external_id IS NULL
+                              )
+                              OR (
                                   review_findings.artifact_type
                                       IS NOT DISTINCT FROM EXCLUDED.artifact_type
                                   AND review_findings.artifact_external_id

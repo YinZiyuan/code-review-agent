@@ -8,6 +8,7 @@ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubIns
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
+import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationReference;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import org.springframework.http.HttpHeaders;
@@ -54,6 +55,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
     private final GitHubInstallationGateway installations;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final long appId;
     private final String checkName;
     private final CheckRunFormatter checkFormatter;
     private final InlineCommentFormatter inlineFormatter;
@@ -63,6 +65,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
             GitHubInstallationGateway installations,
             ObjectMapper objectMapper,
             Clock clock,
+            long appId,
             String checkName,
             CheckRunFormatter checkFormatter,
             InlineCommentFormatter inlineFormatter) {
@@ -70,6 +73,10 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         this.installations = Objects.requireNonNull(installations, "installations");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.clock = Objects.requireNonNull(clock, "clock");
+        if (appId <= 0) {
+            throw new IllegalArgumentException("appId must be positive");
+        }
+        this.appId = appId;
         if (checkName == null || checkName.isBlank()) {
             throw new IllegalArgumentException("checkName must not be blank");
         }
@@ -112,19 +119,32 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         CheckRunFormatter.FormattedCheckRun formatted = checkFormatter.format(request);
         Optional<String> persistedId = request.existingGitHubArtifactId()
                 .map(GitHubPublicationClient::requireArtifactId);
+        boolean persistedArtifactMissing = false;
         if (persistedId.isPresent()) {
             try {
                 return updateCheck(request, formatted, persistedId.orElseThrow());
             } catch (MissingArtifactException missing) {
                 // A confirmed artifact may have been deleted manually. Reconcile before recreation.
+                persistedArtifactMissing = true;
             }
         }
 
         Optional<String> reconciled = findCheckByExternalId(request);
         if (reconciled.isPresent()) {
-            return updateCheck(request, formatted, reconciled.orElseThrow());
+            CheckRunArtifact updated = updateCheck(
+                    request, formatted, reconciled.orElseThrow());
+            return new CheckRunArtifact(
+                    updated.githubArtifactId(),
+                    persistedArtifactMissing
+                            ? CheckRunArtifact.Reconciliation.REPLACED_MISSING
+                            : CheckRunArtifact.Reconciliation.RECONCILED);
         }
-        return createCheck(request, formatted);
+        return createCheck(
+                request,
+                formatted,
+                persistedArtifactMissing
+                        ? CheckRunArtifact.Reconciliation.REPLACED_MISSING
+                        : CheckRunArtifact.Reconciliation.CREATED);
     }
 
     @Override
@@ -152,6 +172,32 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         return createComment(request, body);
     }
 
+    @Override
+    public InlineCommentRetraction retractInlineComment(
+            InlineCommentRetractionRequest request) {
+        Objects.requireNonNull(request, "request");
+        PublicationReference reference = request.reference();
+        if (!COMMENT_ARTIFACT_TYPE.equals(reference.artifactType())) {
+            throw deterministic("Persisted GitHub comment reference was invalid");
+        }
+        String commentId = requireArtifactId(reference.externalId());
+        try {
+            exchange(
+                    request.revision(),
+                    HttpMethod.DELETE,
+                    spec -> spec.uri(
+                            "/repositories/{repositoryId}/pulls/comments/{commentId}",
+                            request.revision().repositoryId(), commentId),
+                    null,
+                    MAX_MUTATION_RESPONSE_BYTES,
+                    FailureTarget.COMMENT_DELETE,
+                    "GitHub inline comment retraction failed");
+        } catch (MissingArtifactException missing) {
+            // A missing comment confirms the desired terminal cleanup state.
+        }
+        return new InlineCommentRetraction(request.fingerprint(), commentId);
+    }
+
     private Optional<String> findCheckByExternalId(CheckRunRequest request) {
         String expectedExternalId = request.reconciliationExternalId().value().toString();
         for (int page = 1; page <= MAX_RECONCILIATION_PAGES; page++) {
@@ -162,6 +208,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                     spec -> spec.uri(builder -> builder
                             .path("/repositories/{repositoryId}/commits/{headSha}/check-runs")
                             .queryParam("check_name", checkName)
+                            .queryParam("app_id", appId)
                             .queryParam("filter", "all")
                             .queryParam("per_page", PAGE_SIZE)
                             .queryParam("page", currentPage)
@@ -211,8 +258,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 throw transientFailure("GitHub comment reconciliation response was invalid");
             }
             for (JsonNode comment : comments) {
-                JsonNode body = comment.path("body");
-                if (body.isTextual() && body.textValue().contains(marker)) {
+                if (matchesInlineComment(request, marker, comment)) {
                     return Optional.of(requiredArtifactId(comment));
                 }
             }
@@ -223,8 +269,45 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         throw transientFailure("GitHub comment reconciliation page limit exceeded");
     }
 
+    private boolean matchesInlineComment(
+            InlineCommentRequest request, String marker, JsonNode comment) {
+        JsonNode body = comment.path("body");
+        JsonNode line = comment.path("line");
+        if (!body.isTextual()
+                || !body.textValue().endsWith(marker)
+                || !request.revision().headSha().equals(optionalText(comment, "commit_id"))
+                || !request.revision().headSha().equals(optionalText(comment, "original_commit_id"))
+                || !normalizedPath(comment.path("path")).equals(request.finding().location().file())
+                || !line.isIntegralNumber()
+                || line.asInt() != request.finding().location().line()
+                || !"RIGHT".equals(optionalText(comment, "side"))) {
+            return false;
+        }
+        JsonNode performedViaApp = comment.get("performed_via_github_app");
+        if (performedViaApp == null || performedViaApp.isNull()) {
+            return true;
+        }
+        JsonNode remoteAppId = performedViaApp.path("id");
+        return remoteAppId.isIntegralNumber()
+                && remoteAppId.canConvertToLong()
+                && remoteAppId.longValue() == appId;
+    }
+
+    private static String normalizedPath(JsonNode path) {
+        if (!path.isTextual()) {
+            return "";
+        }
+        try {
+            return new CodeLocation(path.textValue(), 1, true).file();
+        } catch (IllegalArgumentException failure) {
+            return "";
+        }
+    }
+
     private CheckRunArtifact createCheck(
-            CheckRunRequest request, CheckRunFormatter.FormattedCheckRun formatted) {
+            CheckRunRequest request,
+            CheckRunFormatter.FormattedCheckRun formatted,
+            CheckRunArtifact.Reconciliation reconciliation) {
         Map<String, Object> payload = checkPayload(request, formatted);
         payload.put("head_sha", request.revision().headSha());
         byte[] response = exchange(
@@ -237,8 +320,10 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 MAX_MUTATION_RESPONSE_BYTES,
                 FailureTarget.CHECK_CREATE,
                 "GitHub Check creation failed");
-        return new CheckRunArtifact(requiredArtifactId(readJson(
-                response, "GitHub Check creation response was invalid")));
+        return new CheckRunArtifact(
+                requiredArtifactId(readJson(
+                        response, "GitHub Check creation response was invalid")),
+                reconciliation);
     }
 
     private CheckRunArtifact updateCheck(
@@ -340,6 +425,10 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                             && status == HttpStatus.NOT_FOUND.value()) {
                         throw new MissingArtifactException();
                     }
+                    if (failureTarget == FailureTarget.COMMENT_DELETE
+                            && status == HttpStatus.NOT_FOUND.value()) {
+                        throw new MissingArtifactException();
+                    }
                     throw failureForStatus(
                             status,
                             response.getHeaders(),
@@ -398,7 +487,8 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         if (status >= 400 && status < 500) {
             return deterministic(switch (target) {
                 case REVISION -> "GitHub pull request is unavailable";
-                case COMMENT_CREATE, COMMENT_LIST -> "GitHub pull request comment is unavailable";
+                case COMMENT_CREATE, COMMENT_LIST, COMMENT_DELETE ->
+                        "GitHub pull request comment is unavailable";
                 case CHECK_CREATE, CHECK_UPDATE, CHECK_LIST -> "GitHub Check is unavailable";
             });
         }
@@ -529,7 +619,8 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         CHECK_CREATE,
         CHECK_UPDATE,
         COMMENT_LIST,
-        COMMENT_CREATE
+        COMMENT_CREATE,
+        COMMENT_DELETE
     }
 
     @FunctionalInterface
