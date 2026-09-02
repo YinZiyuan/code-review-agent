@@ -4,6 +4,7 @@ import dev.langchain4j.example.codereview.reviewops.application.github.CheckRunA
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprint;
@@ -44,7 +45,12 @@ public final class PublishReviewOutcome {
     }
 
     public PublicationOutcome publish(ReviewRunId id) {
+        return publish(id, OperationFence.unfenced());
+    }
+
+    public PublicationOutcome publish(ReviewRunId id, OperationFence fence) {
         Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(fence, "fence");
         ReviewRunRepository.StoredReviewRun stored = reviewRuns.find(id).orElse(null);
         if (stored == null) {
             return PublicationOutcome.NOT_FOUND;
@@ -61,28 +67,33 @@ public final class PublishReviewOutcome {
                     github.authoritativeRevision(run.revision()),
                     "authoritative revision");
         } catch (GitHubFailureException failure) {
-            settleTerminalHeadLookupFailure(run, stored.version(), failure);
+            settleTerminalHeadLookupFailure(run, stored.version(), failure, fence);
             throw failure;
         }
         if (!authoritative.matches(run.revision())) {
+            fence.requireCurrent();
             if (run.state() == ReviewRunState.COMPLETED) {
                 run.authorizePublication(authoritative, clock.instant());
             } else {
                 run.supersede(authoritative, clock.instant());
             }
+            fence.requireCurrent();
             mutations.saveProgress(run, stored.version());
             return PublicationOutcome.SUPERSEDED;
         }
 
         long version = stored.version();
         if (run.state() == ReviewRunState.COMPLETED) {
+            fence.requireCurrent();
             run.authorizePublication(authoritative, clock.instant());
+            fence.requireCurrent();
             version = mutations.saveProgress(run, version);
         }
-        return reconcilePublication(run, version);
+        return reconcilePublication(run, version, fence);
     }
 
-    private PublicationOutcome reconcilePublication(ReviewRun run, long initialVersion) {
+    private PublicationOutcome reconcilePublication(
+            ReviewRun run, long initialVersion, OperationFence fence) {
         long version = initialVersion;
         try {
             List<GitHubPublicationGateway.PublicationFinding> selectedFindings = run.findings().stream()
@@ -112,7 +123,7 @@ public final class PublishReviewOutcome {
                             selectedFindings,
                             run.checkRunExternalId());
             CheckRunArtifact confirmedCheck = Objects.requireNonNull(
-                    github.upsertCheck(checkRequest), "confirmed Check");
+                    github.upsertCheck(checkRequest, fence), "confirmed Check");
             String checkId = confirmedCheck.githubArtifactId();
             Optional<String> recordedCheck = run.checkRunExternalId();
             if (recordedCheck.isPresent() && !recordedCheck.orElseThrow().equals(checkId)) {
@@ -123,21 +134,20 @@ public final class PublishReviewOutcome {
                             "GitHub Check reconciliation returned a conflicting artifact");
                 }
                 run.replaceMissingPublicationCheck(recordedCheck.orElseThrow(), checkId);
+                fence.requireCurrent();
                 version = mutations.saveProgress(run, version);
             }
             if (recordedCheck.isEmpty()) {
                 run.recordPublicationProgress(checkId, Map.of());
+                fence.requireCurrent();
                 version = mutations.saveProgress(run, version);
             }
 
             for (GitHubPublicationGateway.PublicationFinding finding : inlineFindings) {
-                if (run.commentReferences().containsKey(finding.fingerprint())) {
-                    continue;
-                }
                 InlineCommentArtifact confirmedComment = Objects.requireNonNull(
                         github.reconcileInlineComment(
                                 new GitHubPublicationGateway.InlineCommentRequest(
-                                        run.id(), run.revision(), finding)),
+                                        run.id(), run.revision(), finding), fence),
                         "confirmed inline comment");
                 if (!finding.fingerprint().equals(confirmedComment.fingerprint())) {
                     throw new GitHubFailureException(
@@ -146,22 +156,42 @@ public final class PublishReviewOutcome {
                 }
                 PublicationReference reference = new PublicationReference(
                         "github_review_comment", confirmedComment.githubArtifactId());
-                run.recordPublicationProgress(
-                        checkId, Map.of(finding.fingerprint(), reference));
-                version = mutations.saveProgress(run, version);
+                Optional<PublicationReference> recorded = finding.existingReference();
+                if (recorded.isPresent()
+                        && !recorded.orElseThrow().equals(reference)) {
+                    if (confirmedComment.reconciliation()
+                            != InlineCommentArtifact.Reconciliation.REPLACED_MISSING) {
+                        throw new GitHubFailureException(
+                                GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                                "GitHub comment reconciliation returned a conflicting artifact");
+                    }
+                    run.replaceMissingPublicationComment(
+                            finding.fingerprint(), recorded.orElseThrow(), reference);
+                    fence.requireCurrent();
+                    version = mutations.saveProgress(run, version);
+                } else if (recorded.isEmpty()) {
+                    run.recordPublicationProgress(
+                            checkId, Map.of(finding.fingerprint(), reference));
+                    fence.requireCurrent();
+                    version = mutations.saveProgress(run, version);
+                }
             }
 
             run.confirmPublication(checkId, run.commentReferences(), clock.instant());
+            fence.requireCurrent();
             mutations.saveProgress(run, version);
             return PublicationOutcome.PUBLISHED;
         } catch (GitHubFailureException failure) {
-            settleTerminalArtifactFailure(run, version, failure);
+            settleTerminalArtifactFailure(run, version, failure, fence);
             throw failure;
         }
     }
 
     private void settleTerminalArtifactFailure(
-            ReviewRun run, long expectedVersion, GitHubFailureException failure) {
+            ReviewRun run,
+            long expectedVersion,
+            GitHubFailureException failure,
+            OperationFence fence) {
         ReviewFailure terminalFailure = terminalReviewFailure(failure);
         if (terminalFailure == null) {
             return;
@@ -170,7 +200,7 @@ public final class PublishReviewOutcome {
         if (commentsMayRemain) {
             try {
                 Set<FindingFingerprint> confirmedRetractions =
-                        retractConfirmedComments(run);
+                        retractConfirmedComments(run, fence);
                 run.recordPublicationFailureAfterCommentRetraction(
                         terminalFailure, confirmedRetractions, clock.instant());
                 commentsMayRemain = false;
@@ -183,11 +213,13 @@ public final class PublishReviewOutcome {
         } else {
             run.recordPublicationFailure(terminalFailure, clock.instant());
         }
+        fence.requireCurrent();
         long failedVersion = mutations.saveProgress(run, expectedVersion);
-        bestEffortNeutralCheck(run, failedVersion, failure, commentsMayRemain);
+        bestEffortNeutralCheck(run, failedVersion, failure, commentsMayRemain, fence);
     }
 
-    private Set<FindingFingerprint> retractConfirmedComments(ReviewRun run) {
+    private Set<FindingFingerprint> retractConfirmedComments(
+            ReviewRun run, OperationFence fence) {
         Set<FindingFingerprint> confirmed = new LinkedHashSet<>();
         run.commentReferences().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(
@@ -201,7 +233,7 @@ public final class PublishReviewOutcome {
                                                     run.id(),
                                                     run.revision(),
                                                     entry.getKey(),
-                                                    entry.getValue())),
+                                                    entry.getValue()), fence),
                                     "confirmed comment retraction");
                     if (!entry.getKey().equals(retraction.fingerprint())
                             || !entry.getValue().externalId()
@@ -219,7 +251,8 @@ public final class PublishReviewOutcome {
             ReviewRun run,
             long expectedVersion,
             GitHubFailureException originalFailure,
-            boolean commentsMayRemain) {
+            boolean commentsMayRemain,
+            OperationFence fence) {
         try {
             CheckRunArtifact neutralCheck = Objects.requireNonNull(
                     github.upsertCheck(new GitHubPublicationGateway.CheckRunRequest(
@@ -230,10 +263,11 @@ public final class PublishReviewOutcome {
                                             originalFailure.getMessage(), commentsMayRemain),
                                     commentsMayRemain),
                             List.of(),
-                            run.checkRunExternalId())),
+                            run.checkRunExternalId()), fence),
                     "neutral Check");
             if (run.checkRunExternalId().isEmpty()) {
                 run.recordFailedPublicationCheck(neutralCheck.githubArtifactId());
+                fence.requireCurrent();
                 mutations.saveProgress(run, expectedVersion);
             }
         } catch (RuntimeException ignored) {
@@ -287,16 +321,19 @@ public final class PublishReviewOutcome {
     private void settleTerminalHeadLookupFailure(
             ReviewRun run,
             long expectedVersion,
-            GitHubFailureException failure) {
+            GitHubFailureException failure,
+            OperationFence fence) {
         ReviewFailure terminalFailure = terminalReviewFailure(failure);
         if (terminalFailure == null) {
             return;
         }
+        fence.requireCurrent();
         if (run.state() == ReviewRunState.COMPLETED) {
             run.recordPublicationAuthorizationFailure(terminalFailure, clock.instant());
         } else {
             run.recordPublicationFailure(terminalFailure, clock.instant());
         }
+        fence.requireCurrent();
         mutations.saveProgress(run, expectedVersion);
     }
 

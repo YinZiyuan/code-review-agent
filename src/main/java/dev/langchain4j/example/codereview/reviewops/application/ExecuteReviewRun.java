@@ -8,7 +8,9 @@ import dev.langchain4j.example.codereview.model.ToolStatus;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
 import dev.langchain4j.example.codereview.reviewops.application.github.ReviewSourceProvider;
+import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxEvent;
 import dev.langchain4j.example.codereview.reviewops.domain.DomainEvent;
 import dev.langchain4j.example.codereview.reviewops.domain.ExecutionMeasurements;
@@ -69,7 +71,12 @@ public final class ExecuteReviewRun {
     }
 
     public ExecutionOutcome execute(ReviewRunId id) {
+        return execute(id, OperationFence.unfenced());
+    }
+
+    public ExecutionOutcome execute(ReviewRunId id, OperationFence fence) {
         Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(fence, "fence");
         Optional<ReviewRunRepository.StoredReviewRun> loaded = reviewRuns.find(id);
         if (loaded.isEmpty()) {
             return ExecutionOutcome.notFound();
@@ -78,14 +85,16 @@ public final class ExecuteReviewRun {
         ReviewRun run = loaded.orElseThrow().reviewRun();
         long version = loaded.orElseThrow().version();
         if (run.state() == ReviewRunState.RUNNING) {
+            fence.requireCurrent();
             Instant recoveredAt = clock.instant();
             run.recoverInterruptedAttempt(new ReviewFailure(
                     "worker_interrupted", FailureClass.TRANSIENT,
                     "interrupted execution details are not retained"), recoveredAt);
             if (run.state() == ReviewRunState.FAILED) {
-                enqueueFailurePresentation(run, version, recoveredAt);
+                enqueueFailurePresentation(run, version, recoveredAt, fence);
                 return ExecutionOutcome.terminal(run.finalFailure().orElseThrow());
             }
+            fence.requireCurrent();
             version = mutations.saveProgress(run, version);
         }
 
@@ -95,22 +104,27 @@ public final class ExecuteReviewRun {
         }
 
         Instant startedAt = clock.instant();
+        fence.requireCurrent();
         run.startAttempt(startedAt);
+        fence.requireCurrent();
         version = mutations.saveProgress(run, version);
 
         PipelineOutput output;
         try {
             output = invokePipeline(run);
+        } catch (StaleReviewRevisionException stale) {
+            return persistSupersession(run, version, stale.authoritativeRevision(), fence);
         } catch (RuntimeException exception) {
             TokenCounts tokenCounts = tokenCounts(exception);
             return persistExecutionFailure(
-                    run, version, startedAt, classify(exception), tokenCounts);
+                    run, version, startedAt, classify(exception), tokenCounts, fence);
         }
 
         Instant completedAt = clock.instant();
         ExecutionMeasurements measurements = measurements(
                 startedAt, completedAt, output.inputTokens(), output.outputTokens(), output.toolStates());
         try {
+            fence.requireCurrent();
             run.completeReview(output.findings(), measurements, completedAt);
         } catch (IllegalArgumentException | NullPointerException exception) {
             return persistExecutionFailure(
@@ -118,7 +132,8 @@ public final class ExecuteReviewRun {
                     version,
                     startedAt,
                     Failure.invalidOutput(),
-                    new TokenCounts(output.inputTokens(), output.outputTokens()));
+                    new TokenCounts(output.inputTokens(), output.outputTokens()),
+                    fence);
         }
 
         List<OutboxEvent> events = run.drainEvents().stream()
@@ -130,9 +145,22 @@ public final class ExecuteReviewRun {
                 run.configuration().maxReviewAttempts(),
                 completedAt,
                 "decide-publication:" + run.id().value());
+        fence.requireCurrent();
         mutations.saveAndEnqueue(
                 run, version, List.of(publicationDecision), events);
         return ExecutionOutcome.completed();
+    }
+
+    private ExecutionOutcome persistSupersession(
+            ReviewRun run,
+            long version,
+            dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision authoritative,
+            OperationFence fence) {
+        fence.requireCurrent();
+        run.supersede(authoritative, clock.instant());
+        fence.requireCurrent();
+        mutations.saveProgress(run, version);
+        return ExecutionOutcome.superseded();
     }
 
     private PipelineOutput invokePipeline(ReviewRun run) {
@@ -195,7 +223,8 @@ public final class ExecuteReviewRun {
             long version,
             Instant startedAt,
             Failure classified,
-            TokenCounts tokenCounts) {
+            TokenCounts tokenCounts,
+            OperationFence fence) {
         Instant failedAt = clock.instant();
         ExecutionMeasurements measurements = measurements(
                 startedAt,
@@ -203,14 +232,16 @@ public final class ExecuteReviewRun {
                 tokenCounts.inputTokens(),
                 tokenCounts.outputTokens(),
                 Map.of());
+        fence.requireCurrent();
         if (classified.failure().classification() == FailureClass.TRANSIENT) {
             run.recordTransientAttemptFailure(classified.failure(), measurements, failedAt);
         } else {
             run.recordTerminalAttemptFailure(classified.failure(), measurements, failedAt);
         }
         if (run.state() == ReviewRunState.FAILED) {
-            enqueueFailurePresentation(run, version, failedAt);
+            enqueueFailurePresentation(run, version, failedAt, fence);
         } else {
+            fence.requireCurrent();
             mutations.saveProgress(run, version);
         }
         if (run.state() == ReviewRunState.FAILED) {
@@ -219,13 +250,18 @@ public final class ExecuteReviewRun {
         return ExecutionOutcome.retryable(classified.failure(), classified.retryAt());
     }
 
-    private void enqueueFailurePresentation(ReviewRun run, long expectedVersion, Instant failedAt) {
+    private void enqueueFailurePresentation(
+            ReviewRun run,
+            long expectedVersion,
+            Instant failedAt,
+            OperationFence fence) {
         DurableJobRequest failurePresentation = new DurableJobRequest(
                 PRESENT_REVIEW_FAILURE_JOB_TYPE,
                 run.id().value(),
                 run.configuration().maxReviewAttempts(),
                 failedAt,
                 "present-review-failure:" + run.id().value());
+        fence.requireCurrent();
         mutations.saveAndEnqueue(
                 run, expectedVersion, List.of(failurePresentation), List.of());
     }

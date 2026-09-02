@@ -6,6 +6,7 @@ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPub
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.CheckRunRequest;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxEvent;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
@@ -69,6 +70,25 @@ class PublishReviewOutcomeTest {
         assertThat(mutations.progressExpectedVersion).isEqualTo(4);
         assertThat(mutations.progressState).isEqualTo(ReviewRunState.SUPERSEDED);
         assertThat(mutations.atomicSaveCount).isZero();
+    }
+
+    @Test
+    void lostLeaseBeforeAuthorizationPreventsAggregateAndGitHubMutation() {
+        ReviewRun run = completedRunWithDecision();
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        OperationFence lost = () -> {
+            throw new OperationFence.Lost();
+        };
+
+        assertThatThrownBy(() -> publisher(run, 4, mutations, gateway).publish(run.id(), lost))
+                .isInstanceOf(OperationFence.Lost.class);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.COMPLETED);
+        assertThat(gateway.authoritativeCalls).isOne();
+        assertThat(gateway.checkMutations).isZero();
+        assertThat(gateway.commentMutations).isZero();
+        assertThat(mutations.progressSaveCount).isZero();
     }
 
     @Test
@@ -137,6 +157,30 @@ class PublishReviewOutcomeTest {
     }
 
     @Test
+    void deletedPersistedCommentIsReconciledAndReplacementPersistedBeforeContinuing() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint first = new FindingFingerprint("a".repeat(64));
+        PublicationReference deleted = new PublicationReference(
+                "github_review_comment", "comment-deleted");
+        run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
+        run.recordPublicationProgress("check-123", Map.of(first, deleted));
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.replaceMissingCommentWith(first, "comment-replacement");
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        PublishReviewOutcome.PublicationOutcome outcome =
+                publisher(run, 80, mutations, gateway).publish(run.id());
+
+        assertThat(outcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
+        assertThat(gateway.commentRequests.get(0).finding().existingReference())
+                .contains(deleted);
+        assertThat(run.commentReferences().get(first).externalId())
+                .isEqualTo("comment-replacement");
+        assertThat(mutations.progressSnapshots).startsWith(
+                new ProgressSnapshot(80, ReviewRunState.PUBLISHING, "check-123", 1));
+    }
+
+    @Test
     void partialCommentRetrySkipsConfirmedFindingAndPersistsEveryNewArtifactBeforeContinuing() {
         ReviewRun run = completedRunWithInlineDecisions();
         FindingFingerprint second = new FindingFingerprint("b".repeat(64));
@@ -166,7 +210,7 @@ class PublishReviewOutcomeTest {
 
         assertThat(retryOutcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
         assertThat(gateway.commentFingerprints()).containsExactly(
-                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+                "a".repeat(64), "b".repeat(64), "a".repeat(64), "b".repeat(64));
         assertThat(run.commentReferences()).containsOnlyKeys(
                 new FindingFingerprint("a".repeat(64)),
                 new FindingFingerprint("b".repeat(64)));
@@ -264,7 +308,7 @@ class PublishReviewOutcomeTest {
     }
 
     @Test
-    void retryableRetractionKeepsDurableReferencesAndRetryNeverRepostsTheFirstComment() {
+    void retryableRetractionKeepsDurableReferencesAndRetryReconcilesTheFirstComment() {
         ReviewRun run = completedRunWithInlineDecisions();
         FindingFingerprint first = new FindingFingerprint("a".repeat(64));
         FindingFingerprint second = new FindingFingerprint("b".repeat(64));
@@ -292,7 +336,7 @@ class PublishReviewOutcomeTest {
         assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
         assertThat(run.commentReferences()).isEmpty();
         assertThat(gateway.commentFingerprints()).containsExactly(
-                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+                "a".repeat(64), "b".repeat(64), "a".repeat(64), "b".repeat(64));
         assertThat(gateway.retractedFingerprints()).containsExactly(
                 "a".repeat(64), "a".repeat(64));
     }
@@ -639,6 +683,8 @@ class PublishReviewOutcomeTest {
         private ReviewRun observedRun;
         private ReviewRunState stateAtNeutralCheck;
         private String replacementCheckId;
+        private FindingFingerprint replacementCommentFingerprint;
+        private String replacementCommentId;
         private String checkIdObservedAtFirstComment;
 
         private RecordingGateway(AuthoritativeRevision authoritative) {
@@ -690,6 +736,12 @@ class PublishReviewOutcomeTest {
                 }
                 throw failure;
             }
+            if (request.finding().fingerprint().equals(replacementCommentFingerprint)) {
+                return new InlineCommentArtifact(
+                        request.finding().fingerprint(),
+                        replacementCommentId,
+                        InlineCommentArtifact.Reconciliation.REPLACED_MISSING);
+            }
             return new InlineCommentArtifact(
                     request.finding().fingerprint(),
                     "comment-" + request.finding().fingerprint().value().substring(0, 8));
@@ -739,6 +791,12 @@ class PublishReviewOutcomeTest {
 
         private void replaceMissingCheckWith(String replacementCheckId) {
             this.replacementCheckId = replacementCheckId;
+        }
+
+        private void replaceMissingCommentWith(
+                FindingFingerprint fingerprint, String replacementCommentId) {
+            this.replacementCommentFingerprint = fingerprint;
+            this.replacementCommentId = replacementCommentId;
         }
 
         private List<String> commentFingerprints() {

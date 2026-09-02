@@ -87,6 +87,29 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void leaseAcquisitionUsesPostgresTimeInsteadOfTheWorkerClock() {
+        Instant databaseNow = jdbcTemplate.queryForObject(
+                "SELECT CURRENT_TIMESTAMP", Timestamp.class).toInstant();
+        UUID jobId = queue.enqueue(request(
+                "REVIEW_EXECUTION",
+                "database-clock-lease",
+                UUID.fromString("00000000-0000-0000-0000-000000000099"),
+                3,
+                databaseNow.minusSeconds(1)));
+
+        List<LeasedJob> leased = queue.leaseDue(
+                "worker-with-slow-clock",
+                Instant.parse("2000-01-01T00:00:00Z"),
+                LEASE_DURATION,
+                1);
+
+        assertThat(leased).singleElement().satisfies(lease -> {
+            assertThat(lease.id()).isEqualTo(jobId);
+            assertThat(lease.leaseExpiresAt()).isAfter(databaseNow.plus(LEASE_DURATION.minusSeconds(1)));
+        });
+    }
+
+    @Test
     void duplicateIdempotencyKeyRejectsEveryDifferentImmutableIntentField() {
         String idempotencyKey = "conflicting-intent";
         UUID originalPayload = UUID.fromString("00000000-0000-0000-0000-000000000002");
@@ -167,12 +190,13 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
 
     @Test
     void doesNotLeaseJobsScheduledAfterThePollingTime() {
+        Instant databaseNow = databaseNow();
         UUID futureJob = queue.enqueue(request(
                 "REVIEW_EXECUTION",
                 "future-job",
                 UUID.fromString("00000000-0000-0000-0000-000000000003"),
                 3,
-                LEASED_AT.plusSeconds(1)));
+                databaseNow.plusSeconds(60)));
 
         assertThat(queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 10)).isEmpty();
         assertThat(jobRow(futureJob))
@@ -186,17 +210,26 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
         UUID jobId = queue.enqueue(request(
                 "REVIEW_EXECUTION", "due-job", payloadReference, 3, DUE_AT));
 
+        Instant databaseNow = databaseNow();
         List<LeasedJob> leased = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
 
-        assertThat(leased).containsExactly(new LeasedJob(
-                jobId, "REVIEW_EXECUTION", payloadReference, 1, 1, 3,
-                LEASED_AT.plus(LEASE_DURATION)));
+        assertThat(leased).singleElement().satisfies(lease -> {
+            assertThat(lease.id()).isEqualTo(jobId);
+            assertThat(lease.jobType()).isEqualTo("REVIEW_EXECUTION");
+            assertThat(lease.payloadReference()).isEqualTo(payloadReference);
+            assertThat(lease.attemptCount()).isEqualTo(1);
+            assertThat(lease.deliveryAttempt()).isEqualTo(1);
+            assertThat(lease.maxAttempts()).isEqualTo(3);
+            assertThat(lease.leaseExpiresAt())
+                    .isBetween(databaseNow.plus(LEASE_DURATION),
+                            databaseNow().plus(LEASE_DURATION));
+        });
         assertThat(jobRow(jobId))
                 .containsEntry("state", "LEASED")
                 .containsEntry("attempt_count", 1)
                 .containsEntry("lease_owner", "worker-a");
         assertThat(((Timestamp) jobRow(jobId).get("lease_expires_at")).toInstant())
-                .isEqualTo(LEASED_AT.plus(LEASE_DURATION));
+                .isEqualTo(leased.get(0).leaseExpiresAt());
     }
 
     @Test
@@ -342,6 +375,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
         Instant heartbeatAt = LEASED_AT.plusSeconds(30);
         Duration extendedDuration = Duration.ofMinutes(7);
 
+        Instant databaseNow = databaseNow();
         queue.renewLease(
                 jobId,
                 "worker-a",
@@ -354,7 +388,8 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 .containsEntry("attempt_count", 1)
                 .containsEntry("lease_owner", "worker-a");
         assertThat(((Timestamp) jobRow(jobId).get("lease_expires_at")).toInstant())
-                .isEqualTo(heartbeatAt.plus(extendedDuration));
+                .isBetween(databaseNow.plus(extendedDuration),
+                        databaseNow().plus(extendedDuration));
     }
 
     @Test
@@ -376,12 +411,13 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 jobId, "worker-a", lease.attemptCount() + 1, heartbeatAt, LEASE_DURATION))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(jobId.toString());
+        expireLease(jobId);
         assertThatThrownBy(() -> queue.renewLease(
                 jobId, "worker-a", lease.attemptCount(), lease.leaseExpiresAt(), LEASE_DURATION))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(jobId.toString());
         assertThat(((Timestamp) jobRow(jobId).get("lease_expires_at")).toInstant())
-                .isEqualTo(lease.leaseExpiresAt());
+                .isBefore(databaseNow());
     }
 
     @Test
@@ -545,6 +581,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 3,
                 DUE_AT));
         LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        expireLease(jobId);
 
         assertThatThrownBy(() -> queue.markSucceeded(
                 jobId, "worker-a", lease.attemptCount(), lease.leaseExpiresAt()))
@@ -564,6 +601,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 3,
                 DUE_AT));
         LeasedJob lease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        expireLease(jobId);
 
         assertThatThrownBy(() -> queue.recordFailure(
                 jobId,
@@ -588,6 +626,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 3,
                 DUE_AT));
         LeasedJob firstLease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        expireLease(jobId);
         queue.recoverExpiredLeases(firstLease.leaseExpiresAt());
         LeasedJob secondLease = queue.leaseDue(
                 "worker-a", firstLease.leaseExpiresAt(), LEASE_DURATION, 1).get(0);
@@ -614,6 +653,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 3,
                 DUE_AT));
         LeasedJob firstLease = queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        expireLease(jobId);
         queue.recoverExpiredLeases(firstLease.leaseExpiresAt());
         LeasedJob secondLease = queue.leaseDue(
                 "worker-a", firstLease.leaseExpiresAt(), LEASE_DURATION, 1).get(0);
@@ -654,6 +694,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 DUE_AT));
         LeasedJob first = recoveringQueue.leaseDue(
                 "worker-a", LEASED_AT, LEASE_DURATION, 1).get(0);
+        expireAllLeases();
         recoveringQueue.recoverExpiredLeases(first.leaseExpiresAt());
 
         LeasedJob second = recoveringQueue.leaseDue(
@@ -676,6 +717,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                     DUE_AT));
         }
         queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 3);
+        expireAllLeases();
         Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
 
         int recovered = queue.recoverExpiredLeases(expiredAt, 2);
@@ -700,6 +742,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                     DUE_AT));
         }
         queue.leaseDue("crashed-worker", LEASED_AT, LEASE_DURATION, 4);
+        expireAllLeases();
         Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
         PostgresDurableJobQueue first = queueUsing(dataSource, Clock.fixed(CREATED_AT, ZoneOffset.UTC));
         PostgresDurableJobQueue second = queueUsing(dataSource, Clock.fixed(CREATED_AT, ZoneOffset.UTC));
@@ -743,10 +786,8 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 3,
                 DUE_AT));
         queue.leaseDue("crashed-worker", LEASED_AT, LEASE_DURATION, 2);
+        expireAllLeases();
         Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
-        jdbcTemplate.update(
-                "UPDATE durable_jobs SET lease_expires_at = ? WHERE id = ?",
-                Timestamp.from(expiredAt.minusSeconds(1)), lockedId);
 
         try (Connection lockingConnection = dataSource.getConnection()) {
             lockingConnection.setAutoCommit(false);
@@ -797,10 +838,8 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 1,
                 DUE_AT));
         recoveringQueue.leaseDue("crashed-worker", LEASED_AT, LEASE_DURATION, 2);
+        expireAllLeases();
         Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
-        jdbcTemplate.update(
-                "UPDATE durable_jobs SET lease_expires_at = ? WHERE id = ?",
-                Timestamp.from(expiredAt.minusSeconds(1)), poisonId);
         UUID unrelatedDueId = recoveringQueue.enqueue(request(
                 "UNRELATED_DUE",
                 "unrelated-due-after-poison",
@@ -828,6 +867,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 3,
                 DUE_AT));
         queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
+        expireLease(jobId);
 
         int recovered = queue.recoverExpiredLeases(LEASED_AT.plus(LEASE_DURATION));
 
@@ -849,6 +889,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 1,
                 DUE_AT));
         queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
+        expireLease(jobId);
         Instant expiredAt = LEASED_AT.plus(LEASE_DURATION);
 
         int recovered = queue.recoverExpiredLeases(expiredAt);
@@ -896,6 +937,7 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
                 DUE_AT));
         queue.leaseDue("worker-a", LEASED_AT, LEASE_DURATION, 1);
         queue.leaseDue("worker-b", LEASED_AT, LEASE_DURATION.plusMinutes(1), 1);
+        expireLease(expiredJobId);
 
         int recovered = queue.recoverExpiredLeases(LEASED_AT.plus(LEASE_DURATION));
 
@@ -931,6 +973,27 @@ class PostgresDurableJobQueueTest extends PostgresIntegrationSupport {
     private DurableJobRequest request(String jobType, String idempotencyKey, UUID payloadReference,
                                       int maxAttempts, Instant nextAttemptAt) {
         return new DurableJobRequest(jobType, payloadReference, maxAttempts, nextAttemptAt, idempotencyKey);
+    }
+
+    private Instant databaseNow() {
+        return jdbcTemplate.queryForObject(
+                "SELECT CURRENT_TIMESTAMP", Timestamp.class).toInstant();
+    }
+
+    private void expireLease(UUID jobId) {
+        jdbcTemplate.update("""
+                UPDATE durable_jobs
+                SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                WHERE id = ? AND state = 'LEASED'
+                """, jobId);
+    }
+
+    private void expireAllLeases() {
+        jdbcTemplate.update("""
+                UPDATE durable_jobs
+                SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                WHERE state = 'LEASED'
+                """);
     }
 
     private PostgresDurableJobQueue queueUsing(javax.sql.DataSource queueDataSource, Clock clock) {

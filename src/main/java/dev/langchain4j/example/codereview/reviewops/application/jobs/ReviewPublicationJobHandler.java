@@ -22,8 +22,14 @@ public final class ReviewPublicationJobHandler implements ReviewJobHandler {
 
     @Override
     public JobOutcome handle(LeasedJob job) {
+        return handle(job, OperationFence.unfenced());
+    }
+
+    @Override
+    public JobOutcome handle(LeasedJob job, OperationFence fence) {
         PublishReviewOutcome.PublicationOutcome outcome = publishReviewOutcome.publish(
-                new ReviewRunId(Objects.requireNonNull(job, "job").payloadReference()));
+                new ReviewRunId(Objects.requireNonNull(job, "job").payloadReference()),
+                Objects.requireNonNull(fence, "fence"));
         return switch (outcome) {
             case AUTHORIZED, PUBLISHED, SUPERSEDED, FAILED -> JobOutcome.succeeded();
             case NOT_READY -> JobOutcome.terminalFailure("review_run_not_ready");

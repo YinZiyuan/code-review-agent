@@ -10,6 +10,7 @@ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPub
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.InlineCommentRequest;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway.PublicationFinding;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingCategory;
@@ -216,6 +217,21 @@ class GitHubPublicationClientTest {
     }
 
     @Test
+    void lostLeaseAfterCheckReconciliationPreventsCheckCreation() {
+        Fixture fixture = fixture();
+        expectCheckList(fixture.server, 1, "{\"total_count\":0,\"check_runs\":[]}");
+        OperationFence fence = () -> {
+            throw new OperationFence.Lost();
+        };
+
+        assertThatThrownBy(() -> fixture.client.upsertCheck(
+                checkRequest(Optional.empty(), List.of()), fence))
+                .isInstanceOf(OperationFence.Lost.class);
+
+        fixture.server.verify();
+    }
+
+    @Test
     void uncertainCheckCreationIsReconciledByExternalIdBeforeAnyRetryPost() {
         Fixture fixture = fixture();
         expectCheckList(fixture.server, 1, "{\"total_count\":0,\"check_runs\":[]}");
@@ -268,14 +284,79 @@ class GitHubPublicationClientTest {
     }
 
     @Test
-    void returnsAPersistedConfirmedCommentWithoutAnotherRemoteRequest() {
+    void verifiesAPersistedCommentBeforeConfirmingIt() {
         Fixture fixture = fixture();
+        fixture.server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/pulls/comments/501"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(requiredHeaders())
+                .andRespond(withSuccess(commentsJson(List.of(reviewComment(
+                                501, "existing\n" + MARKER, HEAD_SHA, HEAD_SHA,
+                                "src/Foo.java", 12, "RIGHT", APP_ID)))
+                                .replaceFirst("^\\[", "")
+                                .replaceFirst("]$", ""),
+                        MediaType.APPLICATION_JSON));
 
         InlineCommentArtifact artifact = fixture.client.reconcileInlineComment(
                 inlineRequest(inlineFinding(Optional.of(
                         new PublicationReference("github_review_comment", "501")))));
 
         assertThat(artifact.githubArtifactId()).isEqualTo("501");
+        assertThat(artifact.reconciliation())
+                .isEqualTo(InlineCommentArtifact.Reconciliation.CONFIRMED);
+        fixture.server.verify();
+    }
+
+    @Test
+    void deletedPersistedCommentIsReconciledAndReplacedSafely() {
+        Fixture fixture = fixture();
+        fixture.server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/pulls/comments/501"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(requiredHeaders())
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+        expectCommentPage(fixture.server, 1, "[]");
+        fixture.server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/pulls/12/comments"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(requiredHeaders())
+                .andRespond(withStatus(HttpStatus.CREATED)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"id\":502}"));
+
+        InlineCommentArtifact artifact = fixture.client.reconcileInlineComment(
+                inlineRequest(inlineFinding(Optional.of(
+                        new PublicationReference("github_review_comment", "501")))));
+
+        assertThat(artifact.githubArtifactId()).isEqualTo("502");
+        assertThat(artifact.reconciliation())
+                .isEqualTo(InlineCommentArtifact.Reconciliation.REPLACED_MISSING);
+        fixture.server.verify();
+    }
+
+    @Test
+    void persistedCommentIdOwnedByAnotherArtifactFailsClosed() {
+        Fixture fixture = fixture();
+        fixture.server.expect(once(), requestTo(
+                        API_BASE_URL + "/repositories/73/pulls/comments/501"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(requiredHeaders())
+                .andRespond(withSuccess(commentsJson(List.of(reviewComment(
+                                501, "different body", HEAD_SHA, HEAD_SHA,
+                                "src/Foo.java", 12, "RIGHT", APP_ID)))
+                                .replaceFirst("^\\[", "")
+                                .replaceFirst("]$", ""),
+                        MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> fixture.client.reconcileInlineComment(
+                inlineRequest(inlineFinding(Optional.of(
+                        new PublicationReference("github_review_comment", "501"))))))
+                .isInstanceOfSatisfying(GitHubFailureException.class, failure -> {
+                    assertThat(failure.classification()).isEqualTo(
+                            GitHubFailureException.Classification.DETERMINISTIC_INPUT);
+                    assertThat(failure).hasMessage(
+                            "Persisted GitHub comment reference was invalid");
+                });
         fixture.server.verify();
     }
 

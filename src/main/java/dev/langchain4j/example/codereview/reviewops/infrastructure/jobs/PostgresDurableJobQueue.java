@@ -36,17 +36,18 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
             WITH due AS (
                 SELECT id
                 FROM durable_jobs
-                WHERE state = 'READY' AND next_attempt_at <= ?
+                WHERE state = 'READY' AND next_attempt_at <= CURRENT_TIMESTAMP
                   AND attempt_count < max_attempts
                 ORDER BY next_attempt_at, created_at, id
                 FOR UPDATE SKIP LOCKED
                 LIMIT ?
             )
             UPDATE durable_jobs AS job
-            SET state = 'LEASED', lease_owner = ?, lease_expires_at = ?,
+            SET state = 'LEASED', lease_owner = ?,
+                lease_expires_at = CURRENT_TIMESTAMP + (? * INTERVAL '1 millisecond'),
                 attempt_count = job.attempt_count + 1,
                 lease_sequence = job.lease_sequence + 1,
-                updated_at = ?
+                updated_at = CURRENT_TIMESTAMP
             FROM due
             WHERE job.id = due.id
             RETURNING job.*
@@ -142,16 +143,13 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         if (limit <= 0) {
             throw new IllegalArgumentException("limit must be positive");
         }
-        Instant leaseExpiresAt = now.plus(leaseDuration);
         String validatedOwner = owner;
         return Objects.requireNonNull(transactions.execute(status -> jdbcTemplate.query(
                         LEASE_DUE,
                         PostgresDurableJobQueue::mapLeasedJob,
-                        timestamp(now),
                         limit,
                         validatedOwner,
-                        timestamp(leaseExpiresAt),
-                        timestamp(now))),
+                        durationMillis(leaseDuration))),
                 "transaction result");
     }
 
@@ -162,11 +160,12 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         Objects.requireNonNull(now, "now");
         int updated = jdbcTemplate.update("""
                         UPDATE durable_jobs
-                        SET state = 'SUCCEEDED', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+                        SET state = 'SUCCEEDED', lease_owner = NULL, lease_expires_at = NULL,
+                            updated_at = CURRENT_TIMESTAMP
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
-                          AND lease_sequence = ? AND lease_expires_at > ?
+                          AND lease_sequence = ? AND lease_expires_at > CURRENT_TIMESTAMP
                         """,
-                timestamp(now), jobId, owner, expectedAttempt, timestamp(now));
+                jobId, owner, expectedAttempt);
         requireCurrentLease(updated, jobId, owner, expectedAttempt);
     }
 
@@ -188,18 +187,16 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                             lease_owner = NULL,
                             lease_expires_at = NULL,
                             last_failure_class = ?,
-                            updated_at = ?
+                            updated_at = CURRENT_TIMESTAMP
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
-                          AND lease_sequence = ? AND lease_expires_at > ?
+                          AND lease_sequence = ? AND lease_expires_at > CURRENT_TIMESTAMP
                         """,
                 failureClass.name(),
                 timestamp(nextAttemptAt),
                 failureClass.name(),
-                timestamp(now),
                 jobId,
                 owner,
-                expectedAttempt,
-                timestamp(now));
+                expectedAttempt);
         requireCurrentLease(updated, jobId, owner, expectedAttempt);
     }
 
@@ -229,11 +226,12 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
 
         String validatedOwner = owner;
         return Objects.requireNonNull(transactions.execute(status -> {
-            lockCurrentLease(job, validatedOwner, now);
+            Instant databaseNow = databaseNow();
+            lockCurrentLease(job, validatedOwner);
             FinalJobFailureSettlement.FinalFailureSettlement settlement =
                     Objects.requireNonNull(
                             finalFailureSettlement.settleFinalFailure(
-                                    job, failureClass, safeCode, now),
+                                    job, failureClass, safeCode, databaseNow),
                             "final failure settlement");
             if (settlement.disposition() == FailureDisposition.RETRY_SCHEDULED) {
                 throw new IllegalStateException(
@@ -245,32 +243,31 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                             SET state = ?, next_attempt_at = ?, lease_owner = NULL,
                                 lease_expires_at = NULL, last_failure_class = ?, updated_at = ?
                             WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
-                              AND lease_sequence = ? AND lease_expires_at > ?
+                              AND lease_sequence = ? AND lease_expires_at > CURRENT_TIMESTAMP
                             """,
                     settlement.disposition() == FailureDisposition.SUCCEEDED
                             ? "SUCCEEDED" : "DEAD",
                     timestamp(nextAttemptAt),
                     failureClass.name(),
-                    timestamp(now),
+                    timestamp(databaseNow),
                     job.id(),
                     validatedOwner,
-                    job.attemptCount(),
-                    timestamp(now));
+                    job.attemptCount());
             requireCurrentLease(updated, job.id(), validatedOwner, job.attemptCount());
             return settlement.disposition();
         }), "transaction result");
     }
 
-    private void lockCurrentLease(LeasedJob job, String owner, Instant now) {
+    private void lockCurrentLease(LeasedJob job, String owner) {
         List<UUID> current = jdbcTemplate.query("""
                         SELECT id
                         FROM durable_jobs
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
-                          AND lease_sequence = ? AND lease_expires_at > ?
+                          AND lease_sequence = ? AND lease_expires_at > CURRENT_TIMESTAMP
                         FOR UPDATE
                         """,
                 (resultSet, rowNumber) -> resultSet.getObject("id", UUID.class),
-                job.id(), owner, job.attemptCount(), timestamp(now));
+                job.id(), owner, job.attemptCount());
         requireCurrentLease(current.size(), job.id(), owner, job.attemptCount());
     }
 
@@ -288,19 +285,18 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         if (leaseDuration.isZero() || leaseDuration.isNegative()) {
             throw new IllegalArgumentException("leaseDuration must be positive");
         }
-        Instant proposedExpiry = now.plus(leaseDuration);
         int updated = jdbcTemplate.update("""
                         UPDATE durable_jobs
-                        SET lease_expires_at = GREATEST(lease_expires_at, ?), updated_at = ?
+                        SET lease_expires_at = CURRENT_TIMESTAMP
+                                + (? * INTERVAL '1 millisecond'),
+                            updated_at = CURRENT_TIMESTAMP
                         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
-                          AND lease_sequence = ? AND lease_expires_at > ?
+                          AND lease_sequence = ? AND lease_expires_at > CURRENT_TIMESTAMP
                         """,
-                timestamp(proposedExpiry),
-                timestamp(now),
+                durationMillis(leaseDuration),
                 jobId,
                 owner,
-                expectedAttempt,
-                timestamp(now));
+                expectedAttempt);
         requireCurrentLease(updated, jobId, owner, expectedAttempt);
     }
 
@@ -321,14 +317,15 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
             AtomicReference<UUID> selectedId = new AtomicReference<>();
             try {
                 Boolean recoveredOne = transactions.execute(status -> {
+                    Instant databaseNow = databaseNow();
                     Optional<LeasedJob> selected = lockNextExpiredLease(
-                            now, failedThisCycle);
+                            failedThisCycle);
                     if (selected.isEmpty()) {
                         return false;
                     }
                     LeasedJob expiredLease = selected.orElseThrow();
                     selectedId.set(expiredLease.id());
-                    recoverLockedLease(expiredLease, now);
+                    recoverLockedLease(expiredLease, databaseNow);
                     return true;
                 });
                 if (!Objects.requireNonNull(recoveredOne, "transaction result")) {
@@ -348,11 +345,9 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
     }
 
     private Optional<LeasedJob> lockNextExpiredLease(
-            Instant now,
             Set<UUID> excludedIds) {
         String exclusion = "";
         List<Object> arguments = new ArrayList<>();
-        arguments.add(timestamp(now));
         if (!excludedIds.isEmpty()) {
             exclusion = " AND id NOT IN ("
                     + String.join(", ", java.util.Collections.nCopies(
@@ -363,7 +358,7 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
         List<LeasedJob> selected = jdbcTemplate.query("""
                         SELECT *
                         FROM durable_jobs
-                        WHERE state = 'LEASED' AND lease_expires_at <= ?
+                        WHERE state = 'LEASED' AND lease_expires_at <= CURRENT_TIMESTAMP
                         """ + exclusion + """
                         ORDER BY lease_expires_at, id
                         FOR UPDATE SKIP LOCKED
@@ -438,6 +433,21 @@ public final class PostgresDurableJobQueue implements DurableJobQueue {
                 resultSet.getInt("attempt_count"),
                 resultSet.getInt("max_attempts"),
                 resultSet.getTimestamp("lease_expires_at").toInstant());
+    }
+
+    private Instant databaseNow() {
+        Timestamp timestamp = jdbcTemplate.queryForObject(
+                "SELECT CURRENT_TIMESTAMP", Timestamp.class);
+        return Objects.requireNonNull(timestamp, "database current timestamp").toInstant();
+    }
+
+    private static long durationMillis(Duration duration) {
+        long milliseconds = duration.toMillis();
+        if (milliseconds <= 0) {
+            throw new IllegalArgumentException(
+                    "leaseDuration must be representable as at least one millisecond");
+        }
+        return milliseconds;
     }
 
     private static void requireCurrentLease(int updated, UUID jobId, String owner, int expectedAttempt) {

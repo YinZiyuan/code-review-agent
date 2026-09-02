@@ -244,8 +244,9 @@ public class ServerConfiguration {
     SupersedeObsoleteReviewRuns supersedeObsoleteReviewRuns(
             ReviewRunRepository reviewRuns,
             ObsoleteReviewRunStore obsoleteRuns,
+            GitHubPublicationGateway github,
             Clock clock) {
-        return new SupersedeObsoleteReviewRuns(reviewRuns, obsoleteRuns, clock);
+        return new SupersedeObsoleteReviewRuns(reviewRuns, obsoleteRuns, github, clock);
     }
 
     @Bean

@@ -3,10 +3,19 @@ package dev.langchain4j.example.codereview.reviewops.application;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobQueue;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.LeasedJob;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
+import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
 import dev.langchain4j.example.codereview.reviewops.domain.ExecutionMeasurements;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingCategory;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingContent;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingEvidence;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprint;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingSeverity;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewFinding;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
@@ -53,7 +62,7 @@ class SettleReviewJobFailureTest {
 
     @Test
     void exhaustedDecisionWithoutDurableDecisionFailsCompletedRun() {
-        ReviewRun run = completedRun();
+        ReviewRun run = completedRunWithFinding();
         RecordingRepository repository = new RecordingRepository(run, 4);
         SettleReviewJobFailure settlement = new SettleReviewJobFailure(repository);
 
@@ -66,6 +75,27 @@ class SettleReviewJobFailureTest {
         assertThat(result.disposition()).isEqualTo(DurableJobQueue.FailureDisposition.DEAD);
         assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
         assertThat(result.followUpJobs()).hasSize(1);
+    }
+
+    @Test
+    void crashAfterDurableDecisionEffectMarksDeliverySucceeded() {
+        ReviewRun run = completedRunWithFinding();
+        FindingFingerprint fingerprint = run.findings().get(0).fingerprint();
+        run.acceptPublicationDecisions(Map.of(
+                fingerprint, new PublicationDecision(PublicationTier.CHECK_SUMMARY, "policy-v1")));
+        RecordingRepository repository = new RecordingRepository(run, 6);
+        SettleReviewJobFailure settlement = new SettleReviewJobFailure(repository);
+
+        var result = settlement.settleFinalFailure(
+                finalLease(ExecuteReviewRun.DECIDE_PUBLICATION_JOB_TYPE, run.id()),
+                FailureClass.TRANSIENT,
+                "job_handler_failed",
+                NOW);
+
+        assertThat(result.disposition()).isEqualTo(DurableJobQueue.FailureDisposition.SUCCEEDED);
+        assertThat(run.state()).isEqualTo(ReviewRunState.COMPLETED);
+        assertThat(result.followUpJobs()).isEmpty();
+        assertThat(repository.updatedVersion).isNull();
     }
 
     @Test
@@ -122,6 +152,25 @@ class SettleReviewJobFailureTest {
         ReviewRun run = requestedRun();
         run.startAttempt(NOW.minusSeconds(20));
         run.completeReview(List.of(), new ExecutionMeasurements(1, 0, 0, Map.of()),
+                NOW.minusSeconds(19));
+        run.drainEvents();
+        return run;
+    }
+
+    private static ReviewRun completedRunWithFinding() {
+        ReviewRun run = requestedRun();
+        run.startAttempt(NOW.minusSeconds(20));
+        run.completeReview(List.of(new ReviewFinding(
+                        new FindingFingerprint("a".repeat(64)),
+                        new CodeLocation("src/Foo.java", 12, true),
+                        new FindingContent(
+                                FindingSeverity.WARNING,
+                                FindingCategory.STABILITY,
+                                "Issue",
+                                "Description",
+                                "Suggestion"),
+                        new FindingEvidence("Evidence", List.of(), "regex"))),
+                new ExecutionMeasurements(1, 0, 0, Map.of()),
                 NOW.minusSeconds(19));
         run.drainEvents();
         return run;

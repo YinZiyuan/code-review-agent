@@ -44,7 +44,7 @@ public final class SettleReviewJobFailure implements FinalJobFailureSettlement {
             return dead();
         }
         ReviewRun run = stored.reviewRun();
-        if (effectIsAlreadyDurable(job.jobType(), run.state())) {
+        if (effectIsAlreadyDurable(job.jobType(), run)) {
             return succeeded();
         }
         if (ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE.equals(job.jobType())) {
@@ -73,7 +73,8 @@ public final class SettleReviewJobFailure implements FinalJobFailureSettlement {
                 || ExecuteReviewRun.PRESENT_REVIEW_FAILURE_JOB_TYPE.equals(jobType);
     }
 
-    private static boolean effectIsAlreadyDurable(String jobType, ReviewRunState state) {
+    private static boolean effectIsAlreadyDurable(String jobType, ReviewRun run) {
+        ReviewRunState state = run.state();
         if (ReviewRunAdmissionStore.REVIEW_EXECUTION_JOB_TYPE.equals(jobType)) {
             return state == ReviewRunState.COMPLETED
                     || state == ReviewRunState.PUBLISHING
@@ -81,7 +82,10 @@ public final class SettleReviewJobFailure implements FinalJobFailureSettlement {
                     || state == ReviewRunState.SUPERSEDED;
         }
         if (ExecuteReviewRun.DECIDE_PUBLICATION_JOB_TYPE.equals(jobType)) {
-            return state == ReviewRunState.PUBLISHING
+            return (state == ReviewRunState.COMPLETED
+                    && run.findings().stream()
+                            .allMatch(finding -> finding.publicationDecision().isPresent()))
+                    || state == ReviewRunState.PUBLISHING
                     || state == ReviewRunState.PUBLISHED
                     || state == ReviewRunState.SUPERSEDED;
         }

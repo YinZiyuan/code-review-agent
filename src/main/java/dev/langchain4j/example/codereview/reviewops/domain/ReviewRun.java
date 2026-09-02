@@ -250,6 +250,33 @@ public final class ReviewRun {
         checkRunExternalId = confirmedReplacementCheckRunId;
     }
 
+    public void replaceMissingPublicationComment(
+            FindingFingerprint fingerprint,
+            PublicationReference expectedMissingReference,
+            PublicationReference confirmedReplacementReference) {
+        requireState(ReviewRunState.PUBLISHING);
+        Objects.requireNonNull(fingerprint, "fingerprint");
+        Objects.requireNonNull(expectedMissingReference, "expectedMissingReference");
+        Objects.requireNonNull(confirmedReplacementReference, "confirmedReplacementReference");
+        PublicationReference recorded = commentReferences.get(fingerprint);
+        if (!expectedMissingReference.equals(recorded)) {
+            throw new IllegalArgumentException(
+                    "expectedMissingReference does not match recorded publication progress");
+        }
+        if (expectedMissingReference.equals(confirmedReplacementReference)) {
+            throw new IllegalArgumentException(
+                    "confirmedReplacementReference must identify a replacement");
+        }
+        ReviewFinding finding = findings.stream()
+                .filter(candidate -> candidate.fingerprint().equals(fingerprint))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "comment reference must belong to a finding"));
+        finding.clearPublicationReference(expectedMissingReference);
+        finding.recordPublicationReference(confirmedReplacementReference);
+        commentReferences.put(fingerprint, confirmedReplacementReference);
+    }
+
     public void recordPublicationFailure(ReviewFailure failure, Instant failedAt) {
         requireState(ReviewRunState.PUBLISHING);
         settleTerminalPublicationFailure(failure, failedAt);
@@ -297,6 +324,21 @@ public final class ReviewRun {
             throw new IllegalArgumentException("confirmedCheckRunId must not be blank");
         }
         checkRunExternalId = confirmedCheckRunId;
+    }
+
+    public void recordFailurePresentationCommentRetractions(
+            Set<FindingFingerprint> confirmedRetractions) {
+        requireState(ReviewRunState.FAILED);
+        Objects.requireNonNull(confirmedRetractions, "confirmedRetractions");
+        if (!commentReferences.keySet().equals(confirmedRetractions)) {
+            throw new IllegalArgumentException(
+                    "confirmedRetractions must cover exactly all recorded comments");
+        }
+        Map<FindingFingerprint, ReviewFinding> findingsByFingerprint = findings.stream()
+                .collect(Collectors.toMap(ReviewFinding::fingerprint, Function.identity()));
+        commentReferences.forEach((fingerprint, reference) ->
+                findingsByFingerprint.get(fingerprint).clearPublicationReference(reference));
+        commentReferences.clear();
     }
 
     public void recordPublicationAuthorizationFailure(ReviewFailure failure, Instant failedAt) {

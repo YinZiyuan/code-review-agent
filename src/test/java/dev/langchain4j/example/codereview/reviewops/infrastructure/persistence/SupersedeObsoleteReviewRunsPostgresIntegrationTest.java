@@ -3,6 +3,9 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.persistence;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.ObservePullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.application.SupersedeObsoleteReviewRuns;
+import dev.langchain4j.example.codereview.reviewops.application.github.CheckRunArtifact;
+import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
+import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
 import dev.langchain4j.example.codereview.reviewops.application.github.VerifiedPullRequestEvent;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.BackoffPolicy;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobDispatcher;
@@ -10,6 +13,7 @@ import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewJobWo
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ScheduledLeaseHeartbeat;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.SupersedeObsoleteReviewRunsJobHandler;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
+import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewAttemptState;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
@@ -88,7 +92,8 @@ class SupersedeObsoleteReviewRunsPostgresIntegrationTest extends PostgresIntegra
         PostgresObsoleteReviewRunStore obsolete = new PostgresObsoleteReviewRunStore(
                 jdbcTemplate, reviewRuns, transactions);
         SupersedeObsoleteReviewRuns useCase = new SupersedeObsoleteReviewRuns(
-                reviewRuns, obsolete, Clock.fixed(T0.plusSeconds(3), ZoneOffset.UTC));
+                reviewRuns, obsolete, githubHead("new-head"),
+                Clock.fixed(T0.plusSeconds(3), ZoneOffset.UTC));
         ScheduledLeaseHeartbeat heartbeat = new ScheduledLeaseHeartbeat(
                 jobs,
                 Clock.fixed(T0.plusSeconds(3), ZoneOffset.UTC),
@@ -158,6 +163,7 @@ class SupersedeObsoleteReviewRunsPostgresIntegrationTest extends PostgresIntegra
         SupersedeObsoleteReviewRuns useCase = new SupersedeObsoleteReviewRuns(
                 failOnSecondUpdate,
                 obsolete,
+                githubHead("new-head"),
                 Clock.fixed(T0.plusSeconds(3), ZoneOffset.UTC));
 
         assertThatThrownBy(() -> useCase.execute(current.id()))
@@ -194,5 +200,30 @@ class SupersedeObsoleteReviewRunsPostgresIntegrationTest extends PostgresIntegra
                 new PullRequestRevision(10, 20, 30, headSha),
                 CONFIGURATION,
                 requestedAt);
+    }
+
+    private static GitHubPublicationGateway githubHead(String headSha) {
+        return new GitHubPublicationGateway() {
+            @Override
+            public AuthoritativeRevision authoritativeRevision(PullRequestRevision revision) {
+                return new AuthoritativeRevision(headSha);
+            }
+
+            @Override
+            public CheckRunArtifact upsertCheck(CheckRunRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public InlineCommentRetraction retractInlineComment(
+                    InlineCommentRetractionRequest request) {
+                throw new UnsupportedOperationException();
+            }
+        };
     }
 }

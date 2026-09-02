@@ -11,7 +11,10 @@ import dev.langchain4j.example.codereview.model.ToolStatus;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
 import dev.langchain4j.example.codereview.reviewops.application.github.ReviewSourceProvider;
+import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
+import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxEvent;
 import dev.langchain4j.example.codereview.reviewops.domain.ExecutionMeasurements;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
@@ -105,6 +108,29 @@ class ExecuteReviewRunTest {
                 java.util.Map.of("spotbugs", "RAN"));
         assertThatThrownBy(() -> measurements.toolStates().put("regex", "FAILED"))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void lostLeaseBeforeAttemptStartPreventsExecutionAndPersistence() {
+        ReviewRun run = requestedRun(3);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        CountingSourceProvider sources = new CountingSourceProvider();
+        OperationFence lost = () -> {
+            throw new OperationFence.Lost();
+        };
+
+        assertThatThrownBy(() -> executor(
+                new FakeReviewRunRepository(run, 7),
+                mutations,
+                sources,
+                new RecordingAgent((request, sourceRoot) -> null),
+                new MutableClock(T0)).execute(run.id(), lost))
+                .isInstanceOf(OperationFence.Lost.class);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.REQUESTED);
+        assertThat(sources.prepareCalls).isZero();
+        assertThat(mutations.progressStates).isEmpty();
+        assertThat(mutations.jobs).isEmpty();
     }
 
     @Test
@@ -338,6 +364,31 @@ class ExecuteReviewRunTest {
                 ExecuteReviewRun.ExecutionStatus.TERMINAL_FAILURE,
                 FailureClass.TERMINAL,
                 "github_deterministic_input");
+    }
+
+    @Test
+    void exactHeadMismatchSupersedesInsteadOfFailingTheRun() {
+        ReviewRun run = requestedRun(3);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        String authoritativeSha = "abcdef0123456789abcdef0123456789abcdef01";
+        ReviewSourceProvider sources = revision -> {
+            throw new StaleReviewRevisionException(
+                    new AuthoritativeRevision(authoritativeSha));
+        };
+
+        ExecuteReviewRun.ExecutionOutcome outcome = executor(
+                new FakeReviewRunRepository(run, 0),
+                mutations,
+                sources,
+                new RecordingAgent((request, sourceRoot) -> null),
+                new MutableClock(T0)).execute(run.id());
+
+        assertThat(outcome.status()).isEqualTo(ExecuteReviewRun.ExecutionStatus.SUPERSEDED);
+        assertThat(run.state()).isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThat(run.finalFailure()).isEmpty();
+        assertThat(mutations.progressStates).containsExactly(
+                ReviewRunState.RUNNING, ReviewRunState.SUPERSEDED);
+        assertThat(mutations.jobs).isEmpty();
     }
 
     @Test

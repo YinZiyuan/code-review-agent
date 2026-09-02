@@ -4,7 +4,6 @@ import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
@@ -25,13 +24,11 @@ public interface ObsoleteReviewRunStore {
 
     record SupersessionScope(
             ReviewRunId currentRunId,
-            PullRequestRevision currentRevision,
-            Instant currentRequestedAt) {
+            PullRequestRevision currentRevision) {
 
         public SupersessionScope {
             Objects.requireNonNull(currentRunId, "currentRunId");
             Objects.requireNonNull(currentRevision, "currentRevision");
-            Objects.requireNonNull(currentRequestedAt, "currentRequestedAt");
         }
     }
 }

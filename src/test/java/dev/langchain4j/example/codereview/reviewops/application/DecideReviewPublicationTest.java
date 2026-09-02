@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.reviewops.application;
 
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.application.outbox.OutboxEvent;
 import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
 import dev.langchain4j.example.codereview.reviewops.domain.ExecutionMeasurements;
@@ -29,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -82,6 +84,28 @@ class DecideReviewPublicationTest {
             assertThat(job.nextAttemptAt()).isEqualTo(NOW.minusSeconds(10));
             assertThat(job.idempotencyKey()).isEqualTo("publish-review:" + run.id().value());
         });
+    }
+
+    @Test
+    void lostLeaseBeforeDecisionPersistencePreventsAggregateAndJobMutation() {
+        ReviewFinding finding = finding("fenced", 40);
+        ReviewRun run = completedRun(List.of(finding));
+        FindingPublicationPolicy policy = mock(FindingPublicationPolicy.class);
+        when(policy.decide(run.findings(), POLICY)).thenReturn(Map.of(
+                finding.fingerprint(),
+                new PublicationDecision(PublicationTier.CHECK_SUMMARY, POLICY.version())));
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        DecideReviewPublication decider = new DecideReviewPublication(
+                new FixedReviewRunRepository(run, 7), mutations, policy, POLICY);
+
+        assertThatThrownBy(() -> decider.decide(run.id(), () -> {
+            throw new OperationFence.Lost();
+        })).isInstanceOf(OperationFence.Lost.class);
+
+        assertThat(run.findings()).allSatisfy(item ->
+                assertThat(item.publicationDecision()).isEmpty());
+        assertThat(mutations.atomicSaveCount).isZero();
+        assertThat(mutations.jobs).isEmpty();
     }
 
     @Test

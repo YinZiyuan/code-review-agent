@@ -9,6 +9,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationReference;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 
 import java.util.List;
 import java.util.Objects;
@@ -18,11 +19,34 @@ public interface GitHubPublicationGateway {
 
     AuthoritativeRevision authoritativeRevision(PullRequestRevision revision);
 
+    default AuthoritativeRevision authoritativeRevision(
+            PullRequestRevision revision, OperationFence fence) {
+        Objects.requireNonNull(fence, "fence").requireCurrent();
+        return authoritativeRevision(revision);
+    }
+
     CheckRunArtifact upsertCheck(CheckRunRequest request);
+
+    default CheckRunArtifact upsertCheck(CheckRunRequest request, OperationFence fence) {
+        Objects.requireNonNull(fence, "fence").requireCurrent();
+        return upsertCheck(request);
+    }
 
     InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request);
 
+    default InlineCommentArtifact reconcileInlineComment(
+            InlineCommentRequest request, OperationFence fence) {
+        Objects.requireNonNull(fence, "fence").requireCurrent();
+        return reconcileInlineComment(request);
+    }
+
     InlineCommentRetraction retractInlineComment(InlineCommentRetractionRequest request);
+
+    default InlineCommentRetraction retractInlineComment(
+            InlineCommentRetractionRequest request, OperationFence fence) {
+        Objects.requireNonNull(fence, "fence").requireCurrent();
+        return retractInlineComment(request);
+    }
 
     record CheckRunRequest(
             ReviewRunId reconciliationExternalId,

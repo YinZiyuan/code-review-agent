@@ -7,6 +7,7 @@ import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFai
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubInstallationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubPublicationGateway;
 import dev.langchain4j.example.codereview.reviewops.application.github.InlineCommentArtifact;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.CodeLocation;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationReference;
@@ -115,14 +116,20 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
 
     @Override
     public CheckRunArtifact upsertCheck(CheckRunRequest request) {
+        return upsertCheck(request, OperationFence.unfenced());
+    }
+
+    @Override
+    public CheckRunArtifact upsertCheck(CheckRunRequest request, OperationFence fence) {
         Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(fence, "fence");
         CheckRunFormatter.FormattedCheckRun formatted = checkFormatter.format(request);
         Optional<String> persistedId = request.existingGitHubArtifactId()
                 .map(GitHubPublicationClient::requireArtifactId);
         boolean persistedArtifactMissing = false;
         if (persistedId.isPresent()) {
             try {
-                return updateCheck(request, formatted, persistedId.orElseThrow());
+                return updateCheck(request, formatted, persistedId.orElseThrow(), fence);
             } catch (MissingArtifactException missing) {
                 // A confirmed artifact may have been deleted manually. Reconcile before recreation.
                 persistedArtifactMissing = true;
@@ -132,7 +139,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         Optional<String> reconciled = findCheckByExternalId(request);
         if (reconciled.isPresent()) {
             CheckRunArtifact updated = updateCheck(
-                    request, formatted, reconciled.orElseThrow());
+                    request, formatted, reconciled.orElseThrow(), fence);
             return new CheckRunArtifact(
                     updated.githubArtifactId(),
                     persistedArtifactMissing
@@ -144,44 +151,93 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                 formatted,
                 persistedArtifactMissing
                         ? CheckRunArtifact.Reconciliation.REPLACED_MISSING
-                        : CheckRunArtifact.Reconciliation.CREATED);
+                        : CheckRunArtifact.Reconciliation.CREATED,
+                fence);
     }
 
     @Override
     public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
+        return reconcileInlineComment(request, OperationFence.unfenced());
+    }
+
+    @Override
+    public InlineCommentArtifact reconcileInlineComment(
+            InlineCommentRequest request, OperationFence fence) {
         Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(fence, "fence");
+        String body = inlineFormatter.format(request.finding());
+        String marker = InlineCommentFormatter.marker(
+                request.finding().fingerprint().value());
         Optional<PublicationReference> existingReference = request.finding().existingReference();
+        boolean persistedArtifactMissing = false;
         if (existingReference.isPresent()) {
             PublicationReference reference = existingReference.orElseThrow();
             if (!COMMENT_ARTIFACT_TYPE.equals(reference.artifactType())) {
                 throw deterministic("Persisted GitHub comment reference was invalid");
             }
-            return new InlineCommentArtifact(
-                    request.finding().fingerprint(),
-                    requireArtifactId(reference.externalId()));
+            String commentId = requireArtifactId(reference.externalId());
+            try {
+                byte[] response = exchange(
+                        request.revision(),
+                        HttpMethod.GET,
+                        spec -> spec.uri(
+                                "/repositories/{repositoryId}/pulls/comments/{commentId}",
+                                request.revision().repositoryId(), commentId),
+                        null,
+                        MAX_MUTATION_RESPONSE_BYTES,
+                        FailureTarget.COMMENT_GET,
+                        "GitHub persisted comment verification failed");
+                JsonNode comment = readJson(
+                        response, "GitHub persisted comment response was invalid");
+                if (!commentId.equals(requiredArtifactId(comment))
+                        || !matchesInlineComment(request, marker, comment)) {
+                    throw deterministic("Persisted GitHub comment reference was invalid");
+                }
+                return new InlineCommentArtifact(
+                        request.finding().fingerprint(),
+                        commentId,
+                        InlineCommentArtifact.Reconciliation.CONFIRMED);
+            } catch (MissingArtifactException missing) {
+                persistedArtifactMissing = true;
+            }
         }
 
-        String body = inlineFormatter.format(request.finding());
-        String marker = InlineCommentFormatter.marker(
-                request.finding().fingerprint().value());
         Optional<String> reconciled = findCommentByMarker(request, marker);
         if (reconciled.isPresent()) {
             return new InlineCommentArtifact(
-                    request.finding().fingerprint(), reconciled.orElseThrow());
+                    request.finding().fingerprint(),
+                    reconciled.orElseThrow(),
+                    persistedArtifactMissing
+                            ? InlineCommentArtifact.Reconciliation.REPLACED_MISSING
+                            : InlineCommentArtifact.Reconciliation.RECONCILED);
         }
-        return createComment(request, body);
+        return createComment(
+                request,
+                body,
+                persistedArtifactMissing
+                        ? InlineCommentArtifact.Reconciliation.REPLACED_MISSING
+                        : InlineCommentArtifact.Reconciliation.CREATED,
+                fence);
     }
 
     @Override
     public InlineCommentRetraction retractInlineComment(
             InlineCommentRetractionRequest request) {
+        return retractInlineComment(request, OperationFence.unfenced());
+    }
+
+    @Override
+    public InlineCommentRetraction retractInlineComment(
+            InlineCommentRetractionRequest request, OperationFence fence) {
         Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(fence, "fence");
         PublicationReference reference = request.reference();
         if (!COMMENT_ARTIFACT_TYPE.equals(reference.artifactType())) {
             throw deterministic("Persisted GitHub comment reference was invalid");
         }
         String commentId = requireArtifactId(reference.externalId());
         try {
+            fence.requireCurrent();
             exchange(
                     request.revision(),
                     HttpMethod.DELETE,
@@ -303,9 +359,11 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
     private CheckRunArtifact createCheck(
             CheckRunRequest request,
             CheckRunFormatter.FormattedCheckRun formatted,
-            CheckRunArtifact.Reconciliation reconciliation) {
+            CheckRunArtifact.Reconciliation reconciliation,
+            OperationFence fence) {
         Map<String, Object> payload = checkPayload(request, formatted);
         payload.put("head_sha", request.revision().headSha());
+        fence.requireCurrent();
         byte[] response = exchange(
                 request.revision(),
                 HttpMethod.POST,
@@ -325,7 +383,9 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
     private CheckRunArtifact updateCheck(
             CheckRunRequest request,
             CheckRunFormatter.FormattedCheckRun formatted,
-            String checkId) {
+            String checkId,
+            OperationFence fence) {
+        fence.requireCurrent();
         byte[] response = exchange(
                 request.revision(),
                 HttpMethod.PATCH,
@@ -345,13 +405,17 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
     }
 
     private InlineCommentArtifact createComment(
-            InlineCommentRequest request, String body) {
+            InlineCommentRequest request,
+            String body,
+            InlineCommentArtifact.Reconciliation reconciliation,
+            OperationFence fence) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("body", body);
         payload.put("commit_id", request.revision().headSha());
         payload.put("path", request.finding().location().file());
         payload.put("line", request.finding().location().line());
         payload.put("side", "RIGHT");
+        fence.requireCurrent();
         byte[] response = exchange(
                 request.revision(),
                 HttpMethod.POST,
@@ -366,7 +430,8 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         return new InlineCommentArtifact(
                 request.finding().fingerprint(),
                 requiredArtifactId(readJson(
-                        response, "GitHub inline comment creation response was invalid")));
+                        response, "GitHub inline comment creation response was invalid")),
+                reconciliation);
     }
 
     private Map<String, Object> checkPayload(
@@ -422,6 +487,10 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
                         throw new MissingArtifactException();
                     }
                     if (failureTarget == FailureTarget.COMMENT_DELETE
+                            && status == HttpStatus.NOT_FOUND.value()) {
+                        throw new MissingArtifactException();
+                    }
+                    if (failureTarget == FailureTarget.COMMENT_GET
                             && status == HttpStatus.NOT_FOUND.value()) {
                         throw new MissingArtifactException();
                     }
@@ -483,7 +552,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         if (status >= 400 && status < 500) {
             return deterministic(switch (target) {
                 case REVISION -> "GitHub pull request is unavailable";
-                case COMMENT_CREATE, COMMENT_LIST, COMMENT_DELETE ->
+                case COMMENT_CREATE, COMMENT_LIST, COMMENT_GET, COMMENT_DELETE ->
                         "GitHub pull request comment is unavailable";
                 case CHECK_CREATE, CHECK_UPDATE, CHECK_LIST -> "GitHub Check is unavailable";
             });
@@ -615,6 +684,7 @@ public final class GitHubPublicationClient implements GitHubPublicationGateway {
         CHECK_CREATE,
         CHECK_UPDATE,
         COMMENT_LIST,
+        COMMENT_GET,
         COMMENT_CREATE,
         COMMENT_DELETE
     }

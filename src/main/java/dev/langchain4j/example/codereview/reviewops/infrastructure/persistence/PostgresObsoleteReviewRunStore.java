@@ -8,7 +8,6 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunRepository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionOperations;
 
-import java.sql.Timestamp;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
@@ -40,7 +39,6 @@ public final class PostgresObsoleteReviewRunStore implements ObsoleteReviewRunSt
                           AND pull_request_number = ?
                           AND id <> ?
                           AND head_sha <> ?
-                          AND requested_at < ?
                           AND state IN ('REQUESTED', 'RUNNING', 'COMPLETED', 'PUBLISHING')
                         ORDER BY requested_at, id
                         """,
@@ -50,8 +48,7 @@ public final class PostgresObsoleteReviewRunStore implements ObsoleteReviewRunSt
                 current.repositoryId(),
                 current.pullRequestNumber(),
                 scope.currentRunId().value(),
-                current.headSha(),
-                Timestamp.from(scope.currentRequestedAt()));
+                current.headSha());
     }
 
     @Override

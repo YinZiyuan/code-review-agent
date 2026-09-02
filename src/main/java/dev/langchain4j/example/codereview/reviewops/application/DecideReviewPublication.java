@@ -1,7 +1,10 @@
 package dev.langchain4j.example.codereview.reviewops.application;
 
 import dev.langchain4j.example.codereview.reviewops.application.jobs.DurableJobRequest;
+import dev.langchain4j.example.codereview.reviewops.application.jobs.OperationFence;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingPublicationPolicy;
+import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprint;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationPolicySnapshot;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRun;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunId;
@@ -10,6 +13,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.ReviewRunState;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 public final class DecideReviewPublication {
@@ -33,7 +37,12 @@ public final class DecideReviewPublication {
     }
 
     public DecisionOutcome decide(ReviewRunId id) {
+        return decide(id, OperationFence.unfenced());
+    }
+
+    public DecisionOutcome decide(ReviewRunId id, OperationFence fence) {
         Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(fence, "fence");
         ReviewRunRepository.StoredReviewRun stored = reviewRuns.find(id).orElse(null);
         if (stored == null) {
             return DecisionOutcome.NOT_FOUND;
@@ -51,7 +60,10 @@ public final class DecideReviewPublication {
                     "publication policy snapshot must match the review configuration");
         }
 
-        run.acceptPublicationDecisions(policy.decide(run.findings(), policySnapshot));
+        Map<FindingFingerprint, PublicationDecision> decisions =
+                policy.decide(run.findings(), policySnapshot);
+        fence.requireCurrent();
+        run.acceptPublicationDecisions(decisions);
         Instant decidedAt = run.attempts().get(run.attempts().size() - 1)
                 .endedAt()
                 .orElseThrow(() -> new IllegalStateException(
@@ -62,6 +74,7 @@ public final class DecideReviewPublication {
                 run.configuration().maxReviewAttempts(),
                 decidedAt,
                 "publish-review:" + run.id().value());
+        fence.requireCurrent();
         mutations.saveAndEnqueue(
                 run, stored.version(), List.of(publication), List.of());
         return DecisionOutcome.DECIDED;
