@@ -1,11 +1,15 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudgetProperties;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
 import dev.langchain4j.example.codereview.reviewops.application.github.StaleReviewRevisionException;
 import dev.langchain4j.example.codereview.reviewops.domain.AuthoritativeRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
+import dev.langchain4j.example.codereview.workspace.ReviewWorkspace;
+import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -104,6 +108,8 @@ class GitHubArchiveSourceProviderTest {
         assertThat(Files.readString(sourceRoot.resolve("README.md"))).isEqualTo("review fixture");
         assertThat(sourceRoot.resolve("octo-repo-0123456")).doesNotExist();
         assertThat(Files.isSymbolicLink(sourceRoot.resolve("src/Main.java"))).isFalse();
+        assertThat(cleanupRoot.resolve(ReviewWorkspace.MARKER)).exists();
+        assertThat(cleanupRoot.resolve("archive.zip")).hasBinaryContent(archive);
 
         prepared.close();
         prepared.close();
@@ -414,7 +420,29 @@ class GitHubArchiveSourceProviderTest {
             long maxExpandedBytes,
             int maxEntries) {
         return new GitHubArchiveSourceProvider(
-                client, tempParent, maxDiffBytes, maxArchiveBytes, maxExpandedBytes, maxEntries);
+                client,
+                new ReviewWorkspaceFactory(tempParent),
+                budget(maxDiffBytes, maxArchiveBytes, maxExpandedBytes, maxEntries));
+    }
+
+    private static ReviewWorkBudget budget(
+            long maxDiffBytes,
+            long maxArchiveBytes,
+            long maxExpandedBytes,
+            int maxEntries) {
+        ReviewWorkBudget base = new ReviewWorkBudgetProperties(
+                null, null, null, null, null, null).toBudget();
+        ReviewWorkBudget.InputLimits input = base.input();
+        return new ReviewWorkBudget(base.version(), new ReviewWorkBudget.InputLimits(
+                maxDiffBytes,
+                input.maxChangedFiles(),
+                input.maxJavaSourceFiles(),
+                input.maxJavaSourceBytes(),
+                maxArchiveBytes,
+                maxExpandedBytes,
+                maxEntries,
+                input.maxSnippets(),
+                input.maxFindings()), base.prompt(), base.process(), base.stages(), base.workspace());
     }
 
     private static Remote remote() {

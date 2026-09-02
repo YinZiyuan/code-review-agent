@@ -44,6 +44,18 @@ interface WorkspaceTreeDeleter {
             }
         });
         Files.deleteIfExists(marker);
-        Files.delete(root);
+        try {
+            Files.delete(root);
+        } catch (IOException rootFailure) {
+            if (Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isSymbolicLink(root)) {
+                try {
+                    Files.writeString(marker, ReviewWorkspace.MARKER_CONTENT);
+                } catch (IOException markerFailure) {
+                    rootFailure.addSuppressed(markerFailure);
+                }
+            }
+            throw rootFailure;
+        }
     }
 }

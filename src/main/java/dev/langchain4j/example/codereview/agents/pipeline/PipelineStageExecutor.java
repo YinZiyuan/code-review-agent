@@ -5,11 +5,12 @@ import io.micrometer.core.instrument.Timer;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,10 +32,17 @@ public final class PipelineStageExecutor implements AutoCloseable {
     }
 
     private final MeterRegistry metrics;
-    private final ExecutorService executor;
+    private final ThreadPoolExecutor executor;
 
     public PipelineStageExecutor(MeterRegistry metrics) {
+        this(metrics, 4, 16);
+    }
+
+    PipelineStageExecutor(MeterRegistry metrics, int workers, int queueCapacity) {
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        if (workers <= 0 || queueCapacity <= 0) {
+            throw new IllegalArgumentException("stage capacity must be positive");
+        }
         AtomicInteger threadNumber = new AtomicInteger();
         ThreadFactory threads = runnable -> {
             Thread thread = new Thread(
@@ -42,7 +50,14 @@ public final class PipelineStageExecutor implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         };
-        this.executor = Executors.newFixedThreadPool(4, threads);
+        this.executor = new ThreadPoolExecutor(
+                workers,
+                workers,
+                0,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),
+                threads,
+                new ThreadPoolExecutor.AbortPolicy());
     }
 
     public <T> T run(Stage stage, Duration timeout, Supplier<T> work) {
@@ -51,8 +66,14 @@ public final class PipelineStageExecutor implements AutoCloseable {
         Objects.requireNonNull(work, "work");
         long started = System.nanoTime();
         String outcome = "failure";
-        Future<T> future = executor.submit(work::get);
+        Future<T> future = null;
         try {
+            try {
+                future = executor.submit(work::get);
+            } catch (RejectedExecutionException capacity) {
+                outcome = "capacity";
+                throw new IllegalStateException("review stage capacity exhausted");
+            }
             T result = future.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
             outcome = "success";
             return result;
@@ -86,5 +107,9 @@ public final class PipelineStageExecutor implements AutoCloseable {
     @Override
     public void close() {
         executor.shutdownNow();
+    }
+
+    int queuedTaskCount() {
+        return executor.getQueue().size();
     }
 }

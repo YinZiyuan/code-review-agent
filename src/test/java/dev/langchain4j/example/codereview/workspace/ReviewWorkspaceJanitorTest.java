@@ -6,12 +6,14 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ReviewWorkspaceJanitorTest {
 
@@ -77,5 +79,21 @@ class ReviewWorkspaceJanitorTest {
             Files.deleteIfExists(outside.resolve("valuable.txt"));
             Files.deleteIfExists(outside);
         }
+    }
+
+    @Test
+    void aLaterProcessRecoversAMarkerLeftByCleanupFailure() throws Exception {
+        ReviewWorkspace failed = new ReviewWorkspaceFactory(
+                temporaryParent, root -> { throw new IOException("disk busy"); }).create();
+        Path root = failed.root();
+        assertThatThrownBy(failed::close).isInstanceOf(ReviewWorkspaceCleanupException.class);
+        Files.setLastModifiedTime(root.resolve(ReviewWorkspace.MARKER),
+                FileTime.from(NOW.minus(Duration.ofDays(2))));
+
+        ReviewWorkspaceJanitor restarted = new ReviewWorkspaceJanitor(
+                temporaryParent, Duration.ofHours(24), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(restarted.cleanStale()).isEqualTo(1);
+        assertThat(root).doesNotExist();
     }
 }

@@ -31,7 +31,8 @@ RUN useradd --system --create-home --uid 10001 appuser
 WORKDIR /app
 COPY --from=spotbugs /opt/spotbugs /opt/spotbugs
 COPY --from=build /workspace/target/code-review-agent-1.0.0.jar /app/code-review-agent.jar
-ENV PATH="/opt/spotbugs/bin:${PATH}"
+ENV PATH="/opt/spotbugs/bin:${PATH}" \
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=45.0 -XX:MaxDirectMemorySize=128m -XX:+ExitOnOutOfMemoryError"
 USER appuser
 
 EXPOSE 8080

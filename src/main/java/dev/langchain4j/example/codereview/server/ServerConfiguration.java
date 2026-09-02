@@ -2,6 +2,7 @@ package dev.langchain4j.example.codereview.server;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.reviewops.application.DecideReviewPublication;
 import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun;
@@ -52,6 +53,7 @@ import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.J
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresObsoleteReviewRunStore;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.TransactionalReviewRunAdmissionStore;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.TransactionalReviewRunMutationStore;
+import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.actuate.health.AdditionalHealthEndpointPath;
@@ -296,14 +298,12 @@ public class ServerConfiguration {
     }
 
     @Bean
-    ReviewSourceProvider reviewSourceProvider(GitHubRestClient gitHubRestClient) {
+    ReviewSourceProvider reviewSourceProvider(
+            GitHubRestClient gitHubRestClient,
+            ReviewWorkspaceFactory workspaceFactory,
+            ReviewWorkBudget budget) {
         return new GitHubArchiveSourceProvider(
-                gitHubRestClient,
-                Path.of(System.getProperty("java.io.tmpdir")),
-                5L * 1024 * 1024,
-                100L * 1024 * 1024,
-                500L * 1024 * 1024,
-                50_000);
+                gitHubRestClient, workspaceFactory, budget);
     }
 
     @Bean

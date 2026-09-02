@@ -39,13 +39,24 @@ application_classpath="$fixture_dir/application/BOOT-INF/classes:$fixture_dir/ap
 printf "%s\n" \
     "import dev.langchain4j.example.codereview.analyzer.SourceCompiler;" \
     "import dev.langchain4j.example.codereview.analyzer.SpotBugsAnalyzer;" \
+    "import dev.langchain4j.example.codereview.analyzer.BoundedProcessRunner;" \
     "import dev.langchain4j.example.codereview.config.AgentConfig;" \
+    "import dev.langchain4j.example.codereview.config.ReviewWorkBudget;" \
+    "import dev.langchain4j.example.codereview.config.ReviewWorkBudgetProperties;" \
+    "import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;" \
+    "import io.micrometer.core.instrument.simple.SimpleMeterRegistry;" \
     "import java.nio.file.Path;" \
     "import java.util.List;" \
     "public final class ReviewRuntimeSmoke {" \
     "    public static void main(String[] args) {" \
+    "        ReviewWorkBudget budget = new ReviewWorkBudgetProperties(" \
+    "                null, null, null, null, null, null).toBudget();" \
+    "        BoundedProcessRunner process = new BoundedProcessRunner(new SimpleMeterRegistry());" \
     "        SpotBugsAnalyzer analyzer = new SpotBugsAnalyzer(" \
-    "                new AgentConfig().spotBugsRunner(), new SourceCompiler());" \
+    "                new AgentConfig().spotBugsRunner(process, budget)," \
+    "                new SourceCompiler(process::run, budget)," \
+    "                new ReviewWorkspaceFactory(Path.of(System.getProperty(\"java.io.tmpdir\")))," \
+    "                budget);" \
     "        if (!analyzer.analyzeWithSource(List.of(), Path.of(args[0])).ran()) {" \
     "            throw new AssertionError(\"compilable fixture took the SpotBugs skip path\");" \
     "        }" \

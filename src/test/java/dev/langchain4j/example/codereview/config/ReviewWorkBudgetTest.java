@@ -4,6 +4,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Bean;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import java.time.Duration;
 
@@ -36,6 +39,7 @@ class ReviewWorkBudgetTest {
             assertThat(budget.prompt().maxDiffTokens()).isEqualTo(4_096);
             assertThat(budget.process().maxOutputBytes()).isEqualTo(64 * 1024);
             assertThat(budget.process().compilerMaxHeapMb()).isEqualTo(256);
+            assertThat(budget.process().analyzerMaxHeapMb()).isEqualTo(256);
             assertThat(budget.stages().reviewModel()).isEqualTo(Duration.ofSeconds(60));
             assertThat(budget.workspace().staleAge()).isEqualTo(Duration.ofHours(24));
             assertThat(budget.configurationHash()).matches("[0-9a-f]{64}");
@@ -75,7 +79,7 @@ class ReviewWorkBudgetTest {
                 "v1",
                 new ReviewWorkBudget.InputLimits(1, 1, 1, 1, 1, 1, 1, 1, 1),
                 new ReviewWorkBudget.PromptLimits(10, 100, 100),
-                new ReviewWorkBudget.ProcessLimits(1, 1),
+                new ReviewWorkBudget.ProcessLimits(1, 1, 1),
                 positiveDeadlines(),
                 new ReviewWorkBudget.WorkspaceLimits(Duration.ofSeconds(1))))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -85,7 +89,7 @@ class ReviewWorkBudgetTest {
                 "v1",
                 new ReviewWorkBudget.InputLimits(1, 1, 1, 1, 1, 1, 1, 0, 1),
                 new ReviewWorkBudget.PromptLimits(1, 2, 1),
-                new ReviewWorkBudget.ProcessLimits(1, 1),
+                new ReviewWorkBudget.ProcessLimits(1, 1, 1),
                 positiveDeadlines(),
                 new ReviewWorkBudget.WorkspaceLimits(Duration.ofSeconds(1))))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -114,5 +118,9 @@ class ReviewWorkBudgetTest {
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(ReviewWorkBudgetProperties.class)
     static class TestConfiguration {
+        @Bean
+        MeterRegistry meterRegistry() {
+            return new SimpleMeterRegistry();
+        }
     }
 }

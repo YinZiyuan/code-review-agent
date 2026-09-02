@@ -60,7 +60,9 @@ public class AgentConfig {
             BoundedProcessRunner.Result result = processRunner.run(new BoundedProcessRunner.Request(
                     BoundedProcessRunner.ProcessKind.SPOTBUGS,
                     java.util.List.of(
-                            "spotbugs", "-textui", "-quiet", "-xml", "-output",
+                            "spotbugs", "-maxHeap",
+                            Integer.toString(budget.process().analyzerMaxHeapMb()),
+                            "-textui", "-quiet", "-xml", "-output",
                             output.toString(), classesDir.toString()),
                     classesDir.getParent(),
                     budget.stages().spotbugs(),

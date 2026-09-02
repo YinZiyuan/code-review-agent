@@ -61,6 +61,7 @@ public final class ReviewWorkspaceJanitor {
         try {
             return Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS)
                     && !Files.isSymbolicLink(marker)
+                    && Files.size(marker) == ReviewWorkspace.MARKER_CONTENT.length()
                     && Files.readString(marker).equals(ReviewWorkspace.MARKER_CONTENT)
                     && Files.getLastModifiedTime(marker).toInstant()
                     .isBefore(Instant.now(clock).minus(staleAge));

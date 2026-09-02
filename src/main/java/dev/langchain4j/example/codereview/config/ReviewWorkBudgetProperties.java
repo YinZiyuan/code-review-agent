@@ -17,7 +17,7 @@ public record ReviewWorkBudgetProperties(
         Input resolvedInput = input == null ? new Input(null, null, null, null, null, null,
                 null, null, null) : input;
         Prompt resolvedPrompt = prompt == null ? new Prompt(null, null, null) : prompt;
-        Process resolvedProcess = process == null ? new Process(null, null) : process;
+        Process resolvedProcess = process == null ? new Process(null, null, null) : process;
         Stages resolvedStages = stages == null
                 ? new Stages(null, null, null, null, null, null) : stages;
         Workspace resolvedWorkspace = workspace == null ? new Workspace(null) : workspace;
@@ -68,11 +68,13 @@ public record ReviewWorkBudgetProperties(
         }
     }
 
-    public record Process(Integer maxOutputBytes, Integer compilerMaxHeapMb) {
+    public record Process(
+            Integer maxOutputBytes, Integer compilerMaxHeapMb, Integer analyzerMaxHeapMb) {
         ReviewWorkBudget.ProcessLimits toLimits() {
             return new ReviewWorkBudget.ProcessLimits(
                     defaultValue(maxOutputBytes, 64 * 1024),
-                    defaultValue(compilerMaxHeapMb, 256));
+                    defaultValue(compilerMaxHeapMb, 256),
+                    defaultValue(analyzerMaxHeapMb, 256));
         }
     }
 

@@ -45,4 +45,10 @@ public class ReviewWorkBudgetConfiguration {
     ReviewWorkspaceFactory reviewWorkspaceFactory() {
         return new ReviewWorkspaceFactory(Path.of(System.getProperty("java.io.tmpdir")));
     }
+
+    @Bean
+    ReviewWorkBudgetMetrics reviewWorkBudgetMetrics(
+            ReviewWorkBudget budget, MeterRegistry metrics) {
+        return new ReviewWorkBudgetMetrics(budget, metrics);
+    }
 }

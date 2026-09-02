@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:17-alpine
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 128
     environment:
       POSTGRES_DB: code_review
       POSTGRES_USER: ${SPRING_DATASOURCE_USERNAME}
@@ -31,6 +34,9 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.0"
+    pids_limit: 256
 
 volumes:
   review-data:

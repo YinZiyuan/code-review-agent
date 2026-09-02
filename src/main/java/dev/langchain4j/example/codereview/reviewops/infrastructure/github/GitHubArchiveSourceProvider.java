@@ -1,9 +1,12 @@
 package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.reviewops.application.github.GitHubFailureException;
 import dev.langchain4j.example.codereview.reviewops.application.github.PreparedReviewSource;
 import dev.langchain4j.example.codereview.reviewops.application.github.ReviewSourceProvider;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
+import dev.langchain4j.example.codereview.workspace.ReviewWorkspace;
+import dev.langchain4j.example.codereview.workspace.ReviewWorkspaceFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -13,17 +16,13 @@ import java.nio.ByteOrder;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -41,7 +40,7 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
     private static final int MAX_ENTRY_DEPTH = 64;
 
     private final GitHubRestClient gitHub;
-    private final Path temporaryParent;
+    private final ReviewWorkspaceFactory workspaceFactory;
     private final long maxDiffBytes;
     private final long maxArchiveBytes;
     private final long maxExpandedBytes;
@@ -49,15 +48,16 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
 
     public GitHubArchiveSourceProvider(
             GitHubRestClient gitHub,
-            Path temporaryParent,
-            long maxDiffBytes,
-            long maxArchiveBytes,
-            long maxExpandedBytes,
-            int maxEntries
+            ReviewWorkspaceFactory workspaceFactory,
+            ReviewWorkBudget budget
     ) {
         this.gitHub = Objects.requireNonNull(gitHub, "gitHub");
-        this.temporaryParent = Objects.requireNonNull(temporaryParent, "temporaryParent")
-                .toAbsolutePath().normalize();
+        this.workspaceFactory = Objects.requireNonNull(workspaceFactory, "workspaceFactory");
+        Objects.requireNonNull(budget, "budget");
+        long maxDiffBytes = budget.input().maxDiffBytes();
+        long maxArchiveBytes = budget.input().maxArchiveBytes();
+        long maxExpandedBytes = budget.input().maxExpandedBytes();
+        int maxEntries = budget.input().maxArchiveEntries();
         requireDownloadLimit(maxDiffBytes, "maxDiffBytes");
         requireDownloadLimit(maxArchiveBytes, "maxArchiveBytes");
         if (maxExpandedBytes <= 0) {
@@ -76,36 +76,27 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
     public PreparedReviewSource prepare(PullRequestRevision revision) {
         Objects.requireNonNull(revision, "revision");
         GitHubRestClient.validateFullCommitSha(revision.headSha());
-        requireRealTemporaryParent();
-
-        gitHub.requireExactPullRequestHead(revision);
-        String diffPatch = gitHub.pullRequestDiff(revision, maxDiffBytes);
-        byte[] archive = gitHub.repositoryArchive(revision, maxArchiveBytes);
-        gitHub.requireExactPullRequestHead(revision);
-
-        Path cleanupRoot = null;
+        ReviewWorkspace workspace = null;
         try {
+            workspace = workspaceFactory.create();
+            gitHub.requireExactPullRequestHead(revision);
+            String diffPatch = gitHub.pullRequestDiff(revision, maxDiffBytes);
+            byte[] archive = gitHub.repositoryArchive(revision, maxArchiveBytes);
+            gitHub.requireExactPullRequestHead(revision);
             ArchiveMetadata metadata = inspectCentralDirectory(archive);
-            cleanupRoot = Files.createTempDirectory(temporaryParent, "github-review-source-");
-            Path sourceRoot = cleanupRoot.resolve("source");
-            Files.createDirectory(sourceRoot);
+            Files.write(workspace.archiveFile(), archive,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            Path sourceRoot = workspace.sourceDirectory();
             extractArchive(archive, metadata, sourceRoot);
-            return new TemporaryPreparedReviewSource(diffPatch, sourceRoot, cleanupRoot);
+            return new TemporaryPreparedReviewSource(diffPatch, workspace);
         } catch (RuntimeException exception) {
-            cleanupAfterFailure(cleanupRoot, exception);
+            cleanupAfterFailure(workspace, exception);
             throw exception;
         } catch (IOException exception) {
             GitHubFailureException safeFailure =
                     transientFailure("Could not prepare GitHub review source");
-            cleanupAfterFailure(cleanupRoot, safeFailure);
+            cleanupAfterFailure(workspace, safeFailure);
             throw safeFailure;
-        }
-    }
-
-    private void requireRealTemporaryParent() {
-        if (!Files.isDirectory(temporaryParent, LinkOption.NOFOLLOW_LINKS)
-                || Files.isSymbolicLink(temporaryParent)) {
-            throw new IllegalArgumentException("temporary source parent must be a real directory");
         }
     }
 
@@ -377,38 +368,16 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
         return deterministicFailure("GitHub archive contains an unsafe entry");
     }
 
-    private static void cleanupAfterFailure(Path cleanupRoot, RuntimeException failure) {
-        if (cleanupRoot == null) {
+    private static void cleanupAfterFailure(ReviewWorkspace workspace, RuntimeException failure) {
+        if (workspace == null) {
             return;
         }
         try {
-            deleteRecursively(cleanupRoot);
-        } catch (IOException cleanupFailure) {
+            workspace.close();
+        } catch (RuntimeException cleanupFailure) {
             failure.addSuppressed(transientFailure(
                     "Could not remove failed prepared review source"));
         }
-    }
-
-    private static void deleteRecursively(Path root) throws IOException {
-        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
-            return;
-        }
-        Files.walkFileTree(root, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.delete(file);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exception) throws IOException {
-                if (exception != null) {
-                    throw exception;
-                }
-                Files.delete(dir);
-                return FileVisitResult.CONTINUE;
-            }
-        });
     }
 
     private static void requireDownloadLimit(long limit, String name) {
@@ -427,13 +396,12 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
     private static final class TemporaryPreparedReviewSource implements PreparedReviewSource {
         private final String diffPatch;
         private final Path sourceRoot;
-        private final Path cleanupRoot;
-        private final AtomicBoolean closed = new AtomicBoolean();
+        private final ReviewWorkspace workspace;
 
-        private TemporaryPreparedReviewSource(String diffPatch, Path sourceRoot, Path cleanupRoot) {
+        private TemporaryPreparedReviewSource(String diffPatch, ReviewWorkspace workspace) {
             this.diffPatch = Objects.requireNonNull(diffPatch, "diffPatch");
-            this.sourceRoot = Objects.requireNonNull(sourceRoot, "sourceRoot");
-            this.cleanupRoot = Objects.requireNonNull(cleanupRoot, "cleanupRoot");
+            this.workspace = Objects.requireNonNull(workspace, "workspace");
+            this.sourceRoot = workspace.sourceDirectory();
         }
 
         @Override
@@ -447,14 +415,10 @@ public final class GitHubArchiveSourceProvider implements ReviewSourceProvider {
         }
 
         @Override
-        public synchronized void close() {
-            if (closed.get()) {
-                return;
-            }
+        public void close() {
             try {
-                deleteRecursively(cleanupRoot);
-                closed.set(true);
-            } catch (IOException exception) {
+                workspace.close();
+            } catch (RuntimeException exception) {
                 throw transientFailure("Could not remove prepared review source");
             }
         }

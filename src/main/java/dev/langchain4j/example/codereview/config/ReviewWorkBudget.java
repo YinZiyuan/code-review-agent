@@ -104,14 +104,16 @@ public record ReviewWorkBudget(
         }
     }
 
-    public record ProcessLimits(int maxOutputBytes, int compilerMaxHeapMb) {
+    public record ProcessLimits(
+            int maxOutputBytes, int compilerMaxHeapMb, int analyzerMaxHeapMb) {
         public ProcessLimits {
             positive(maxOutputBytes, "maxOutputBytes");
             positive(compilerMaxHeapMb, "compilerMaxHeapMb");
+            positive(analyzerMaxHeapMb, "analyzerMaxHeapMb");
         }
 
         private String canonical() {
-            return maxOutputBytes + ":" + compilerMaxHeapMb;
+            return maxOutputBytes + ":" + compilerMaxHeapMb + ":" + analyzerMaxHeapMb;
         }
     }
 
