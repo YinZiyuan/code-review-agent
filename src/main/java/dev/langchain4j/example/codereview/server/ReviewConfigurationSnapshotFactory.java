@@ -76,11 +76,6 @@ public final class ReviewConfigurationSnapshotFactory {
         put(settings, "rag.rerank-top-k", rag.rerankTopK());
         put(settings, "rag.rrf-k", rag.rrfK());
 
-        CodeReviewProperties.Orchestration orchestration =
-                Objects.requireNonNull(properties.orchestration(), "orchestration");
-        put(settings, "orchestration.reviewer-timeout", orchestration.reviewerTimeout());
-        put(settings, "orchestration.parallelism", orchestration.parallelism());
-
         return new ReviewConfigurationSnapshot(
                 identity.pipelineVersion(),
                 "cfg-sha256-" + hash(settings),

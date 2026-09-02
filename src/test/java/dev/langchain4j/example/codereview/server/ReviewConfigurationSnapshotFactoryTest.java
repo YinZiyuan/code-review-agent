@@ -162,7 +162,6 @@ class ReviewConfigurationSnapshotFactoryTest {
                 new CodeReviewProperties.Rag(
                         Path.of("/cache/location-does-not-affect-review"),
                         topK, 0.4, true, 8, 4, 60),
-                new CodeReviewProperties.Orchestration(Duration.ofSeconds(60), 3),
                 new CodeReviewProperties.Eval("judge-model", 1, Path.of("samples"), Path.of("reports")));
     }
 

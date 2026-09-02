@@ -1,6 +1,7 @@
 package dev.langchain4j.example.codereview.server;
 
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
+import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
 import dev.langchain4j.example.codereview.model.ReviewResult;
 import dev.langchain4j.example.codereview.reviewops.application.PresentReviewFailure;
 import dev.langchain4j.example.codereview.reviewops.application.SettleReviewJobFailure;
@@ -118,6 +119,9 @@ class ServerReadinessTest {
         assertThat(context.getBeansOfType(ReviewOperationsMetrics.class)).hasSize(1);
         assertThat(context.getBeansOfType(ScheduledReviewOperationsMetrics.class)).hasSize(1);
         assertThat(context.getBeansOfType(ReviewOperationLogger.class)).hasSize(1);
+        ReviewWorkBudget workBudget = context.getBean(ReviewWorkBudget.class);
+        assertThat(context.getBean(ReviewWorkBudgetIdentityProvider.class).workBudgetIdentity())
+                .isEqualTo(workBudget.configurationHash());
         ReviewConfigurationSnapshot snapshot = context.getBean(ReviewConfigurationSnapshot.class);
         assertThat(snapshot.modelName()).isEqualTo("moonshot-v1-8k");
         assertThat(snapshot.configurationVersion()).matches("cfg-sha256-[0-9a-f]{64}");

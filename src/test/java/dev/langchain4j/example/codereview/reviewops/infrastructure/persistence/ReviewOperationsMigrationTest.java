@@ -106,11 +106,11 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     @Test
-    void v7DeclaresNonTransactionalConcurrentRestartSafeIndexBuilds() throws Exception {
+    void v8DeclaresNonTransactionalConcurrentRestartSafeIndexBuilds() throws Exception {
         String script = classpathText(
-                "db/migration/V7__bound_review_operations_maintenance.sql");
+                "db/migration/V8__bound_review_operations_maintenance.sql");
         String scriptConfiguration = classpathText(
-                "db/migration/V7__bound_review_operations_maintenance.sql.conf");
+                "db/migration/V8__bound_review_operations_maintenance.sql.conf");
 
         assertThat(scriptConfiguration).contains("executeInTransaction=false");
         assertThat(script)
@@ -128,7 +128,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     @Test
-    void v8MaintainsAuthoritativeRunStateEntryTimeAndCompactRollups() throws Exception {
+    void v9MaintainsAuthoritativeRunStateEntryTimeAndCompactRollups() throws Exception {
         UUID runId = UUID.randomUUID();
         Instant requestedAt = Instant.parse("2026-09-02T01:00:00Z");
         jdbcTemplate.update("""
@@ -250,13 +250,13 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     @Test
-    void v7OnlineUpgradeLetsANewWriterFinishWhileAnOlderWriterRemainsOpen() throws Exception {
-        String schema = "online_v7_" + UUID.randomUUID().toString().replace("-", "");
+    void v8OnlineUpgradeLetsANewWriterFinishWhileAnOlderWriterRemainsOpen() throws Exception {
+        String schema = "online_v8_" + UUID.randomUUID().toString().replace("-", "");
         jdbcTemplate.execute("CREATE SCHEMA " + schema);
         try {
-            var isolatedDataSource = isolatedDataSource("online-v7-writer-test");
-            Flyway v6 = flyway(isolatedDataSource, schema, "6");
-            assertThat(v6.migrate().migrationsExecuted).isEqualTo(6);
+            var isolatedDataSource = isolatedDataSource("online-v8-writer-test");
+            Flyway v7 = flyway(isolatedDataSource, schema, "7");
+            assertThat(v7.migrate().migrationsExecuted).isEqualTo(7);
             JdbcTemplate isolated = new JdbcTemplate(isolatedDataSource);
             populateMaintenanceTables(isolated, schema, 2_000);
 
@@ -267,7 +267,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 olderWriter.createStatement().execute(
                         "LOCK TABLE durable_jobs IN ROW EXCLUSIVE MODE");
 
-                Flyway latest = flyway(isolatedDataSource, schema, "7");
+                Flyway latest = flyway(isolatedDataSource, schema, "8");
                 CompletableFuture<Integer> migration = CompletableFuture.supplyAsync(
                         () -> latest.migrate().migrationsExecuted);
                 awaitMigrationStart(migration);
@@ -300,15 +300,15 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     @Test
-    void failedV7LockAcquisitionCanBeRepairedAndRetriedToValidIndexes() throws Exception {
-        String schema = "retry_v7_" + UUID.randomUUID().toString().replace("-", "");
+    void failedV8LockAcquisitionCanBeRepairedAndRetriedToValidIndexes() throws Exception {
+        String schema = "retry_v8_" + UUID.randomUUID().toString().replace("-", "");
         jdbcTemplate.execute("CREATE SCHEMA " + schema);
         try {
-            var isolatedDataSource = isolatedDataSource("retry-v7-test");
-            Flyway v6 = flyway(isolatedDataSource, schema, "6");
-            assertThat(v6.migrate().migrationsExecuted).isEqualTo(6);
+            var isolatedDataSource = isolatedDataSource("retry-v8-test");
+            Flyway v7 = flyway(isolatedDataSource, schema, "7");
+            assertThat(v7.migrate().migrationsExecuted).isEqualTo(7);
 
-            Flyway latest = flyway(isolatedDataSource, schema, "7");
+            Flyway latest = flyway(isolatedDataSource, schema, "8");
             CompletableFuture<Integer> failedMigration;
             try (var blocker = DriverManager.getConnection(
                     POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
@@ -372,7 +372,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(5);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(6);
             assertFlywayIsValid(latest);
             assertThat(isolated.queryForObject(
                     "SELECT review_run_id FROM github_deliveries WHERE delivery_id = 'legacy-delivery'",
@@ -425,7 +425,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(4);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(5);
             assertFlywayIsValid(latest);
             assertThat(isolated.queryForObject(
                     "SELECT lease_sequence FROM durable_jobs WHERE id = ?",
@@ -476,7 +476,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                     .defaultSchema(schema)
                     .locations("classpath:db/migration")
                     .load();
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(7);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(8);
             assertFlywayIsValid(latest);
             assertThat(businessIdentityIndexDefinition(isolated, schema))
                     .contains("UNIQUE INDEX")

@@ -154,6 +154,12 @@ public class ServerConfiguration {
     }
 
     @Bean
+    ReviewWorkBudgetIdentityProvider reviewWorkBudgetIdentityProvider(
+            ReviewWorkBudget reviewWorkBudget) {
+        return reviewWorkBudget::configurationHash;
+    }
+
+    @Bean
     ReviewConfigurationSnapshot reviewConfigurationSnapshot(
             CodeReviewProperties codeReviewProperties,
             ReviewIdentityProperties identity,
