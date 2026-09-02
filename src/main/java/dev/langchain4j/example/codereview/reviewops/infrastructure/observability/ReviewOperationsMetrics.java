@@ -21,6 +21,8 @@ import java.util.function.ToDoubleFunction;
  */
 public final class ReviewOperationsMetrics {
 
+    private static final int MAX_TRANSITION_DELTAS_PER_REFRESH = 10_000;
+
     private static final List<String> JOB_STATES =
             List.of("READY", "LEASED", "SUCCEEDED", "DEAD");
     private static final List<String> RUN_STATES = List.of(
@@ -68,6 +70,8 @@ public final class ReviewOperationsMetrics {
     }
 
     public void refresh() {
+        jdbc.queryForObject("SELECT review_metric_flush(?)", Integer.class,
+                MAX_TRANSITION_DELTAS_PER_REFRESH);
         Map<RollupKey, Long> rollups = new HashMap<>();
         jdbc.queryForList("""
                         SELECT metric_name, dimension_value, metric_value

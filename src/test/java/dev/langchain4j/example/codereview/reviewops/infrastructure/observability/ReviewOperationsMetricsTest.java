@@ -28,7 +28,8 @@ class ReviewOperationsMetricsTest extends PostgresIntegrationSupport {
     void setUpMetrics() {
         jdbc = new JdbcTemplate(dataSource);
         jdbc.execute("TRUNCATE github_deliveries, outbox_events, durable_jobs, review_runs CASCADE");
-        jdbc.execute("TRUNCATE review_operations_metric_rollup");
+        jdbc.execute("TRUNCATE review_operations_metric_delta");
+        jdbc.update("UPDATE review_operations_metric_rollup SET metric_value = 0");
         registry = new SimpleMeterRegistry();
         metrics = new ReviewOperationsMetrics(
                 jdbc, registry, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofMinutes(15));

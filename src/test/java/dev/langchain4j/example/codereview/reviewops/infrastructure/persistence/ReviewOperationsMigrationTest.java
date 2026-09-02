@@ -52,7 +52,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     void clearReviewRuns() {
         jdbcTemplate = new JdbcTemplate(dataSource);
         jdbcTemplate.execute("TRUNCATE TABLE review_runs CASCADE");
-        jdbcTemplate.execute("TRUNCATE TABLE review_operations_metric_rollup");
+        jdbcTemplate.execute("TRUNCATE TABLE review_operations_metric_delta");
+        jdbcTemplate.update("UPDATE review_operations_metric_rollup SET metric_value = 0");
     }
 
     @Test
@@ -65,7 +66,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                 "finding_feedback",
                 "durable_jobs",
                 "outbox_events",
-                "review_operations_metric_rollup");
+                "review_operations_metric_rollup",
+                "review_operations_metric_delta");
         assertThat(businessIdentityIndexDefinition(jdbcTemplate, "public"))
                 .contains("UNIQUE INDEX")
                 .contains("WHERE (state <> 'SUPERSEDED'::text)");
@@ -221,6 +223,30 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM review_operations_metric_rollup", Integer.class))
                 .isLessThanOrEqualTo(24);
+    }
+
+    @Test
+    void metricDeltaFoldClaimsOnlyTheRequestedBoundedBatch() {
+        jdbcTemplate.update("""
+                INSERT INTO review_operations_metric_delta (
+                    metric_name, dimension_value, metric_delta)
+                SELECT 'review_runs', 'REQUESTED', 1
+                FROM generate_series(1, 10005)
+                """);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT review_metric_flush(10000)", Integer.class)).isEqualTo(10_000);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM review_operations_metric_delta", Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT metric_value FROM review_operations_metric_rollup
+                WHERE metric_name = 'review_runs' AND dimension_value = 'REQUESTED'
+                """, Long.class)).isEqualTo(10_000);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT review_metric_flush(10000)", Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM review_operations_metric_delta", Integer.class)).isZero();
     }
 
     @Test
@@ -990,6 +1016,7 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
     }
 
     private long metricRollup(String metric, String dimension) {
+        jdbcTemplate.queryForObject("SELECT review_metric_flush(10000)", Integer.class);
         Long value = jdbcTemplate.queryForObject("""
                         SELECT metric_value FROM review_operations_metric_rollup
                         WHERE metric_name = ? AND dimension_value = ?
@@ -1015,7 +1042,8 @@ class ReviewOperationsMigrationTest extends PostgresIntegrationSupport {
                        AND table_type = 'BASE TABLE'
                        AND table_name IN ('github_deliveries', 'review_runs', 'review_attempts', 'review_findings',
                                           'finding_feedback', 'durable_jobs', 'outbox_events',
-                                          'review_operations_metric_rollup')
+                                          'review_operations_metric_rollup',
+                                          'review_operations_metric_delta')
                      """);
              var resultSet = statement.executeQuery()) {
             var tables = new ArrayList<String>();
