@@ -11,15 +11,25 @@ public record ServerProperties(GitHub github, Worker worker) {
             long appId,
             String privateKey,
             String webhookSecret,
-            Integer maxWebhookBytes
+            Integer maxWebhookBytes,
+            Duration connectTimeout,
+            Duration readTimeout
     ) {
         public GitHub {
             if (maxWebhookBytes == null) {
                 maxWebhookBytes = 1_048_576;
             }
+            if (connectTimeout == null) {
+                connectTimeout = Duration.ofSeconds(5);
+            }
+            if (readTimeout == null) {
+                readTimeout = Duration.ofSeconds(30);
+            }
             if (maxWebhookBytes <= 0) {
                 throw new IllegalArgumentException("maxWebhookBytes must be positive");
             }
+            requirePositive(connectTimeout, "connectTimeout");
+            requirePositive(readTimeout, "readTimeout");
         }
     }
 
@@ -79,10 +89,11 @@ public record ServerProperties(GitHub github, Worker worker) {
             }
         }
 
-        private static void requirePositive(Duration duration, String name) {
-            if (duration.isZero() || duration.isNegative()) {
-                throw new IllegalArgumentException(name + " must be positive");
-            }
+    }
+
+    private static void requirePositive(Duration duration, String name) {
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException(name + " must be positive");
         }
     }
 }

@@ -21,6 +21,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 
 import static dev.langchain4j.example.codereview.reviewops.infrastructure.github.PullRequestWebhookParser.ParseStatus.IGNORED;
@@ -197,7 +198,8 @@ class GitHubWebhookControllerTest {
 
         @Bean
         ServerProperties serverProperties() {
-            return new ServerProperties(new ServerProperties.GitHub(0L, "", "", 32), null);
+            return new ServerProperties(new ServerProperties.GitHub(
+                    0L, "", "", 32, Duration.ofSeconds(5), Duration.ofSeconds(30)), null);
         }
 
         @Bean

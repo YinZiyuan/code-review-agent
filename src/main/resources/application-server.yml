@@ -19,6 +19,8 @@ code-review:
       webhook-secret: ${GITHUB_WEBHOOK_SECRET}
       api-base-url: ${GITHUB_API_BASE_URL:https://api.github.com}
       max-webhook-bytes: ${GITHUB_MAX_WEBHOOK_BYTES:1048576}
+      connect-timeout: ${GITHUB_CONNECT_TIMEOUT:5s}
+      read-timeout: ${GITHUB_READ_TIMEOUT:30s}
     worker:
       poll-interval: 1s
       batch-size: 10

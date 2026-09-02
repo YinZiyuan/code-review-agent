@@ -2,7 +2,6 @@ package dev.langchain4j.example.codereview.reviewops.infrastructure.github;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.reviewops.application.github.VerifiedPullRequestEvent;
-import dev.langchain4j.example.codereview.server.ServerProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -155,10 +154,8 @@ class PullRequestWebhookParserTest {
     }
 
     private static PullRequestWebhookParser parserWithLimit(int maxWebhookBytes) {
-        ServerProperties.GitHub properties = new ServerProperties.GitHub(
-                0L, "", "", maxWebhookBytes);
         Clock clock = Clock.fixed(OBSERVED_AT, ZoneOffset.UTC);
-        return new PullRequestWebhookParser(new ObjectMapper(), properties, clock);
+        return new PullRequestWebhookParser(new ObjectMapper(), maxWebhookBytes, clock);
     }
 
     private static byte[] interestedPayload(String action) {

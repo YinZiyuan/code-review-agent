@@ -46,6 +46,28 @@ class ApplicationModeTest {
     }
 
     @Test
+    void bindsPositiveGitHubHttpDeadlines() {
+        contextRunner.withPropertyValues(
+                        "code-review.server.github.connect-timeout=750ms",
+                        "code-review.server.github.read-timeout=3s")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    ServerProperties.GitHub github =
+                            context.getBean(ServerProperties.class).github();
+                    assertThat(github.connectTimeout()).isEqualTo(Duration.ofMillis(750));
+                    assertThat(github.readTimeout()).isEqualTo(Duration.ofSeconds(3));
+                });
+    }
+
+    @Test
+    void rejectsUnboundedGitHubHttpDeadlines() {
+        contextRunner.withPropertyValues("code-review.server.github.connect-timeout=0s")
+                .run(context -> assertThat(context).hasFailed());
+        contextRunner.withPropertyValues("code-review.server.github.read-timeout=0s")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void bindsBoundedWorkerLifecycleConfiguration() {
         contextRunner.withPropertyValues(
                         "code-review.server.worker.poll-interval=2s",

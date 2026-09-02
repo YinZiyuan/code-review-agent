@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import dev.langchain4j.example.codereview.reviewops.application.github.VerifiedPullRequestEvent;
-import dev.langchain4j.example.codereview.server.ServerProperties;
 
 import java.io.IOException;
 import java.time.Clock;
@@ -24,20 +23,22 @@ public final class PullRequestWebhookParser {
     private final int maxWebhookBytes;
     private final Clock clock;
 
-    public PullRequestWebhookParser(ObjectMapper objectMapper, ServerProperties.GitHub githubProperties) {
-        this(objectMapper, githubProperties, Clock.systemUTC());
+    public PullRequestWebhookParser(ObjectMapper objectMapper, int maxWebhookBytes) {
+        this(objectMapper, maxWebhookBytes, Clock.systemUTC());
     }
 
     public PullRequestWebhookParser(
             ObjectMapper objectMapper,
-            ServerProperties.GitHub githubProperties,
+            int maxWebhookBytes,
             Clock clock
     ) {
+        if (maxWebhookBytes <= 0) {
+            throw new IllegalArgumentException("maxWebhookBytes must be positive");
+        }
         this.objectReader = Objects.requireNonNull(objectMapper, "objectMapper must not be null")
                 .reader()
                 .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-        this.maxWebhookBytes = Objects.requireNonNull(
-                githubProperties, "githubProperties must not be null").maxWebhookBytes();
+        this.maxWebhookBytes = maxWebhookBytes;
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 

@@ -14,6 +14,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -50,6 +51,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -59,7 +65,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ExtendWith(OutputCaptureExtension.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "code-review.runtime=server",
-        "code-review.server.worker.poll-interval=1h",
+        "code-review.server.worker.poll-interval=365d",
         "code-review.server.worker.batch-size=1",
         "code-review.server.worker.recovery-batch-size=2",
         "code-review.server.worker.lease-duration=30s",
@@ -67,6 +73,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "code-review.server.worker.initial-backoff=10ms",
         "code-review.server.worker.max-backoff=10ms",
         "code-review.server.worker.jitter-ratio=0",
+        "code-review.server.github.connect-timeout=200ms",
+        "code-review.server.github.read-timeout=250ms",
         "management.endpoints.web.exposure.include=health,metrics"
 })
 @Import(GitHubReviewLoopE2ETest.DeterministicReviewerConfiguration.class)
@@ -214,6 +222,55 @@ class GitHubReviewLoopE2ETest {
     }
 
     @Test
+    @Timeout(value = 8, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void stalledGitHubCallBecomesTransientAndDoesNotBlockReadinessOrTheNextJob()
+            throws Exception {
+        FAKE_GITHUB.hangNextPullRequestMetadataResponse();
+        byte[] payload = openedPayload("delivery-github-timeout");
+        assertThat(postWebhook(payload, "delivery-github-timeout", signature(payload)))
+                .isEqualTo(202);
+        jdbcTemplate.update("""
+                UPDATE durable_jobs
+                SET next_attempt_at = now() + interval '1 hour'
+                WHERE job_type = 'SUPERSEDE_OBSOLETE_RUNS'
+                """);
+        jdbcTemplate.update("""
+                UPDATE durable_jobs
+                SET next_attempt_at = now() - interval '1 millisecond'
+                WHERE job_type = 'REVIEW_EXECUTION'
+                """);
+
+        CompletableFuture<ReviewJobWorker.WorkerCycleResult> timeoutCycle =
+                CompletableFuture.supplyAsync(worker::runOnce);
+        assertThat(FAKE_GITHUB.awaitHangingRequest()).isTrue();
+        assertThat(getStatus("/actuator/health/readiness")).isEqualTo(200);
+        assertThat(timeoutCycle.get(2, TimeUnit.SECONDS).retried()).isOne();
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT last_failure_class FROM durable_jobs
+                WHERE job_type = 'REVIEW_EXECUTION'
+                """, String.class)).isEqualTo("TRANSIENT");
+        jdbcTemplate.update("""
+                UPDATE durable_jobs
+                SET next_attempt_at = now() + interval '1 hour'
+                WHERE job_type = 'REVIEW_EXECUTION'
+                """);
+        jdbcTemplate.update("""
+                UPDATE durable_jobs
+                SET next_attempt_at = now() - interval '1 millisecond'
+                WHERE job_type = 'SUPERSEDE_OBSOLETE_RUNS'
+                """);
+
+        ReviewJobWorker.WorkerCycleResult laterCycle = worker.runOnce();
+
+        assertThat(laterCycle.succeeded()).isOne();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT state FROM durable_jobs
+                WHERE job_type = 'SUPERSEDE_OBSOLETE_RUNS'
+                """, String.class)).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
     void publicationRetryAfterFirstCommentDoesNotDuplicateTheConfirmedArtifact()
             throws Exception {
         FAKE_GITHUB.failSecondCommentCreateOnce();
@@ -343,6 +400,13 @@ class GitHubReviewLoopE2ETest {
         return connection.getResponseCode();
     }
 
+    private int getStatus(String path) throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) URI.create(
+                "http://localhost:" + port + path).toURL().openConnection();
+        connection.setRequestMethod("GET");
+        return connection.getResponseCode();
+    }
+
     private static byte[] openedPayload(String marker) {
         return ("""
                 {"action":"opened","installation":{"id":41},"repository":{"id":73,"full_name":"octo/repo","clone_url":"https://github.com/octo/repo.git"},"number":12,"pull_request":{"head":{"sha":"%s"}},"marker":"%s"}
@@ -425,6 +489,7 @@ class GitHubReviewLoopE2ETest {
                 """;
 
         private final HttpServer server;
+        private final ExecutorService executor;
         private final AtomicLong ids = new AtomicLong(900);
         private final List<Check> checks = new ArrayList<>();
         private final List<Comment> comments = new ArrayList<>();
@@ -433,15 +498,24 @@ class GitHubReviewLoopE2ETest {
         private String authoritativeHead = HEAD_SHA;
         private int checkMutationCount;
         private int failedCommentAttempt = -1;
+        private long pullRequestMetadataDelayMillis;
+        private CountDownLatch hangingRequest = new CountDownLatch(0);
 
-        private FakeGitHub(HttpServer server) {
+        private FakeGitHub(HttpServer server, ExecutorService executor) {
             this.server = server;
+            this.executor = executor;
         }
 
         static FakeGitHub start() {
             try {
                 HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-                FakeGitHub fixture = new FakeGitHub(server);
+                ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+                    Thread thread = new Thread(runnable, "fake-github-http");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+                server.setExecutor(executor);
+                FakeGitHub fixture = new FakeGitHub(server, executor);
                 server.createContext("/", fixture::handle);
                 server.start();
                 return fixture;
@@ -459,6 +533,8 @@ class GitHubReviewLoopE2ETest {
             authoritativeHead = HEAD_SHA;
             checkMutationCount = 0;
             failedCommentAttempt = -1;
+            pullRequestMetadataDelayMillis = 0;
+            hangingRequest = new CountDownLatch(0);
         }
 
         String baseUrl() {
@@ -493,6 +569,19 @@ class GitHubReviewLoopE2ETest {
             authoritativeHead = headSha;
         }
 
+        synchronized void hangNextPullRequestMetadataResponse() {
+            pullRequestMetadataDelayMillis = 3_000;
+            hangingRequest = new CountDownLatch(1);
+        }
+
+        boolean awaitHangingRequest() throws InterruptedException {
+            CountDownLatch request;
+            synchronized (this) {
+                request = hangingRequest;
+            }
+            return request.await(1, TimeUnit.SECONDS);
+        }
+
         private void handle(HttpExchange exchange) throws IOException {
             byte[] body = exchange.getRequestBody().readAllBytes();
             String method = exchange.getRequestMethod();
@@ -513,9 +602,24 @@ class GitHubReviewLoopE2ETest {
                     respond(exchange, 200, DIFF.getBytes(StandardCharsets.UTF_8),
                             "application/vnd.github.diff");
                 } else {
+                    long delayMillis;
                     String head;
                     synchronized (this) {
+                        delayMillis = pullRequestMetadataDelayMillis;
+                        pullRequestMetadataDelayMillis = 0;
+                        if (delayMillis > 0) {
+                            hangingRequest.countDown();
+                        }
                         head = authoritativeHead;
+                    }
+                    if (delayMillis > 0) {
+                        try {
+                            Thread.sleep(delayMillis);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            exchange.close();
+                            return;
+                        }
                     }
                     respond(exchange, 200, Map.of("head", Map.of("sha", head)));
                 }
@@ -631,6 +735,7 @@ class GitHubReviewLoopE2ETest {
         @Override
         public void close() {
             server.stop(0);
+            executor.shutdownNow();
         }
 
         record Check(String id, String headSha, String externalId) {

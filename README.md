@@ -125,6 +125,11 @@ A GitHub or model outage leaves readiness up: affected durable jobs retry accord
 their bounded backoff policy. The actuator surface never exposes environment values,
 credentials, or health details.
 
+GitHub HTTP calls also have bounded deadlines. `GITHUB_CONNECT_TIMEOUT` defaults to
+`5s` and `GITHUB_READ_TIMEOUT` defaults to `30s`; both must be positive Spring duration
+values. These deadlines turn a stalled GitHub request into a transient durable-job retry
+without changing readiness.
+
 ### Signed local intake demonstration
 
 The signature boundary can be exercised without a real GitHub credential. Start a

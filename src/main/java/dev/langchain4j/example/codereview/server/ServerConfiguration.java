@@ -61,6 +61,7 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -70,6 +71,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClient;
 
 import javax.sql.DataSource;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -148,8 +150,10 @@ public class ServerConfiguration {
     @Bean
     PullRequestWebhookParser pullRequestWebhookParser(
             ObjectMapper objectMapper,
-            ServerProperties serverProperties) {
-        return new PullRequestWebhookParser(objectMapper, serverProperties.github());
+            ServerProperties serverProperties,
+            Clock clock) {
+        return new PullRequestWebhookParser(
+                objectMapper, serverProperties.github().maxWebhookBytes(), clock);
     }
 
     @Bean
@@ -237,11 +241,21 @@ public class ServerConfiguration {
     @Bean
     RestClient gitHubHttpClient(
             @Value("${code-review.server.github.api-base-url:https://api.github.com}")
-            String apiBaseUrl) {
+            String apiBaseUrl,
+            ServerProperties serverProperties) {
         if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
             throw new IllegalArgumentException("GitHub API base URL must not be blank");
         }
-        return RestClient.builder().baseUrl(apiBaseUrl).build();
+        ServerProperties.GitHub github = serverProperties.github();
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(github.connectTimeout())
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(github.readTimeout());
+        return RestClient.builder()
+                .baseUrl(apiBaseUrl)
+                .requestFactory(requestFactory)
+                .build();
     }
 
     @Bean

@@ -65,4 +65,12 @@ class ReviewOperationsArchitectureTest {
     static final ArchRule production_review_operations_does_not_depend_on_evaluation = noClasses()
             .that().resideInAPackage("..reviewops..")
             .should().dependOnClassesThat().resideInAPackage("..eval..");
+
+    @ArchTest
+    static final ArchRule infrastructure_does_not_depend_on_outer_runtime_packages = noClasses()
+            .that().resideInAPackage("..reviewops.infrastructure..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "..server..",
+                    "..cli..",
+                    "..eval..");
 }
