@@ -1,5 +1,9 @@
 -- This migration intentionally does not inherit the short request/worker statement timeout.
 -- The lock timeout remains finite so startup fails safely instead of waiting indefinitely.
+SELECT set_config(
+    'code_review.previous_statement_timeout', current_setting('statement_timeout'), false);
+SELECT set_config(
+    'code_review.previous_lock_timeout', current_setting('lock_timeout'), false);
 SET statement_timeout = '15min';
 SET lock_timeout = '2s';
 
@@ -25,5 +29,9 @@ CREATE INDEX CONCURRENTLY idx_github_deliveries_handled_retention
     ON "${flyway:defaultSchema}".github_deliveries (handled_at, delivery_id)
     WHERE handled_at IS NOT NULL;
 
-RESET lock_timeout;
-RESET statement_timeout;
+SELECT set_config(
+    'lock_timeout', current_setting('code_review.previous_lock_timeout'), false);
+SELECT set_config(
+    'statement_timeout', current_setting('code_review.previous_statement_timeout'), false);
+RESET code_review.previous_lock_timeout;
+RESET code_review.previous_statement_timeout;
