@@ -25,7 +25,8 @@ public final class ReviewConfigurationSnapshotFactory {
 
     private static final String MODEL_PREFIX = "langchain4j.open-ai.chat-model.";
     private static final Pattern CREDENTIAL_PATH = Pattern.compile(
-            "(?i)(?:^|/)[^/]*(?:token|secret|password|api[-_]?key)[=:_-][^/]*");
+            "(?i)(?:^|/)(?:[^/]*(?:token|secret|password|api[-_]?key)[=:_-][^/]*"
+                    + "|(?:sk|gh[psuo]|xox[baprs])[-_][A-Za-z0-9_-]{8,})(?:/|$)");
 
     private final Environment environment;
 
@@ -102,7 +103,7 @@ public final class ReviewConfigurationSnapshotFactory {
             if (uri.getScheme() == null || uri.getHost() == null) {
                 throw new IllegalArgumentException("model base URL must be absolute");
             }
-            String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+            String path = uri.getPath() == null ? "" : uri.getPath();
             if (uri.getRawUserInfo() != null
                     || uri.getRawQuery() != null
                     || uri.getRawFragment() != null

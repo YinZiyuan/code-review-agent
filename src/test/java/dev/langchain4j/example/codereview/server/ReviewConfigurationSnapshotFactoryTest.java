@@ -84,7 +84,8 @@ class ReviewConfigurationSnapshotFactoryTest {
         for (String endpoint : new String[]{
                 "https://user:password-secret@api.example.test/v1",
                 "https://api.example.test/v1?api_key=query-secret",
-                "https://api.example.test/v1/token=path-secret"
+                "https://api.example.test/v1/token=path-secret",
+                "https://api.example.test/v1/sk-abcdef1234567890"
         }) {
             MockEnvironment environment = modelEnvironment("kimi-k2.5", "secret-a")
                     .withProperty("langchain4j.open-ai.chat-model.base-url", endpoint);
