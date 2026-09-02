@@ -117,6 +117,7 @@ class ServerReadinessTest {
         assertThat(context.getBeansOfType(PresentReviewFailure.class)).hasSize(1);
         assertThat(context.getBeansOfType(ReviewFailurePresentationJobHandler.class)).hasSize(1);
         assertThat(context.getBeansOfType(PostgresReviewOperationsRetention.class)).hasSize(1);
+        assertThat(context.getBeansOfType(ScheduledReviewJobPoller.class)).hasSize(1);
         assertThat(context.getBeansOfType(ScheduledReviewOperationsRetention.class)).hasSize(1);
         assertThat(context.getBeansOfType(ReviewOperationsMetrics.class)).hasSize(1);
         assertThat(context.getBeansOfType(ScheduledReviewOperationsMetrics.class)).hasSize(1);
