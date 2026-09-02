@@ -207,6 +207,24 @@ public final class ReviewRun {
         settleTerminalPublicationFailure(failure, failedAt);
     }
 
+    public void recordFailedPublicationCheck(String confirmedCheckRunId) {
+        requireState(ReviewRunState.FAILED);
+        if (attempts.isEmpty()
+                || currentAttempt().state() != ReviewAttemptState.SUCCEEDED
+                || findings.stream().anyMatch(finding -> finding.publicationDecision().isEmpty())) {
+            throw new IllegalStateException(
+                    "only a failed publication may record a confirmed Check");
+        }
+        if (confirmedCheckRunId == null || confirmedCheckRunId.isBlank()) {
+            throw new IllegalArgumentException("confirmedCheckRunId must not be blank");
+        }
+        if (checkRunExternalId != null && !checkRunExternalId.equals(confirmedCheckRunId)) {
+            throw new IllegalArgumentException(
+                    "confirmedCheckRunId conflicts with recorded publication progress");
+        }
+        checkRunExternalId = confirmedCheckRunId;
+    }
+
     public void recordPublicationAuthorizationFailure(ReviewFailure failure, Instant failedAt) {
         requireState(ReviewRunState.COMPLETED);
         if (findings.stream().anyMatch(finding -> finding.publicationDecision().isEmpty())) {

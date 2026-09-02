@@ -70,7 +70,7 @@ class PublishReviewOutcomeTest {
     }
 
     @Test
-    void matchingHeadAuthorizesCompletedRunBeforeArtifactWork() {
+    void matchingHeadPublishesAndPersistsAuthorizationCheckAndCompletionInOrder() {
         ReviewRun run = completedRunWithDecision();
         RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
         RecordingMutationStore mutations = new RecordingMutationStore();
@@ -78,19 +78,21 @@ class PublishReviewOutcomeTest {
 
         PublishReviewOutcome.PublicationOutcome outcome = publisher.publish(run.id());
 
-        assertThat(outcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.AUTHORIZED);
+        assertThat(outcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
         assertThat(gateway.authoritativeCalls).isOne();
-        assertThat(gateway.checkMutations).isZero();
+        assertThat(gateway.checkMutations).isOne();
         assertThat(gateway.commentMutations).isZero();
-        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHING);
-        assertThat(mutations.progressSaveCount).isOne();
-        assertThat(mutations.progressExpectedVersion).isEqualTo(11);
-        assertThat(mutations.progressState).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHED);
+        assertThat(run.checkRunExternalId()).contains("check-123");
+        assertThat(mutations.progressSnapshots).containsExactly(
+                new ProgressSnapshot(11, ReviewRunState.PUBLISHING, null, 0),
+                new ProgressSnapshot(12, ReviewRunState.PUBLISHING, "check-123", 0),
+                new ProgressSnapshot(13, ReviewRunState.PUBLISHED, "check-123", 0));
         assertThat(mutations.atomicSaveCount).isZero();
     }
 
     @Test
-    void publishingRetryRechecksHeadAndResumesPersistedProgressWithoutReauthorizing() {
+    void publishingRetryRechecksHeadAndFinishesWithoutReauthorizing() {
         ReviewRun run = completedRunWithDecision();
         run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
         RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
@@ -99,13 +101,159 @@ class PublishReviewOutcomeTest {
         PublishReviewOutcome.PublicationOutcome outcome =
                 publisher(run, 12, mutations, gateway).publish(run.id());
 
-        assertThat(outcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.AUTHORIZED);
+        assertThat(outcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
         assertThat(gateway.authoritativeCalls).isOne();
-        assertThat(gateway.checkMutations).isZero();
+        assertThat(gateway.checkMutations).isOne();
         assertThat(gateway.commentMutations).isZero();
-        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHING);
-        assertThat(mutations.progressSaveCount).isZero();
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHED);
+        assertThat(mutations.progressSnapshots).containsExactly(
+                new ProgressSnapshot(12, ReviewRunState.PUBLISHING, "check-123", 0),
+                new ProgressSnapshot(13, ReviewRunState.PUBLISHED, "check-123", 0));
         assertThat(mutations.atomicSaveCount).isZero();
+    }
+
+    @Test
+    void partialCommentRetrySkipsConfirmedFindingAndPersistsEveryNewArtifactBeforeContinuing() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint second = new FindingFingerprint("b".repeat(64));
+        GitHubFailureException transientFailure = new GitHubFailureException(
+                GitHubFailureException.Classification.TRANSIENT,
+                "safe transient comment failure");
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.failCommentOnce(second, transientFailure);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        assertThatThrownBy(() -> publisher(run, 20, mutations, gateway).publish(run.id()))
+                .isSameAs(transientFailure);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(run.checkRunExternalId()).contains("check-123");
+        assertThat(run.commentReferences()).containsOnlyKeys(
+                new FindingFingerprint("a".repeat(64)));
+        assertThat(gateway.commentFingerprints()).containsExactly(
+                "a".repeat(64), "b".repeat(64));
+        assertThat(mutations.progressSnapshots).containsExactly(
+                new ProgressSnapshot(20, ReviewRunState.PUBLISHING, null, 0),
+                new ProgressSnapshot(21, ReviewRunState.PUBLISHING, "check-123", 0),
+                new ProgressSnapshot(22, ReviewRunState.PUBLISHING, "check-123", 1));
+
+        PublishReviewOutcome.PublicationOutcome retryOutcome =
+                publisher(run, 23, mutations, gateway).publish(run.id());
+
+        assertThat(retryOutcome).isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
+        assertThat(gateway.commentFingerprints()).containsExactly(
+                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+        assertThat(run.commentReferences()).containsOnlyKeys(
+                new FindingFingerprint("a".repeat(64)),
+                new FindingFingerprint("b".repeat(64)));
+        assertThat(mutations.progressSnapshots).endsWith(
+                new ProgressSnapshot(23, ReviewRunState.PUBLISHING, "check-123", 2),
+                new ProgressSnapshot(24, ReviewRunState.PUBLISHED, "check-123", 2));
+    }
+
+    @Test
+    void aFailedProgressSaveStopsBeforeTheNextExternalMutation() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        mutations.failOnSaveNumber(2);
+
+        assertThatThrownBy(() -> publisher(run, 30, mutations, gateway).publish(run.id()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("injected progress save failure");
+
+        assertThat(gateway.checkMutations).isOne();
+        assertThat(gateway.commentMutations).isZero();
+    }
+
+    @Test
+    void aFailedCommentProgressSaveStopsBeforeTheNextCommentMutation() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        mutations.failOnSaveNumber(3);
+
+        assertThatThrownBy(() -> publisher(run, 35, mutations, gateway).publish(run.id()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("injected progress save failure");
+
+        assertThat(gateway.checkMutations).isOne();
+        assertThat(gateway.commentFingerprints()).containsExactly("a".repeat(64));
+    }
+
+    @Test
+    void terminalCommentFailureIsPersistedBeforeNeutralCheckAndPostsNoLaterComments() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint first = new FindingFingerprint("a".repeat(64));
+        GitHubFailureException terminalFailure = new GitHubFailureException(
+                GitHubFailureException.Classification.DETERMINISTIC_INPUT,
+                "GitHub inline comment location was invalid");
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.failCommentOnce(first, terminalFailure);
+        gateway.observeRun(run);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        assertThatThrownBy(() -> publisher(run, 40, mutations, gateway).publish(run.id()))
+                .isSameAs(terminalFailure);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.finalFailure()).hasValueSatisfying(failure -> {
+            assertThat(failure.code()).isEqualTo("github_deterministic_input");
+            assertThat(failure.safeMessage())
+                    .isEqualTo("GitHub inline comment location was invalid");
+        });
+        assertThat(gateway.commentFingerprints()).containsExactly("a".repeat(64));
+        assertThat(gateway.checkRequests).hasSize(2);
+        assertThat(gateway.checkRequests.get(1).presentation().outcome())
+                .isEqualTo(GitHubPublicationGateway.CheckOutcome.NEUTRAL_SYSTEM_FAILURE);
+        assertThat(gateway.checkRequests.get(1).findings()).isEmpty();
+        assertThat(gateway.stateAtNeutralCheck).isEqualTo(ReviewRunState.FAILED);
+        assertThat(mutations.progressSnapshots).containsSubsequence(
+                new ProgressSnapshot(42, ReviewRunState.FAILED, "check-123", 0));
+    }
+
+    @Test
+    void neutralCheckCreatedAfterInitialTerminalCheckFailureIsPersistedOnFailedRun() {
+        ReviewRun run = completedRunWithDecision();
+        GitHubFailureException terminalFailure = new GitHubFailureException(
+                GitHubFailureException.Classification.AUTHORIZATION,
+                "GitHub authorization failed");
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.failCheckOnce(terminalFailure);
+        gateway.observeRun(run);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+
+        assertThatThrownBy(() -> publisher(run, 50, mutations, gateway).publish(run.id()))
+                .isSameAs(terminalFailure);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(run.checkRunExternalId()).contains("check-123");
+        assertThat(gateway.checkRequests).hasSize(2);
+        assertThat(gateway.stateAtNeutralCheck).isEqualTo(ReviewRunState.FAILED);
+        assertThat(mutations.progressSnapshots).endsWith(
+                new ProgressSnapshot(51, ReviewRunState.FAILED, null, 0),
+                new ProgressSnapshot(52, ReviewRunState.FAILED, "check-123", 0));
+    }
+
+    @Test
+    void bestEffortNeutralCheckPersistenceDoesNotMaskTheOriginalTerminalFailure() {
+        ReviewRun run = completedRunWithDecision();
+        GitHubFailureException terminalFailure = new GitHubFailureException(
+                GitHubFailureException.Classification.AUTHORIZATION,
+                "GitHub authorization failed");
+        RecordingGateway gateway = new RecordingGateway(new AuthoritativeRevision(REVIEW_SHA));
+        gateway.failCheckOnce(terminalFailure);
+        RecordingMutationStore mutations = new RecordingMutationStore();
+        mutations.failOnSaveNumber(3);
+
+        assertThatThrownBy(() -> publisher(run, 60, mutations, gateway).publish(run.id()))
+                .isSameAs(terminalFailure);
+
+        assertThat(run.state()).isEqualTo(ReviewRunState.FAILED);
+        assertThat(gateway.checkRequests).hasSize(2);
+        assertThat(mutations.progressSnapshots).containsExactly(
+                new ProgressSnapshot(60, ReviewRunState.PUBLISHING, null, 0),
+                new ProgressSnapshot(61, ReviewRunState.FAILED, null, 0));
     }
 
     @Test
@@ -265,6 +413,42 @@ class PublishReviewOutcomeTest {
         return run;
     }
 
+    private static ReviewRun completedRunWithInlineDecisions() {
+        ReviewFinding first = finding("a".repeat(64), "src/A.java", 10);
+        ReviewFinding second = finding("b".repeat(64), "src/B.java", 20);
+        ReviewRun run = ReviewRun.request(
+                ReviewRunId.newId(),
+                new PullRequestRevision(10, 20, 30, REVIEW_SHA),
+                new ReviewConfigurationSnapshot(
+                        "pipeline-v1", "configuration-v1", "model-v1", "policy-v1", 3),
+                NOW.minusSeconds(60));
+        run.startAttempt(NOW.minusSeconds(30));
+        run.completeReview(
+                List.of(first, second),
+                new ExecutionMeasurements(100, 10, 2, Map.of()),
+                NOW.minusSeconds(10));
+        run.drainEvents();
+        run.acceptPublicationDecisions(Map.of(
+                first.fingerprint(),
+                new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v1"),
+                second.fingerprint(),
+                new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v1")));
+        return run;
+    }
+
+    private static ReviewFinding finding(String fingerprint, String file, int line) {
+        return new ReviewFinding(
+                new FindingFingerprint(fingerprint),
+                new CodeLocation(file, line, true),
+                new FindingContent(
+                        FindingSeverity.WARNING,
+                        FindingCategory.STABILITY,
+                        "Issue " + file,
+                        "Description",
+                        "Suggestion"),
+                new FindingEvidence("Evidence", List.of(), "regex"));
+    }
+
     private record FixedReviewRunRepository(ReviewRun run, long version)
             implements ReviewRunRepository {
 
@@ -289,13 +473,28 @@ class PublishReviewOutcomeTest {
         private long progressExpectedVersion = -1;
         private ReviewRunState progressState;
         private int atomicSaveCount;
+        private int failOnSaveNumber = -1;
+        private final java.util.ArrayList<ProgressSnapshot> progressSnapshots =
+                new java.util.ArrayList<>();
 
         @Override
         public long saveProgress(ReviewRun run, long expectedVersion) {
             progressSaveCount++;
+            if (progressSaveCount == failOnSaveNumber) {
+                throw new IllegalStateException("injected progress save failure");
+            }
             progressExpectedVersion = expectedVersion;
             progressState = run.state();
+            progressSnapshots.add(new ProgressSnapshot(
+                    expectedVersion,
+                    run.state(),
+                    run.checkRunExternalId().orElse(null),
+                    run.commentReferences().size()));
             return expectedVersion + 1;
+        }
+
+        private void failOnSaveNumber(int saveNumber) {
+            failOnSaveNumber = saveNumber;
         }
 
         @Override
@@ -315,6 +514,15 @@ class PublishReviewOutcomeTest {
         private PullRequestRevision requestedRevision;
         private int checkMutations;
         private int commentMutations;
+        private final java.util.ArrayList<CheckRunRequest> checkRequests =
+                new java.util.ArrayList<>();
+        private final java.util.ArrayList<InlineCommentRequest> commentRequests =
+                new java.util.ArrayList<>();
+        private FindingFingerprint failCommentFingerprint;
+        private GitHubFailureException commentFailure;
+        private GitHubFailureException checkFailure;
+        private ReviewRun observedRun;
+        private ReviewRunState stateAtNeutralCheck;
 
         private RecordingGateway(AuthoritativeRevision authoritative) {
             this.authoritative = authoritative;
@@ -330,14 +538,62 @@ class PublishReviewOutcomeTest {
         @Override
         public CheckRunArtifact upsertCheck(CheckRunRequest request) {
             checkMutations++;
-            throw new AssertionError("stale runs must not mutate a Check Run");
+            checkRequests.add(request);
+            if (request.presentation().outcome()
+                    == GitHubPublicationGateway.CheckOutcome.NEUTRAL_SYSTEM_FAILURE
+                    && observedRun != null) {
+                stateAtNeutralCheck = observedRun.state();
+            }
+            if (checkFailure != null) {
+                GitHubFailureException failure = checkFailure;
+                checkFailure = null;
+                throw failure;
+            }
+            return new CheckRunArtifact(
+                    request.existingGitHubArtifactId().orElse("check-123"));
         }
 
         @Override
         public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
             commentMutations++;
-            throw new AssertionError("stale runs must not mutate inline comments");
+            commentRequests.add(request);
+            if (commentFailure != null
+                    && request.finding().fingerprint().equals(failCommentFingerprint)) {
+                GitHubFailureException failure = commentFailure;
+                commentFailure = null;
+                throw failure;
+            }
+            return new InlineCommentArtifact(
+                    request.finding().fingerprint(),
+                    "comment-" + request.finding().fingerprint().value().substring(0, 8));
         }
+
+        private void failCommentOnce(
+                FindingFingerprint fingerprint, GitHubFailureException failure) {
+            failCommentFingerprint = fingerprint;
+            commentFailure = failure;
+        }
+
+        private void failCheckOnce(GitHubFailureException failure) {
+            checkFailure = failure;
+        }
+
+        private void observeRun(ReviewRun run) {
+            observedRun = run;
+        }
+
+        private List<String> commentFingerprints() {
+            return commentRequests.stream()
+                    .map(request -> request.finding().fingerprint().value())
+                    .toList();
+        }
+    }
+
+    private record ProgressSnapshot(
+            long expectedVersion,
+            ReviewRunState state,
+            String checkId,
+            int commentCount) {
     }
 
     private static final class FailingGateway implements GitHubPublicationGateway {

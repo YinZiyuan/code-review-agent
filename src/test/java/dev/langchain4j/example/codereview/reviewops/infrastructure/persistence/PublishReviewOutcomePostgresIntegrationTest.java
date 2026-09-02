@@ -45,9 +45,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSupport {
 
@@ -135,6 +137,43 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         assertThat(gateway.authoritativeCalls).isOne();
         assertThat(gateway.checkMutations).isZero();
         assertThat(gateway.commentMutations).isZero();
+    }
+
+    @Test
+    void partialCommentSuccessIsDurableAndRetryPublishesOnlyTheMissingComment() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        reviewRuns.insert(run);
+        PartialPublicationGateway gateway = new PartialPublicationGateway();
+        PublishReviewOutcome publisher = new PublishReviewOutcome(
+                reviewRuns,
+                mutations,
+                gateway,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> publisher.publish(run.id()))
+                .isInstanceOfSatisfying(GitHubFailureException.class, failure ->
+                        assertThat(failure.classification())
+                                .isEqualTo(GitHubFailureException.Classification.TRANSIENT));
+
+        var partial = reviewRuns.find(run.id()).orElseThrow();
+        assertThat(partial.version()).isEqualTo(3);
+        assertThat(partial.reviewRun().state()).isEqualTo(ReviewRunState.PUBLISHING);
+        assertThat(partial.reviewRun().checkRunExternalId()).contains("check-901");
+        assertThat(partial.reviewRun().commentReferences()).containsOnlyKeys(
+                new FindingFingerprint("a".repeat(64)));
+
+        assertThat(publisher.publish(run.id()))
+                .isEqualTo(PublishReviewOutcome.PublicationOutcome.PUBLISHED);
+
+        var published = reviewRuns.find(run.id()).orElseThrow();
+        assertThat(published.version()).isEqualTo(5);
+        assertThat(published.reviewRun().state()).isEqualTo(ReviewRunState.PUBLISHED);
+        assertThat(published.reviewRun().commentReferences()).containsOnlyKeys(
+                new FindingFingerprint("a".repeat(64)),
+                new FindingFingerprint("b".repeat(64)));
+        assertThat(gateway.commentFingerprints).containsExactly(
+                "a".repeat(64), "b".repeat(64), "b".repeat(64));
+        assertThat(gateway.checkExistingIds).containsExactly(null, "check-901");
     }
 
     private ReviewJobWorker.WorkerCycleResult runPublicationWorker(
@@ -245,6 +284,42 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         return run;
     }
 
+    private static ReviewRun completedRunWithInlineDecisions() {
+        ReviewFinding first = inlineFinding("a".repeat(64), "src/A.java", 10);
+        ReviewFinding second = inlineFinding("b".repeat(64), "src/B.java", 20);
+        ReviewRun run = ReviewRun.request(
+                ReviewRunId.newId(),
+                new PullRequestRevision(10, 20, 30, REVIEW_SHA),
+                new ReviewConfigurationSnapshot(
+                        "pipeline-v1", "configuration-v1", "model-v1", "policy-v1", 3),
+                NOW.minusSeconds(60));
+        run.startAttempt(NOW.minusSeconds(30));
+        run.completeReview(
+                List.of(first, second),
+                new ExecutionMeasurements(100, 10, 2, Map.of()),
+                NOW.minusSeconds(10));
+        run.drainEvents();
+        run.acceptPublicationDecisions(Map.of(
+                first.fingerprint(),
+                new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v1"),
+                second.fingerprint(),
+                new PublicationDecision(PublicationTier.INLINE_COMMENT, "policy-v1")));
+        return run;
+    }
+
+    private static ReviewFinding inlineFinding(String fingerprint, String file, int line) {
+        return new ReviewFinding(
+                new FindingFingerprint(fingerprint),
+                new CodeLocation(file, line, true),
+                new FindingContent(
+                        FindingSeverity.WARNING,
+                        FindingCategory.STABILITY,
+                        "Issue",
+                        "Description",
+                        "Suggestion"),
+                new FindingEvidence("Evidence", List.of(), "regex"));
+    }
+
     private static final class RecordingGateway implements GitHubPublicationGateway {
         private int authoritativeCalls;
         private int checkMutations;
@@ -296,6 +371,38 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
             commentMutations++;
             throw new AssertionError("head lookup failure must prevent comment mutation");
+        }
+    }
+
+    private static final class PartialPublicationGateway implements GitHubPublicationGateway {
+        private final ArrayList<String> commentFingerprints = new ArrayList<>();
+        private final ArrayList<String> checkExistingIds = new ArrayList<>();
+        private boolean secondCommentFailed;
+
+        @Override
+        public AuthoritativeRevision authoritativeRevision(PullRequestRevision revision) {
+            return new AuthoritativeRevision(REVIEW_SHA);
+        }
+
+        @Override
+        public CheckRunArtifact upsertCheck(CheckRunRequest request) {
+            checkExistingIds.add(request.existingGitHubArtifactId().orElse(null));
+            return new CheckRunArtifact("check-901");
+        }
+
+        @Override
+        public InlineCommentArtifact reconcileInlineComment(InlineCommentRequest request) {
+            String fingerprint = request.finding().fingerprint().value();
+            commentFingerprints.add(fingerprint);
+            if (fingerprint.equals("b".repeat(64)) && !secondCommentFailed) {
+                secondCommentFailed = true;
+                throw new GitHubFailureException(
+                        GitHubFailureException.Classification.TRANSIENT,
+                        "safe transient comment failure");
+            }
+            return new InlineCommentArtifact(
+                    request.finding().fingerprint(),
+                    fingerprint.equals("a".repeat(64)) ? "comment-101" : "comment-102");
         }
     }
 }
