@@ -39,7 +39,7 @@ class ReviewWorkBudgetTest {
             assertThat(budget.prompt().completionReserveTokens()).isEqualTo(2_048);
             assertThat(budget.prompt().inputFramingReserveTokens()).isEqualTo(16);
             assertThat(budget.prompt().maxDiffTokens()).isEqualTo(4_096);
-            assertThat(budget.prompt().modelId()).isEqualTo("moonshot-v1-8k");
+            assertThat(budget.prompt().modelId()).isEqualTo("gpt-5.6-sol");
             assertThat(budget.prompt().tokenizerId()).isEqualTo("cl100k_base");
             assertThat(budget.prompt().tokenizerVersion()).isEqualTo("jtokkit-1.1.0");
             assertThat(budget.process().maxOutputBytes()).isEqualTo(64 * 1024);
@@ -72,7 +72,7 @@ class ReviewWorkBudgetTest {
         ReviewWorkBudget defaults = new ReviewWorkBudgetProperties(
                 null, null, null, null, null, null, null).toBudget();
         contextRunner.withPropertyValues(
-                        "langchain4j.open-ai.chat-model.model-name=moonshot-v1-8k",
+                        "langchain4j.open-ai.chat-model.model-name=gpt-5.6-sol",
                         "code-review.work-budget.execution.reviewer-timeout=7s",
                         "code-review.work-budget.execution.stage-workers=2",
                         "code-review.work-budget.execution.stage-queue-capacity=3")
@@ -82,6 +82,18 @@ class ReviewWorkBudgetTest {
                     assertThat(changed.execution()).isEqualTo(
                             new ReviewWorkBudget.ExecutionLimits(Duration.ofSeconds(7), 2, 3));
                     assertThat(changed.configurationHash()).isNotEqualTo(defaults.configurationHash());
+                });
+    }
+
+    @Test
+    void retainsTheValidatedMoonshotContractForExplicitLegacyConfiguration() {
+        contextRunner.withPropertyValues(
+                        "langchain4j.open-ai.chat-model.model-name=moonshot-v1-8k",
+                        "code-review.work-budget.prompt.model-id=moonshot-v1-8k")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(ReviewWorkBudget.class).prompt().modelId())
+                            .isEqualTo("moonshot-v1-8k");
                 });
     }
 

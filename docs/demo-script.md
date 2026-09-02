@@ -3,7 +3,7 @@
 ## 1. Build
 
 ```bash
-export MOONSHOT_API_KEY=<your-kimi-key>
+export APEMIND_API_KEY=<your-apemind-key>
 mvn -q clean package -DskipTests
 ```
 

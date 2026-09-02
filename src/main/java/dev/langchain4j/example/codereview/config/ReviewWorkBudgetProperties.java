@@ -85,7 +85,7 @@ public record ReviewWorkBudgetProperties(
 
         ReviewWorkBudget.PromptLimits toLimits() {
             return new ReviewWorkBudget.PromptLimits(
-                    defaultValue(modelId, "moonshot-v1-8k"),
+                    defaultValue(modelId, "gpt-5.6-sol"),
                     defaultValue(tokenizerId, "cl100k_base"),
                     defaultValue(tokenizerVersion, "jtokkit-1.1.0"),
                     defaultValue(maxDiffTokens, 4_096),

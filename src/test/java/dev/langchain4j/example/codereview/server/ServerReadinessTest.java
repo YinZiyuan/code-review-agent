@@ -125,7 +125,7 @@ class ServerReadinessTest {
         assertThat(context.getBean(ReviewWorkBudgetIdentityProvider.class).workBudgetIdentity())
                 .isEqualTo(workBudget.configurationHash());
         ReviewConfigurationSnapshot snapshot = context.getBean(ReviewConfigurationSnapshot.class);
-        assertThat(snapshot.modelName()).isEqualTo("moonshot-v1-8k");
+        assertThat(snapshot.modelName()).isEqualTo("gpt-5.6-sol");
         assertThat(snapshot.configurationVersion()).matches("cfg-sha256-[0-9a-f]{64}");
         assertThat(snapshot.toString())
                 .doesNotContain("readiness-webhook-secret")

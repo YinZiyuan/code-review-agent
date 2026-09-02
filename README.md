@@ -41,10 +41,15 @@ More detail: [`docs/architecture.md`](docs/architecture.md).
 ## Quick Start
 
 ```bash
-export MOONSHOT_API_KEY=<your-kimi-key>
+export APEMIND_API_KEY=<your-apemind-key>
 mvn -q clean package -DskipTests
 java -jar target/code-review-agent-1.0.0.jar review . HEAD~1
 ```
+
+The default OpenAI-compatible endpoint is ApeMind and the default reviewer is
+`gpt-5.6-sol`. Override `LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL` and
+`LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME` to use another compatible deployment.
+The legacy `MOONSHOT_API_KEY` setting remains supported.
 
 Run a smoke evaluation:
 
@@ -101,7 +106,7 @@ export GITHUB_APP_PRIVATE_KEY="$(<github-app-key-pkcs8.pem)"
 docker compose up --build
 ```
 
-For a jar deployment, export the same seven variables and run:
+For a jar deployment, export the same variables and run:
 
 ```bash
 mvn -q clean package -DskipTests

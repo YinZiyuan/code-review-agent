@@ -25,7 +25,7 @@ spring:
 langchain4j:
   open-ai:
     chat-model:
-      api-key: ${MOONSHOT_API_KEY}
+      api-key: ${APEMIND_API_KEY:${MOONSHOT_API_KEY:}}
 
 code-review:
   server:
@@ -70,7 +70,7 @@ code-review:
       pipeline-version: ${REVIEW_PIPELINE_VERSION:pipeline-v3}
       prompt-version: ${REVIEW_PROMPT_VERSION:review-prompt-v1}
       policy-version: ${REVIEW_POLICY_VERSION:policy-v1}
-      model-deployment-identity: ${REVIEW_MODEL_DEPLOYMENT_IDENTITY:moonshot-public-api-v1}
+      model-deployment-identity: ${REVIEW_MODEL_DEPLOYMENT_IDENTITY:apemind-gpt-5.6-sol-v1}
       work-budget-identity: ${REVIEW_WORK_BUDGET_IDENTITY:legacy-work-budget-v1}
       max-review-attempts: ${REVIEW_MAX_ATTEMPTS:3}
       max-inline-comments: ${REVIEW_MAX_INLINE_COMMENTS:5}

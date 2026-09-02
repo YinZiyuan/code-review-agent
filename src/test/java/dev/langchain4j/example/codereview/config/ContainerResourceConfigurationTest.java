@@ -31,10 +31,11 @@ class ContainerResourceConfigurationTest {
         Map<String, Object> app = (Map<String, Object>) services.get("app");
         Map<String, Object> environment = (Map<String, Object>) app.get("environment");
 
+        assertThat(environment.get("APEMIND_API_KEY")).isEqualTo("${APEMIND_API_KEY:-}");
         assertThat(environment.get("LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL"))
-                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL:-https://api.moonshot.cn/v1}");
+                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL:-https://sub2api.apemind.ai/v1}");
         assertThat(environment.get("LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME"))
-                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:-moonshot-v1-8k}");
+                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:-gpt-5.6-sol}");
         assertThat(environment.get("DB_POOL_ACQUISITION_TIMEOUT_MS"))
                 .isEqualTo("${DB_POOL_ACQUISITION_TIMEOUT_MS:-2000}");
         assertThat(environment.get("DB_POOL_VALIDATION_TIMEOUT_MS"))
