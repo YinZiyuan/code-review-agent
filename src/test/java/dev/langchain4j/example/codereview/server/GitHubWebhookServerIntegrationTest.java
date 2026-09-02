@@ -21,6 +21,8 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.security.KeyPairGenerator;
+import java.util.Base64;
 import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GitHubWebhookServerIntegrationTest {
 
     private static final String WEBHOOK_SECRET = "real-server's-webhook-secret";
+    private static final String PRIVATE_KEY_PEM = generatedPrivateKeyPem();
     private static final int MAX_WEBHOOK_BYTES = 4096;
     private static final String PREVIOUS_DOCKER_API_VERSION = System.getProperty("api.version");
 
@@ -43,8 +46,12 @@ class GitHubWebhookServerIntegrationTest {
     @DynamicPropertySource
     static void serverProperties(DynamicPropertyRegistry properties) {
         properties.add("code-review.runtime", () -> "server");
+        properties.add("code-review.server.github.app-id", () -> 123L);
+        properties.add("code-review.server.github.private-key", () -> PRIVATE_KEY_PEM);
         properties.add("code-review.server.github.webhook-secret", () -> WEBHOOK_SECRET);
         properties.add("code-review.server.github.max-webhook-bytes", () -> MAX_WEBHOOK_BYTES);
+        properties.add("code-review.server.worker.poll-interval", () -> "1h");
+        properties.add("langchain4j.open-ai.chat-model.api-key", () -> "test-model-key");
         properties.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         properties.add("spring.datasource.username", POSTGRES::getUsername);
         properties.add("spring.datasource.password", POSTGRES::getPassword);
@@ -156,6 +163,19 @@ class GitHubWebhookServerIntegrationTest {
             return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(payload));
         } catch (GeneralSecurityException exception) {
             throw new AssertionError(exception);
+        }
+    }
+
+    private static String generatedPrivateKeyPem() {
+        try {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+            generator.initialize(2048);
+            return "-----BEGIN PRIVATE KEY-----\n"
+                    + Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(
+                    generator.generateKeyPair().getPrivate().getEncoded())
+                    + "\n-----END PRIVATE KEY-----";
+        } catch (GeneralSecurityException exception) {
+            throw new ExceptionInInitializerError(exception);
         }
     }
 

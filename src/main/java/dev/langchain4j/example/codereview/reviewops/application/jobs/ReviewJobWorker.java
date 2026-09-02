@@ -16,6 +16,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class ReviewJobWorker {
 
     private static final String JOB_METRIC = "code.review.jobs";
+    private static final String LEASE_RECOVERY_METRIC =
+            "code.review.job.lease.recoveries";
 
     private final DurableJobQueue queue;
     private final ReviewJobDispatcher dispatcher;
@@ -50,6 +52,7 @@ public final class ReviewJobWorker {
         Instant recoveryTime = clock.instant();
         int recovered = queue.recoverExpiredLeases(
                 recoveryTime, settings.recoveryBatchSize());
+        metrics.counter(LEASE_RECOVERY_METRIC).increment(recovered);
         if (shutdown.get()) {
             return new WorkerCycleResult(recovered, 0, 0, 0, 0, 0, 0, 0, 0);
         }

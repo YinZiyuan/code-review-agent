@@ -7,7 +7,6 @@ import dev.langchain4j.example.codereview.reviewops.infrastructure.github.PullRe
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Conditional;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,7 +22,6 @@ import java.util.Objects;
 
 @RestController
 @ConditionalOnProperty(name = "code-review.runtime", havingValue = "server")
-@Conditional(WebhookSecretConfiguredCondition.class)
 public final class GitHubWebhookController {
 
     private static final String SIGNATURE_HEADER = "X-Hub-Signature-256";

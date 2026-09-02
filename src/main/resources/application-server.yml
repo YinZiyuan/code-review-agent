@@ -6,12 +6,18 @@ spring:
   flyway:
     enabled: true
 
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${MOONSHOT_API_KEY}
+
 code-review:
   server:
     github:
-      app-id: ${GITHUB_APP_ID:0}
-      private-key: ${GITHUB_APP_PRIVATE_KEY:}
-      webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
+      app-id: ${GITHUB_APP_ID}
+      private-key: ${GITHUB_APP_PRIVATE_KEY}
+      webhook-secret: ${GITHUB_WEBHOOK_SECRET}
+      api-base-url: ${GITHUB_API_BASE_URL:https://api.github.com}
       max-webhook-bytes: ${GITHUB_MAX_WEBHOOK_BYTES:1048576}
     worker:
       poll-interval: 1s
@@ -22,3 +28,13 @@ code-review:
       initial-backoff: 10s
       max-backoff: 5m
       jitter-ratio: 0.2
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  endpoint:
+    health:
+      show-components: never
+      show-details: never

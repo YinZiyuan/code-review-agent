@@ -44,8 +44,9 @@ class ReviewJobWorkerTest {
     void recoversExpiredLeasesBeforeLeasingOneBoundedBatch() {
         FakeQueue queue = new FakeQueue();
         queue.recovered = 2;
+        SimpleMeterRegistry metrics = new SimpleMeterRegistry();
         ReviewJobWorker worker = worker(queue, List.of(), zeroJitterBackoff(), new FakeHeartbeat(),
-                new SimpleMeterRegistry());
+                metrics);
 
         ReviewJobWorker.WorkerCycleResult result = worker.runOnce();
 
@@ -57,6 +58,10 @@ class ReviewJobWorkerTest {
         assertThat(queue.recoveryLimit).isEqualTo(RECOVERY_BATCH_SIZE);
         assertThat(result.recovered()).isEqualTo(2);
         assertThat(result.leased()).isZero();
+        assertThat(metrics.get("code.review.job.lease.recoveries")
+                .counter().count()).isEqualTo(2.0);
+        assertThat(metrics.get("code.review.job.lease.recoveries")
+                .counter().getId().getTags()).isEmpty();
     }
 
     @Test
@@ -326,7 +331,7 @@ class ReviewJobWorkerTest {
         assertThat(metrics.get("code.review.jobs")
                 .tags("job.type", "UNKNOWN", "outcome", "dead")
                 .counter().count()).isEqualTo(1.0);
-        assertThat(metrics.getMeters()).allSatisfy(meter ->
+        assertThat(metrics.find("code.review.jobs").counters()).allSatisfy(meter ->
                 assertThat(meter.getId().getTags())
                         .extracting(tag -> tag.getKey())
                         .containsOnly("job.type", "outcome"));

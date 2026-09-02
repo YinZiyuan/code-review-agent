@@ -1,0 +1,6 @@
+target/
+.git/
+.worktrees/
+.superpowers/
+.env
+eval/reports/

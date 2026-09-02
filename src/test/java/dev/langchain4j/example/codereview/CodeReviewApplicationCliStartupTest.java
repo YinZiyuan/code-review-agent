@@ -58,20 +58,16 @@ class CodeReviewApplicationCliStartupTest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    void serveKeepsTheServletProcessAliveAfterTomcatStarts() throws Exception {
+    void serveFailsClosedWhenRequiredServerConfigurationIsMissing() throws Exception {
         Path outputFile = temporaryDirectory.resolve("serve.log");
         Process process = startServer(outputFile);
-        try {
-            assertThat(awaitTomcatStartup(process, outputFile))
-                    .as("Server output:%n%s", Files.readString(outputFile))
-                    .isTrue();
-            assertThat(process.waitFor(3, TimeUnit.SECONDS))
-                    .as("Server output:%n%s", Files.readString(outputFile))
-                    .isFalse();
-            assertThat(process.isAlive()).as("Server output:%n%s", Files.readString(outputFile)).isTrue();
-        } finally {
-            stop(process);
-        }
+        assertThat(process.waitFor(30, TimeUnit.SECONDS))
+                .as("Server output:%n%s", Files.readString(outputFile))
+                .isTrue();
+        String output = Files.readString(outputFile);
+        assertThat(process.exitValue()).isNotZero();
+        assertThat(output).doesNotContain("Tomcat started on port");
+        assertThat(output).doesNotContain("BEGIN PRIVATE KEY");
     }
 
     @Test
@@ -127,31 +123,6 @@ class CodeReviewApplicationCliStartupTest {
                 "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"));
         removeDatasourceConfiguration(processBuilder.environment());
         return processBuilder.start();
-    }
-
-    private static boolean awaitTomcatStartup(Process process, Path outputFile) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
-        while (System.nanoTime() < deadline) {
-            if (!process.isAlive()) {
-                return false;
-            }
-            if (Files.readString(outputFile).contains("Tomcat started on port")) {
-                return true;
-            }
-            Thread.sleep(100);
-        }
-        return false;
-    }
-
-    private static void stop(Process process) throws InterruptedException {
-        if (!process.isAlive()) {
-            return;
-        }
-        process.destroy();
-        if (!process.waitFor(5, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            process.waitFor(5, TimeUnit.SECONDS);
-        }
     }
 
     private static String testClassPath() {

@@ -48,6 +48,20 @@ class ReviewOperationsArchitectureTest {
                     "org.testcontainers..");
 
     @ArchTest
+    static final ArchRule domain_does_not_depend_on_server_github_or_llm_frameworks = noClasses()
+            .that().resideInAPackage("..reviewops.domain..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "..reviewops.application.github..",
+                    "..reviewops.infrastructure.github..",
+                    "dev.langchain4j.data..",
+                    "dev.langchain4j.model..",
+                    "dev.langchain4j.rag..",
+                    "dev.langchain4j.service..",
+                    "org.kohsuke.github..",
+                    "org.springframework.jdbc..",
+                    "org.springframework.web..");
+
+    @ArchTest
     static final ArchRule production_review_operations_does_not_depend_on_evaluation = noClasses()
             .that().resideInAPackage("..reviewops..")
             .should().dependOnClassesThat().resideInAPackage("..eval..");

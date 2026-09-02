@@ -24,6 +24,7 @@ import dev.langchain4j.example.codereview.reviewops.domain.FindingFingerprint;
 import dev.langchain4j.example.codereview.reviewops.domain.FindingSeverity;
 import dev.langchain4j.example.codereview.reviewops.domain.FailureClass;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationDecision;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationReference;
 import dev.langchain4j.example.codereview.reviewops.domain.PublicationTier;
 import dev.langchain4j.example.codereview.reviewops.domain.PullRequestRevision;
 import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
@@ -101,6 +102,35 @@ class PublishReviewOutcomePostgresIntegrationTest extends PostgresIntegrationSup
         assertThat(gateway.commentMutations).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM durable_jobs", Integer.class)).isZero();
+    }
+
+    @Test
+    void stalePublishingRunPreservesPersistedPartialProgressWithoutGitHubMutation() {
+        ReviewRun run = completedRunWithInlineDecisions();
+        FindingFingerprint first = new FindingFingerprint("a".repeat(64));
+        PublicationReference firstReference =
+                new PublicationReference("REVIEW_COMMENT", "comment-existing");
+        run.authorizePublication(new AuthoritativeRevision(REVIEW_SHA), NOW.minusSeconds(5));
+        run.recordPublicationProgress("check-existing", Map.of(first, firstReference));
+        reviewRuns.insert(run);
+        RecordingGateway gateway = new RecordingGateway();
+        PublishReviewOutcome publisher = new PublishReviewOutcome(
+                reviewRuns,
+                mutations,
+                gateway,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(publisher.publish(run.id()))
+                .isEqualTo(PublishReviewOutcome.PublicationOutcome.SUPERSEDED);
+
+        ReviewRun persisted = reviewRuns.find(run.id()).orElseThrow().reviewRun();
+        assertThat(persisted.state()).isEqualTo(ReviewRunState.SUPERSEDED);
+        assertThat(persisted.checkRunExternalId()).contains("check-existing");
+        assertThat(persisted.commentReferences()).containsEntry(first, firstReference);
+        assertThat(persisted.findings().get(0).publicationReference()).contains(firstReference);
+        assertThat(gateway.authoritativeCalls).isOne();
+        assertThat(gateway.checkMutations).isZero();
+        assertThat(gateway.commentMutations).isZero();
     }
 
     @Test
