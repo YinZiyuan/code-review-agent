@@ -53,6 +53,13 @@ code-review:
     observability:
       refresh-interval: ${REVIEW_OBSERVABILITY_REFRESH_INTERVAL:15s}
       stale-threshold: ${REVIEW_OBSERVABILITY_STALE_THRESHOLD:15m}
+    identity:
+      pipeline-version: ${REVIEW_PIPELINE_VERSION:pipeline-v3}
+      prompt-version: ${REVIEW_PROMPT_VERSION:review-prompt-v1}
+      policy-version: ${REVIEW_POLICY_VERSION:policy-v1}
+      work-budget-identity: ${REVIEW_WORK_BUDGET_IDENTITY:legacy-work-budget-v1}
+      max-review-attempts: ${REVIEW_MAX_ATTEMPTS:3}
+      max-inline-comments: ${REVIEW_MAX_INLINE_COMMENTS:5}
 
 management:
   endpoints:

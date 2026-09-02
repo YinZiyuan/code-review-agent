@@ -130,6 +130,34 @@ class JdbcPullRequestObservationStoreTest extends PostgresIntegrationSupport {
     }
 
     @Test
+    void configurationHashChangeAdmitsANewBusinessRunForTheSameRevision() {
+        PullRequestObservationStore store = store(admission(jobs));
+        store.admit(request("delivery-123", ORIGINAL_RUN_ID));
+        ReviewConfigurationSnapshot changedModelConfiguration =
+                new ReviewConfigurationSnapshot(
+                        CONFIGURATION.pipelineVersion(),
+                        "cfg-sha256-" + "b".repeat(64),
+                        "kimi-k2.6",
+                        CONFIGURATION.policyVersion(),
+                        CONFIGURATION.maxReviewAttempts());
+
+        ObservationResult changed = store.admit(request(
+                "delivery-model-change",
+                LATER_RUN_ID,
+                PAYLOAD_SHA256,
+                changedModelConfiguration));
+
+        assertThat(changed).isEqualTo(new ObservationResult(ADMITTED, runId(LATER_RUN_ID)));
+        assertCounts(2, 2, 4);
+        assertThat(jdbcTemplate.queryForList(
+                        "SELECT configuration_version FROM review_runs ORDER BY configuration_version",
+                        String.class))
+                .containsExactly(
+                        "cfg-sha256-" + "b".repeat(64),
+                        CONFIGURATION.configurationVersion());
+    }
+
+    @Test
     void existingRevisionDeliveryReplayKeepsItsOriginalAssociationAcrossConfigurationChange() {
         PullRequestObservationStore store = store(admission(jobs));
         store.admit(request("delivery-original", ORIGINAL_RUN_ID));

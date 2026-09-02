@@ -3,6 +3,7 @@ package dev.langchain4j.example.codereview.server;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.example.codereview.agents.CodeReviewAgent;
 import dev.langchain4j.example.codereview.config.ReviewWorkBudget;
+import dev.langchain4j.example.codereview.config.CodeReviewProperties;
 import dev.langchain4j.example.codereview.infra.DiffParser;
 import dev.langchain4j.example.codereview.reviewops.application.DecideReviewPublication;
 import dev.langchain4j.example.codereview.reviewops.application.ExecuteReviewRun;
@@ -70,6 +71,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionOperations;
@@ -141,14 +143,19 @@ public class ServerConfiguration {
     }
 
     @Bean
-    ReviewConfigurationSnapshot reviewConfigurationSnapshot() {
-        return new ReviewConfigurationSnapshot(
-                "pipeline-v3", "configuration-v1", "moonshot-v1-8k", "policy-v1", 3);
+    ReviewConfigurationSnapshot reviewConfigurationSnapshot(
+            CodeReviewProperties codeReviewProperties,
+            ReviewIdentityProperties identity,
+            ServerProperties serverProperties,
+            Environment environment) {
+        return new ReviewConfigurationSnapshotFactory(environment)
+                .create(codeReviewProperties, identity, serverProperties.worker());
     }
 
     @Bean
-    PublicationPolicySnapshot publicationPolicySnapshot() {
-        return new PublicationPolicySnapshot("policy-v1", 5);
+    PublicationPolicySnapshot publicationPolicySnapshot(ReviewIdentityProperties identity) {
+        return new PublicationPolicySnapshot(
+                identity.policyVersion(), identity.maxInlineComments());
     }
 
     @Bean

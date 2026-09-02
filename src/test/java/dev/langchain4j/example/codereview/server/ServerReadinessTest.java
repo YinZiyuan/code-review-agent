@@ -7,6 +7,8 @@ import dev.langchain4j.example.codereview.reviewops.application.SettleReviewJobF
 import dev.langchain4j.example.codereview.reviewops.application.jobs.ReviewFailurePresentationJobHandler;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.persistence.PostgresReviewOperationsRetention;
 import dev.langchain4j.example.codereview.reviewops.infrastructure.observability.ReviewOperationsMetrics;
+import dev.langchain4j.example.codereview.reviewops.domain.PublicationPolicySnapshot;
+import dev.langchain4j.example.codereview.reviewops.domain.ReviewConfigurationSnapshot;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -116,6 +118,15 @@ class ServerReadinessTest {
         assertThat(context.getBeansOfType(ReviewOperationsMetrics.class)).hasSize(1);
         assertThat(context.getBeansOfType(ScheduledReviewOperationsMetrics.class)).hasSize(1);
         assertThat(context.getBeansOfType(ReviewOperationLogger.class)).hasSize(1);
+        ReviewConfigurationSnapshot snapshot = context.getBean(ReviewConfigurationSnapshot.class);
+        assertThat(snapshot.modelName()).isEqualTo("moonshot-v1-8k");
+        assertThat(snapshot.configurationVersion()).matches("cfg-sha256-[0-9a-f]{64}");
+        assertThat(snapshot.toString())
+                .doesNotContain("readiness-webhook-secret")
+                .doesNotContain("readiness-model-key")
+                .doesNotContain(PRIVATE_KEY);
+        assertThat(context.getBean(PublicationPolicySnapshot.class).version())
+                .isEqualTo(snapshot.policyVersion());
     }
 
     private HttpResult awaitReadinessUnavailable() throws Exception {

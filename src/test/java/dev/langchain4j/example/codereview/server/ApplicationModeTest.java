@@ -161,11 +161,32 @@ class ApplicationModeTest {
                 .run(context -> assertThat(context).hasFailed());
     }
 
+    @Test
+    void bindsExplicitRuntimeIdentityIncludingWorkBudgetSeam() {
+        contextRunner.withPropertyValues(
+                        "code-review.server.identity.pipeline-version=pipeline-v4",
+                        "code-review.server.identity.prompt-version=review-prompt-v2",
+                        "code-review.server.identity.policy-version=policy-v3",
+                        "code-review.server.identity.work-budget-identity=budget-sha256-abc",
+                        "code-review.server.identity.max-review-attempts=4",
+                        "code-review.server.identity.max-inline-comments=7")
+                .run(context -> {
+                    ReviewIdentityProperties identity = context.getBean(ReviewIdentityProperties.class);
+                    assertThat(identity.pipelineVersion()).isEqualTo("pipeline-v4");
+                    assertThat(identity.promptVersion()).isEqualTo("review-prompt-v2");
+                    assertThat(identity.policyVersion()).isEqualTo("policy-v3");
+                    assertThat(identity.workBudgetIdentity()).isEqualTo("budget-sha256-abc");
+                    assertThat(identity.maxReviewAttempts()).isEqualTo(4);
+                    assertThat(identity.maxInlineComments()).isEqualTo(7);
+                });
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties({
             ServerProperties.class,
             ReviewOperationsMaintenanceProperties.class,
-            ReviewObservabilityProperties.class
+            ReviewObservabilityProperties.class,
+            ReviewIdentityProperties.class
     })
     static class ServerPropertiesConfiguration {
     }
