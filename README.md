@@ -51,6 +51,16 @@ The default OpenAI-compatible endpoint is ApeMind and the default reviewer is
 `LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME` to use another compatible deployment.
 The legacy `MOONSHOT_API_KEY` setting remains supported.
 
+For slower relays, the default model transport and review-stage deadlines are 180
+seconds. The overall reviewer deadline is 240 seconds so diff and tool analysis do
+not consume the model's allowance. Compose also claims one review job per worker
+cycle by default to avoid consuming a low-concurrency model account with a local
+backlog. Override
+`LANGCHAIN4J_OPEN_AI_CHAT_MODEL_TIMEOUT`,
+`CODE_REVIEW_WORK_BUDGET_STAGES_REVIEW_MODEL`,
+`CODE_REVIEW_WORK_BUDGET_EXECUTION_REVIEWER_TIMEOUT`, or
+`CODE_REVIEW_SERVER_WORKER_BATCH_SIZE` when the deployment has different limits.
+
 Run a smoke evaluation:
 
 ```bash

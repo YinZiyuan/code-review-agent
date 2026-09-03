@@ -125,7 +125,7 @@ public record ReviewWorkBudgetProperties(
             return new ReviewWorkBudget.StageDeadlines(
                     defaultValue(diffAnalysis, Duration.ofSeconds(10)),
                     defaultValue(toolAnalysis, Duration.ofSeconds(45)),
-                    defaultValue(reviewModel, Duration.ofSeconds(60)),
+                    defaultValue(reviewModel, Duration.ofSeconds(180)),
                     defaultValue(summarization, Duration.ofSeconds(5)),
                     defaultValue(compiler, Duration.ofSeconds(20)),
                     defaultValue(spotbugs, Duration.ofSeconds(30)));
@@ -152,7 +152,7 @@ public record ReviewWorkBudgetProperties(
             Duration reviewerTimeout, Integer stageWorkers, Integer stageQueueCapacity) {
         ReviewWorkBudget.ExecutionLimits toLimits() {
             return new ReviewWorkBudget.ExecutionLimits(
-                    defaultValue(reviewerTimeout, Duration.ofSeconds(60)),
+                    defaultValue(reviewerTimeout, Duration.ofSeconds(240)),
                     defaultValue(stageWorkers, 4),
                     defaultValue(stageQueueCapacity, 16));
         }
