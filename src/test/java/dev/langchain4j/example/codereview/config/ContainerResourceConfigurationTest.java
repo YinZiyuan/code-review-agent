@@ -38,10 +38,31 @@ class ContainerResourceConfigurationTest {
                 .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_BASE_URL:-https://sub2api.apemind.ai/v1}");
         assertThat(environment.get("LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME"))
                 .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_MODEL_NAME:-gpt-5.6-sol}");
+        assertThat(environment.get("LANGCHAIN4J_OPEN_AI_CHAT_MODEL_TIMEOUT"))
+                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_TIMEOUT:-180s}");
+        assertThat(environment.get("CODE_REVIEW_WORK_BUDGET_STAGES_REVIEW_MODEL"))
+                .isEqualTo("${CODE_REVIEW_WORK_BUDGET_STAGES_REVIEW_MODEL:-180s}");
+        assertThat(environment.get("CODE_REVIEW_WORK_BUDGET_EXECUTION_REVIEWER_TIMEOUT"))
+                .isEqualTo("${CODE_REVIEW_WORK_BUDGET_EXECUTION_REVIEWER_TIMEOUT:-300s}");
+        assertThat(environment.get("CODE_REVIEW_SERVER_WORKER_BATCH_SIZE"))
+                .isEqualTo("${CODE_REVIEW_SERVER_WORKER_BATCH_SIZE:-1}");
         assertThat(environment.get("DB_POOL_ACQUISITION_TIMEOUT_MS"))
                 .isEqualTo("${DB_POOL_ACQUISITION_TIMEOUT_MS:-2000}");
         assertThat(environment.get("DB_POOL_VALIDATION_TIMEOUT_MS"))
                 .isEqualTo("${DB_POOL_VALIDATION_TIMEOUT_MS:-1000}");
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void defaultModelTransportAllowsTheFullApeMindReviewDeadline() throws Exception {
+        Map<String, Object> configuration = new Yaml().load(
+                Files.readString(Path.of("src/main/resources/application.yml")));
+        Map<String, Object> langchain4j = (Map<String, Object>) configuration.get("langchain4j");
+        Map<String, Object> openAi = (Map<String, Object>) langchain4j.get("open-ai");
+        Map<String, Object> chatModel = (Map<String, Object>) openAi.get("chat-model");
+
+        assertThat(chatModel.get("timeout"))
+                .isEqualTo("${LANGCHAIN4J_OPEN_AI_CHAT_MODEL_TIMEOUT:180s}");
     }
 
     @SuppressWarnings("unchecked")

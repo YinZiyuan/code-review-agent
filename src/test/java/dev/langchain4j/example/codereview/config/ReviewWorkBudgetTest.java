@@ -45,13 +45,18 @@ class ReviewWorkBudgetTest {
             assertThat(budget.process().maxOutputBytes()).isEqualTo(64 * 1024);
             assertThat(budget.process().compilerMaxHeapMb()).isEqualTo(256);
             assertThat(budget.process().analyzerMaxHeapMb()).isEqualTo(256);
-            assertThat(budget.stages().reviewModel()).isEqualTo(Duration.ofSeconds(60));
+            assertThat(budget.stages().reviewModel()).isEqualTo(Duration.ofSeconds(180));
             assertThat(budget.workspace().staleAge()).isEqualTo(Duration.ofHours(24));
             assertThat(budget.workspace().maxChildrenInspected()).isEqualTo(1_024);
             assertThat(budget.workspace().maxDeletionsPerRun()).isEqualTo(64);
             assertThat(budget.workspace().maxEntriesDeletedPerRun()).isEqualTo(10_000);
             assertThat(budget.workspace().cleanupDeadline()).isEqualTo(Duration.ofSeconds(5));
-            assertThat(budget.execution().reviewerTimeout()).isEqualTo(Duration.ofSeconds(60));
+            assertThat(budget.execution().reviewerTimeout()).isEqualTo(Duration.ofSeconds(300));
+            assertThat(budget.execution().reviewerTimeout()).isGreaterThan(
+                    budget.stages().diffAnalysis()
+                            .plus(budget.stages().toolAnalysis())
+                            .plus(budget.stages().reviewModel())
+                            .plus(budget.stages().summarization()));
             assertThat(budget.execution().stageWorkers()).isEqualTo(4);
             assertThat(budget.execution().stageQueueCapacity()).isEqualTo(16);
             assertThat(budget.configurationHash()).matches("[0-9a-f]{64}");
