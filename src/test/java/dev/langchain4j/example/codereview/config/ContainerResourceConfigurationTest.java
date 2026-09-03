@@ -43,7 +43,7 @@ class ContainerResourceConfigurationTest {
         assertThat(environment.get("CODE_REVIEW_WORK_BUDGET_STAGES_REVIEW_MODEL"))
                 .isEqualTo("${CODE_REVIEW_WORK_BUDGET_STAGES_REVIEW_MODEL:-180s}");
         assertThat(environment.get("CODE_REVIEW_WORK_BUDGET_EXECUTION_REVIEWER_TIMEOUT"))
-                .isEqualTo("${CODE_REVIEW_WORK_BUDGET_EXECUTION_REVIEWER_TIMEOUT:-240s}");
+                .isEqualTo("${CODE_REVIEW_WORK_BUDGET_EXECUTION_REVIEWER_TIMEOUT:-300s}");
         assertThat(environment.get("CODE_REVIEW_SERVER_WORKER_BATCH_SIZE"))
                 .isEqualTo("${CODE_REVIEW_SERVER_WORKER_BATCH_SIZE:-1}");
         assertThat(environment.get("DB_POOL_ACQUISITION_TIMEOUT_MS"))

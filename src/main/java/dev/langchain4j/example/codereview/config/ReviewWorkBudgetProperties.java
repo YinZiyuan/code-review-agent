@@ -152,7 +152,7 @@ public record ReviewWorkBudgetProperties(
             Duration reviewerTimeout, Integer stageWorkers, Integer stageQueueCapacity) {
         ReviewWorkBudget.ExecutionLimits toLimits() {
             return new ReviewWorkBudget.ExecutionLimits(
-                    defaultValue(reviewerTimeout, Duration.ofSeconds(240)),
+                    defaultValue(reviewerTimeout, Duration.ofSeconds(300)),
                     defaultValue(stageWorkers, 4),
                     defaultValue(stageQueueCapacity, 16));
         }

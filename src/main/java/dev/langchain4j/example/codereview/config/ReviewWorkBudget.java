@@ -24,7 +24,7 @@ public record ReviewWorkBudget(
             StageDeadlines stages,
             WorkspaceLimits workspace) {
         this(version, input, prompt, process, stages, workspace,
-                new ExecutionLimits(Duration.ofSeconds(240), 4, 16));
+                new ExecutionLimits(Duration.ofSeconds(300), 4, 16));
     }
 
     public ReviewWorkBudget {

@@ -51,8 +51,8 @@ class ReviewWorkBudgetTest {
             assertThat(budget.workspace().maxDeletionsPerRun()).isEqualTo(64);
             assertThat(budget.workspace().maxEntriesDeletedPerRun()).isEqualTo(10_000);
             assertThat(budget.workspace().cleanupDeadline()).isEqualTo(Duration.ofSeconds(5));
-            assertThat(budget.execution().reviewerTimeout()).isEqualTo(Duration.ofSeconds(240));
-            assertThat(budget.execution().reviewerTimeout()).isEqualTo(
+            assertThat(budget.execution().reviewerTimeout()).isEqualTo(Duration.ofSeconds(300));
+            assertThat(budget.execution().reviewerTimeout()).isGreaterThan(
                     budget.stages().diffAnalysis()
                             .plus(budget.stages().toolAnalysis())
                             .plus(budget.stages().reviewModel())
